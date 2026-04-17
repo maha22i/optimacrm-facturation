@@ -181,8 +181,8 @@ export default function ImportRelevesPage() {
     }
     const dir = sortDir === 'asc' ? 1 : -1;
     arr = [...arr].sort((a, b) => {
-      const va = (a as Record<string, unknown>)[sortCol];
-      const vb = (b as Record<string, unknown>)[sortCol];
+      const va = (a as unknown as Record<string, unknown>)[sortCol];
+      const vb = (b as unknown as Record<string, unknown>)[sortCol];
       if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
       return String(va || '').localeCompare(String(vb || '')) * dir;
     });
