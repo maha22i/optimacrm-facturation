@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type {
   ClientDetail, ClientStats, ClientAdresse, ClientContact,
   StatutClient, ApiResponse, TypeAdresse, RoleContact, TypeDocument,
-  Contrat,
+  Contrat, Facture, Devis, Avoir, PaginatedResponse,
 } from '@/lib/types';
 import ChampsPersonnalisesForm from '@/components/ChampsPersonnalisesForm';
 
@@ -345,6 +345,121 @@ function ContactFormModal({ contact, onSave, onCancel }: {
 }
 
 // ---------------------------------------------------------------------------
+// Document Upload Modal
+// ---------------------------------------------------------------------------
+
+function DocumentUploadModal({ onUpload, onCancel, uploading }: {
+  onUpload: (file: File, nom: string, type: TypeDocument) => void;
+  onCancel: () => void;
+  uploading: boolean;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [nom, setNom] = useState('');
+  const [type, setType] = useState<TypeDocument>('AUTRE');
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) {
+      setFile(dropped);
+      if (!nom) setNom(dropped.name.replace(/\.[^/.]+$/, ''));
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (selected) {
+      setFile(selected);
+      if (!nom) setNom(selected.name.replace(/\.[^/.]+$/, ''));
+    }
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} o`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="flex-shrink-0 h-10 w-10 rounded-xl bg-violet-50 flex items-center justify-center">
+            <svg className="h-5 w-5 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">Ajouter un document</h3>
+        </div>
+
+        <div className="space-y-4">
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${
+              dragOver ? 'border-violet-500 bg-violet-50' : file ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 hover:border-violet-300 hover:bg-gray-50'
+            }`}
+          >
+            <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+            {file ? (
+              <div className="flex items-center justify-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                  <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-medium text-gray-900 truncate max-w-[280px]">{file.name}</p>
+                  <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setFile(null); }} className="ml-2 p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            ) : (
+              <>
+                <svg className="mx-auto h-10 w-10 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
+                <p className="text-sm font-medium text-gray-600">Glissez-déposez un fichier ici</p>
+                <p className="text-xs text-gray-400 mt-1">ou cliquez pour parcourir (max 10 Mo)</p>
+              </>
+            )}
+          </div>
+
+          <div>
+            <label className={labelCls}>Nom du document *</label>
+            <input value={nom} onChange={e => setNom(e.target.value)} placeholder="Ex: Contrat de maintenance" className={inputCls} />
+          </div>
+
+          <div>
+            <label className={labelCls}>Type de document</label>
+            <select value={type} onChange={e => setType(e.target.value as TypeDocument)} className={selectCls}>
+              <option value="AUTRE">Autre</option>
+              <option value="CONTRAT">Contrat</option>
+              <option value="RIB">RIB</option>
+              <option value="MANDAT_SEPA">Mandat SEPA</option>
+              <option value="BON_COMMANDE">Bon de commande</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button onClick={onCancel} disabled={uploading} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition cursor-pointer disabled:opacity-50">Annuler</button>
+          <button
+            onClick={() => file && nom.trim() && onUpload(file, nom.trim(), type)}
+            disabled={!file || !nom.trim() || uploading}
+            className="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:from-violet-700 hover:to-indigo-700 transition shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+          >
+            {uploading && <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />}
+            {uploading ? 'Envoi en cours…' : 'Enregistrer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Info row helper
 // ---------------------------------------------------------------------------
 
@@ -393,6 +508,13 @@ export default function ClientDetailPage() {
   const [adresseModal, setAdresseModal] = useState<{ open: boolean; adresse?: ClientAdresse }>({ open: false });
   const [contactModal, setContactModal] = useState<{ open: boolean; contact?: ClientContact }>({ open: false });
   const [clientContrats, setClientContrats] = useState<Contrat[]>([]);
+  const [documentModal, setDocumentModal] = useState(false);
+  const [docUploading, setDocUploading] = useState(false);
+  const [clientFactures, setClientFactures] = useState<Facture[]>([]);
+  const [clientDevis, setClientDevis] = useState<Devis[]>([]);
+  const [clientAvoirs, setClientAvoirs] = useState<Avoir[]>([]);
+  const [historiqueLoading, setHistoriqueLoading] = useState(false);
+  const [historiqueLoaded, setHistoriqueLoaded] = useState(false);
 
   const fetchClient = useCallback(async () => {
     try {
@@ -411,7 +533,31 @@ export default function ClientDetailPage() {
     }
   }, [clientId]);
 
+  const fetchHistorique = useCallback(async () => {
+    if (historiqueLoaded) return;
+    setHistoriqueLoading(true);
+    try {
+      const [facturesRes, devisRes, avoirsRes] = await Promise.all([
+        api.get<PaginatedResponse<Facture>>(`/factures?client_id=${clientId}&limit=100`),
+        api.get<PaginatedResponse<Devis>>(`/devis?client_id=${clientId}&limit=100`),
+        api.get<PaginatedResponse<Avoir>>(`/avoirs?client_id=${clientId}&limit=100`).catch(() => ({ data: [] as Avoir[] })),
+      ]);
+      setClientFactures(facturesRes.data);
+      setClientDevis(devisRes.data);
+      setClientAvoirs('data' in avoirsRes ? (Array.isArray(avoirsRes.data) ? avoirsRes.data : []) : []);
+      setHistoriqueLoaded(true);
+    } catch {
+      setToast({ message: 'Erreur lors du chargement de l\'historique', type: 'error' });
+    } finally {
+      setHistoriqueLoading(false);
+    }
+  }, [clientId, historiqueLoaded]);
+
   useEffect(() => { fetchClient(); }, [fetchClient]);
+
+  useEffect(() => {
+    if (activeTab === 'historique') fetchHistorique();
+  }, [activeTab, fetchHistorique]);
 
   const handleDelete = async () => {
     try {
@@ -476,6 +622,37 @@ export default function ClientDetailPage() {
     }
   };
 
+  const handleUploadDocument = async (file: File, nom: string, type: TypeDocument) => {
+    setDocUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('nom', nom || file.name);
+      formData.append('type', type);
+      await api.upload(`/clients/${clientId}/documents`, formData);
+      setToast({ message: 'Document ajouté', type: 'success' });
+      setDocumentModal(false);
+      fetchClient();
+    } catch {
+      setToast({ message: 'Erreur lors de l\'upload', type: 'error' });
+    } finally {
+      setDocUploading(false);
+    }
+  };
+
+  const handleDownloadDocument = (doc: { nom: string; url: string }) => {
+    const isExternal = doc.url.startsWith('http');
+    const href = isExternal
+      ? doc.url
+      : `${process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:3001'}${doc.url}`;
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = doc.nom;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
+  };
+
   const handleDeleteDocument = async (docId: number) => {
     try {
       await api.delete(`/clients/${clientId}/documents/${docId}`);
@@ -532,6 +709,13 @@ export default function ClientDetailPage() {
           contact={contactModal.contact}
           onSave={handleSaveContact}
           onCancel={() => setContactModal({ open: false })}
+        />
+      )}
+      {documentModal && (
+        <DocumentUploadModal
+          onUpload={handleUploadDocument}
+          onCancel={() => setDocumentModal(false)}
+          uploading={docUploading}
         />
       )}
 
@@ -690,6 +874,9 @@ export default function ClientDetailPage() {
                 <InfoRow icon={<svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6Z" /></svg>} label="Code APE">
                   <span className="font-mono text-xs">{client.code_ape || '—'}</span>
                 </InfoRow>
+                <InfoRow icon={<svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.888L8.25 21 5.625 17.34M8.25 15h3m-3 3.75h3" /></svg>} label="Numéro RCS">
+                  <span className="font-mono text-xs">{client.numero_rcs || '—'}</span>
+                </InfoRow>
                 <InfoRow icon={<svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" /></svg>} label="Site web">
                   {client.site_web ? (
                     <a href={client.site_web} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:text-violet-700 hover:underline">{client.site_web}</a>
@@ -769,11 +956,15 @@ export default function ClientDetailPage() {
                 <p className="text-sm font-medium font-mono text-gray-900">{client.bic || '—'}</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">Mandat SEPA</p>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">Mandat SEPA (RUM)</p>
                 <p className="text-sm font-medium text-gray-900">
                   {client.reference_mandat_sepa || '—'}
                   {client.date_mandat_sepa && <span className="text-xs text-gray-400 ml-2">({new Date(client.date_mandat_sepa).toLocaleDateString('fr-FR')})</span>}
                 </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">Séquence</p>
+                <p className="text-sm font-medium text-gray-900">{client.sequence_mandat || 'RCUR'}</p>
               </div>
             </div>
           </div>
@@ -1015,7 +1206,10 @@ export default function ClientDetailPage() {
       {activeTab === 'documents' && (
         <div>
           <div className="flex justify-end mb-4">
-            <button className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition shadow-sm cursor-pointer opacity-50" disabled title="Upload à venir">
+            <button
+              onClick={() => setDocumentModal(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:from-violet-700 hover:to-indigo-700 transition shadow-sm cursor-pointer"
+            >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
               Ajouter un document
             </button>
@@ -1026,25 +1220,61 @@ export default function ClientDetailPage() {
                 <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
               </div>
               <p className="text-sm text-gray-500">Aucun document</p>
+              <p className="text-xs text-gray-400 mt-1">Ajoutez des contrats, RIB, mandats SEPA et autres fichiers</p>
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-50">
-              {client.documents.map(d => (
-                <div key={d.id} className="flex items-center justify-between px-6 py-4 hover:bg-gray-50/50 transition">
-                  <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-xl bg-violet-50 flex items-center justify-center flex-shrink-0">
-                      <svg className="h-5 w-5 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+              {client.documents.map(d => {
+                const ext = d.url?.split('.').pop()?.toLowerCase() || '';
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const isPdf = ext === 'pdf';
+                return (
+                  <div key={d.id} className="flex items-center justify-between px-6 py-4 hover:bg-gray-50/50 transition">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className={`h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                        isPdf ? 'bg-red-50' : isImage ? 'bg-blue-50' : 'bg-violet-50'
+                      }`}>
+                        {isPdf ? (
+                          <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                        ) : isImage ? (
+                          <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
+                        ) : (
+                          <svg className="h-5 w-5 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{d.nom}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+                            d.type === 'CONTRAT' ? 'bg-blue-50 text-blue-700' :
+                            d.type === 'RIB' ? 'bg-emerald-50 text-emerald-700' :
+                            d.type === 'MANDAT_SEPA' ? 'bg-purple-50 text-purple-700' :
+                            d.type === 'BON_COMMANDE' ? 'bg-amber-50 text-amber-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>{DOC_TYPE_LABELS[d.type]}</span>
+                          <span className="text-xs text-gray-400">{new Date(d.created_at).toLocaleDateString('fr-FR')}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{d.nom}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{DOC_TYPE_LABELS[d.type]} — {new Date(d.created_at).toLocaleDateString('fr-FR')}</p>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => handleDownloadDocument(d)}
+                        className="p-2 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition cursor-pointer"
+                        title="Télécharger"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDocument(d.id)}
+                        className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
+                        title="Supprimer"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                      </button>
                     </div>
                   </div>
-                  <button onClick={() => handleDeleteDocument(d.id)} className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer">
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1052,12 +1282,246 @@ export default function ClientDetailPage() {
 
       {/* Historique Tab */}
       {activeTab === 'historique' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-16 text-center">
-          <div className="mx-auto h-14 w-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-            <svg className="h-7 w-7 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-          </div>
-          <p className="text-sm font-medium text-gray-600">Les factures et devis apparaîtront ici</p>
-          <p className="text-xs text-gray-400 mt-1.5">Cette fonctionnalité sera disponible dans un prochain sprint</p>
+        <div className="space-y-6">
+          {historiqueLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="animate-spin h-8 w-8 border-4 border-violet-600 border-t-transparent rounded-full" />
+            </div>
+          ) : (
+            <>
+              {/* Stats résumé */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
+                  <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+                    <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Devis</p>
+                    <p className="text-xl font-bold text-gray-900">{clientDevis.length}</p>
+                  </div>
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
+                  <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                    <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" /></svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Factures</p>
+                    <p className="text-xl font-bold text-gray-900">{clientFactures.length}</p>
+                  </div>
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
+                  <div className="h-10 w-10 rounded-xl bg-red-50 flex items-center justify-center flex-shrink-0">
+                    <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Avoirs</p>
+                    <p className="text-xl font-bold text-gray-900">{clientAvoirs.length}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Devis */}
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2.5">
+                  <div className="h-2 w-2 rounded-full bg-blue-500" />
+                  <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Devis ({clientDevis.length})</h3>
+                </div>
+                {clientDevis.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <p className="text-sm text-gray-500">Aucun devis pour ce client</p>
+                  </div>
+                ) : (
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/50">
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">N° Devis</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Objet</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Statut</th>
+                        <th className="text-right px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Montant TTC</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {clientDevis.map(d => {
+                        const devisStatutColors: Record<string, string> = {
+                          BROUILLON: 'text-gray-600 bg-gray-50',
+                          ENVOYE: 'text-blue-700 bg-blue-50',
+                          ACCEPTE: 'text-emerald-700 bg-emerald-50',
+                          REFUSE: 'text-red-700 bg-red-50',
+                          EXPIRE: 'text-gray-500 bg-gray-50',
+                          FACTURE: 'text-violet-700 bg-violet-50',
+                        };
+                        const devisStatutLabels: Record<string, string> = {
+                          BROUILLON: 'Brouillon', ENVOYE: 'Envoyé', ACCEPTE: 'Accepté',
+                          REFUSE: 'Refusé', EXPIRE: 'Expiré', FACTURE: 'Facturé',
+                        };
+                        const mttc = typeof d.montant_ttc === 'string' ? parseFloat(d.montant_ttc) : (d.montant_ttc || 0);
+                        return (
+                          <tr
+                            key={d.id}
+                            onClick={() => router.push(`/dashboard/devis/${d.id}`)}
+                            className="hover:bg-gray-50/80 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">{d.numero_devis}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600 truncate max-w-[250px]">{d.objet || '—'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{d.date_emission ? new Date(d.date_emission).toLocaleDateString('fr-FR') : new Date(d.date_creation).toLocaleDateString('fr-FR')}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ring-current/20 ${devisStatutColors[d.statut] || ''}`}>
+                                {devisStatutLabels[d.statut] || d.statut}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+                              {mttc.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Factures */}
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2.5">
+                  <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Factures ({clientFactures.length})</h3>
+                </div>
+                {clientFactures.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <p className="text-sm text-gray-500">Aucune facture pour ce client</p>
+                  </div>
+                ) : (
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/50">
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">N° Facture</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Origine</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Échéance</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Statut</th>
+                        <th className="text-right px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Total TTC</th>
+                        <th className="text-right px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Reste dû</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {clientFactures.map(f => {
+                        const factureStatutColors: Record<string, string> = {
+                          'Brouillon': 'text-gray-600 bg-gray-50',
+                          'Validée': 'text-blue-700 bg-blue-50',
+                          'Envoyée': 'text-emerald-700 bg-emerald-50',
+                          'Annulée': 'text-red-700 bg-red-50',
+                        };
+                        const origineColors: Record<string, string> = {
+                          Manuelle: 'bg-gray-50 text-gray-700',
+                          Contrat: 'bg-blue-50 text-blue-700',
+                          Devis: 'bg-violet-50 text-violet-700',
+                        };
+                        const ttc = typeof f.total_ttc === 'string' ? parseFloat(f.total_ttc) : (f.total_ttc || 0);
+                        const nap = typeof f.net_a_payer === 'string' ? parseFloat(f.net_a_payer) : (f.net_a_payer || 0);
+                        const echeanceDate = f.date_echeance ? new Date(f.date_echeance) : null;
+                        const isOverdue = echeanceDate && echeanceDate < new Date() && f.statut !== 'Annulée' && nap > 0;
+                        return (
+                          <tr
+                            key={f.id}
+                            onClick={() => router.push(`/dashboard/factures/${f.id}`)}
+                            className="hover:bg-gray-50/80 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">{f.numero_facture}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ring-current/20 ${origineColors[f.type_origine] || ''}`}>
+                                {f.type_origine}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{new Date(f.date_creation).toLocaleDateString('fr-FR')}</td>
+                            <td className={`px-4 py-3 text-sm ${isOverdue ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                              {echeanceDate ? echeanceDate.toLocaleDateString('fr-FR') : '—'}
+                              {isOverdue && <span className="ml-1.5 text-[10px] font-semibold bg-red-50 text-red-600 rounded px-1 py-0.5">En retard</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ring-current/20 ${factureStatutColors[f.statut] || ''}`}>
+                                {f.statut}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+                              {ttc.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                            </td>
+                            <td className={`px-4 py-3 text-right text-sm font-semibold ${nap > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {nap.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Avoirs */}
+              {clientAvoirs.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2.5">
+                    <div className="h-2 w-2 rounded-full bg-red-500" />
+                    <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Avoirs ({clientAvoirs.length})</h3>
+                  </div>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/50">
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">N° Avoir</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Facture</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Motif</th>
+                        <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Statut</th>
+                        <th className="text-right px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Montant TTC</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {clientAvoirs.map(a => {
+                        const avoirStatutColors: Record<string, string> = {
+                          'Brouillon': 'text-gray-600 bg-gray-50',
+                          'Validé': 'text-blue-700 bg-blue-50',
+                          'Remboursé': 'text-emerald-700 bg-emerald-50',
+                          'Imputé': 'text-violet-700 bg-violet-50',
+                          'Annulé': 'text-red-700 bg-red-50',
+                        };
+                        const mttc = typeof a.montant_ttc === 'string' ? parseFloat(a.montant_ttc) : (a.montant_ttc || 0);
+                        return (
+                          <tr
+                            key={a.id}
+                            onClick={() => router.push(`/dashboard/factures/avoirs/${a.id}`)}
+                            className="hover:bg-gray-50/80 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">{a.numero}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{a.numero_facture || '—'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{new Date(a.date_avoir).toLocaleDateString('fr-FR')}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600 truncate max-w-[200px]">{a.motif || '—'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ring-current/20 ${avoirStatutColors[a.statut] || ''}`}>
+                                {a.statut}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm font-semibold text-red-600">
+                              -{mttc.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {clientDevis.length === 0 && clientFactures.length === 0 && clientAvoirs.length === 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-16 text-center">
+                  <div className="mx-auto h-14 w-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+                    <svg className="h-7 w-7 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                  </div>
+                  <p className="text-sm font-medium text-gray-600">Aucun historique</p>
+                  <p className="text-xs text-gray-400 mt-1.5">Les devis, factures et avoirs de ce client apparaîtront ici</p>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

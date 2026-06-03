@@ -30,6 +30,7 @@ router.post(
 
 // ── Authenticated ───────────────────────────────────────────────────────────
 
+router.post('/logout', ctrl.logout);
 router.get('/profile', authenticate, ctrl.getProfile);
 
 router.put(

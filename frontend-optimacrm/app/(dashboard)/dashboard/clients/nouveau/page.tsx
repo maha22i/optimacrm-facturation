@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { ApiResponse, Client } from '@/lib/types';
 import ChampsPersonnalisesForm from '@/components/ChampsPersonnalisesForm';
+import { useSiretLookup } from '@/lib/hooks/useSiretLookup';
 
 const STORAGE_KEY = 'optimacrm_client_draft';
 
@@ -12,6 +13,8 @@ interface ClientFormData {
   raison_sociale: string;
   forme_juridique: string;
   siret: string;
+  siren: string;
+  numero_rcs: string;
   tva_intracommunautaire: string;
   code_ape: string;
   site_web: string;
@@ -38,6 +41,8 @@ const DEFAULT_FORM: ClientFormData = {
   raison_sociale: '',
   forme_juridique: 'SARL',
   siret: '',
+  siren: '',
+  numero_rcs: '',
   tva_intracommunautaire: '',
   code_ape: '',
   site_web: '',
@@ -165,6 +170,9 @@ function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }
 
 export default function NouveauClientPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
+  const returnDevisId = searchParams.get('devisId');
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<ClientFormData>(DEFAULT_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -172,6 +180,49 @@ export default function NouveauClientPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [champsPersoValeurs, setChampsPersoValeurs] = useState<Record<string, string>>({});
   const handleChampsPersoChange = useCallback((v: Record<string, string>) => setChampsPersoValeurs(v), []);
+
+  const { lookup: siretLookup, status: siretStatus, error: siretError, reset: siretReset } = useSiretLookup();
+  const siretDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSiretChange = (value: string) => {
+    const sanitized = value.replace(/\D/g, '').slice(0, 14);
+    updateField('siret', sanitized);
+
+    const cleaned = sanitized.replace(/\s/g, '');
+    if (cleaned.length !== 9 && cleaned.length !== 14) {
+      siretReset();
+      return;
+    }
+
+    if (siretDebounceRef.current) clearTimeout(siretDebounceRef.current);
+    siretDebounceRef.current = setTimeout(async () => {
+      const result = await siretLookup(cleaned);
+      if (result) {
+        setForm(prev => ({
+          ...prev,
+          raison_sociale: prev.raison_sociale || result.raisonSociale,
+          forme_juridique: prev.forme_juridique === 'SARL' ? result.formeJuridique : prev.forme_juridique,
+          siret: result.siret || sanitized,
+          siren: prev.siren || result.siren,
+          numero_rcs: prev.numero_rcs || result.numeroRcs,
+          tva_intracommunautaire: prev.tva_intracommunautaire || result.tvaIntra,
+          code_ape: prev.code_ape || result.codeApe,
+          adresse_facturation: {
+            ...prev.adresse_facturation,
+            ligne1: prev.adresse_facturation.ligne1 || result.adresse,
+            code_postal: prev.adresse_facturation.code_postal || result.codePostal,
+            ville: prev.adresse_facturation.ville || result.ville,
+          },
+        }));
+      }
+    }, 500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (siretDebounceRef.current) clearTimeout(siretDebounceRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -265,14 +316,15 @@ export default function NouveauClientPage() {
 
     setSaving(true);
     try {
-      const siren = form.siret ? form.siret.substring(0, 9) : '';
-      const tva = form.siret ? `FR${(12 + 3 * (parseInt(form.siret.substring(0, 9)) % 97)) % 97}${form.siret.substring(0, 9)}` : form.tva_intracommunautaire;
+      const siren = form.siren || (form.siret ? form.siret.substring(0, 9) : '');
+      const tva = form.tva_intracommunautaire || (form.siret ? `FR${(12 + 3 * (parseInt(form.siret.substring(0, 9)) % 97)) % 97}${form.siret.substring(0, 9)}` : '');
 
       const clientRes = await api.post<ApiResponse<Client>>('/clients', {
         raison_sociale: form.raison_sociale,
         forme_juridique: form.forme_juridique,
         siret: form.siret || undefined,
         siren: siren || undefined,
+        numero_rcs: form.numero_rcs || undefined,
         tva_intracommunautaire: tva || undefined,
         code_ape: form.code_ape || undefined,
         site_web: form.site_web || undefined,
@@ -316,7 +368,14 @@ export default function NouveauClientPage() {
 
       localStorage.removeItem(STORAGE_KEY);
       setToast({ message: 'Client créé avec succès', type: 'success' });
-      setTimeout(() => router.push(`/dashboard/clients/${clientId}`), 1000);
+
+      if (returnTo === 'devis-nouveau') {
+        setTimeout(() => router.push(`/dashboard/devis/nouveau?clientId=${clientId}`), 1000);
+      } else if (returnTo === 'devis-modifier' && returnDevisId) {
+        setTimeout(() => router.push(`/dashboard/devis/${returnDevisId}/modifier?clientId=${clientId}`), 1000);
+      } else {
+        setTimeout(() => router.push(`/dashboard/clients/${clientId}`), 1000);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur lors de la création';
       setToast({ message, type: 'error' });
@@ -370,16 +429,35 @@ export default function NouveauClientPage() {
         </div>
       )}
 
+      {/* Bandeau retour devis */}
+      {returnTo && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+          <svg className="h-5 w-5 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
+          <p className="text-sm text-blue-800">
+            Vous êtes en train de créer un client depuis le module <strong>Devis</strong>. Après la création, vous serez automatiquement redirigé vers votre devis avec ce client sélectionné.
+          </p>
+        </div>
+      )}
+
       {/* Page header */}
       <div className="mb-8">
         <button
-          onClick={() => router.push('/dashboard/clients')}
+          onClick={() => {
+            localStorage.removeItem(STORAGE_KEY);
+            if (returnTo === 'devis-nouveau') {
+              router.push('/dashboard/devis/nouveau');
+            } else if (returnTo === 'devis-modifier' && returnDevisId) {
+              router.push(`/dashboard/devis/${returnDevisId}/modifier`);
+            } else {
+              router.push('/dashboard/clients');
+            }
+          }}
           className="group mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-violet-600 transition-colors cursor-pointer"
         >
           <svg className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
           </svg>
-          Clients
+          {returnTo ? 'Retour au devis' : 'Clients'}
         </button>
         <div className="flex items-center gap-3.5">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-500/25">
@@ -436,16 +514,62 @@ export default function NouveauClientPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">SIRET</label>
-                  <input
-                    value={form.siret}
-                    onChange={e => updateField('siret', e.target.value.replace(/\D/g, '').slice(0, 14))}
-                    placeholder="14 chiffres"
-                    maxLength={14}
-                    className={inputClass('siret')}
-                  />
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    SIRET <span className="text-xs font-normal text-gray-400">(9 ou 14 chiffres pour auto-remplir)</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      value={form.siret}
+                      onChange={e => handleSiretChange(e.target.value)}
+                      placeholder="14 chiffres"
+                      maxLength={14}
+                      className={`${inputClass('siret')} pr-10`}
+                    />
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      {siretStatus === 'loading' && (
+                        <svg className="animate-spin h-5 w-5 text-violet-500" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      )}
+                      {siretStatus === 'success' && (
+                        <svg className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                        </svg>
+                      )}
+                      {(siretStatus === 'error' || siretStatus === 'not_found') && (
+                        <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
                   <FieldError error={errors.siret} />
-                  {form.siret && form.siret.length === 14 && (
+                  {siretStatus === 'success' && (
+                    <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      </svg>
+                      Informations récupérées depuis l&apos;INSEE
+                    </p>
+                  )}
+                  {siretStatus === 'not_found' && (
+                    <p className="mt-1.5 text-xs text-orange-600 flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                      </svg>
+                      Aucune entreprise trouvée — saisie manuelle requise
+                    </p>
+                  )}
+                  {siretStatus === 'error' && (
+                    <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                      </svg>
+                      {siretError}
+                    </p>
+                  )}
+                  {siretStatus === 'idle' && form.siret && form.siret.length === 14 && (
                     <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
                       <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
@@ -453,6 +577,27 @@ export default function NouveauClientPage() {
                       SIREN : {form.siret.substring(0, 9)}
                     </div>
                   )}
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">SIREN</label>
+                  <input
+                    value={form.siren}
+                    onChange={e => updateField('siren', e.target.value.replace(/\D/g, '').slice(0, 9))}
+                    placeholder="9 chiffres"
+                    maxLength={9}
+                    className={inputClass('siren')}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Numéro RCS</label>
+                  <input
+                    value={form.numero_rcs}
+                    onChange={e => updateField('numero_rcs', e.target.value)}
+                    placeholder="Ex: RCS Paris B 123 456 789"
+                    className={inputClass('numero_rcs')}
+                  />
                 </div>
 
                 <div>
@@ -801,7 +946,20 @@ export default function NouveauClientPage() {
         {/* Footer navigation */}
         <div className="flex items-center justify-between border-t border-gray-100 px-8 py-5">
           <button
-            onClick={() => step > 0 ? setStep(s => s - 1) : router.push('/dashboard/clients')}
+            onClick={() => {
+              if (step > 0) {
+                setStep(s => s - 1);
+              } else {
+                localStorage.removeItem(STORAGE_KEY);
+                if (returnTo === 'devis-nouveau') {
+                  router.push('/dashboard/devis/nouveau');
+                } else if (returnTo === 'devis-modifier' && returnDevisId) {
+                  router.push(`/dashboard/devis/${returnDevisId}/modifier`);
+                } else {
+                  router.push('/dashboard/clients');
+                }
+              }
+            }}
             className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
           >
             {step > 0 ? (

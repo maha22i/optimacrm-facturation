@@ -23,23 +23,42 @@ export async function analyze(req, res, next) {
 
 export async function execute(req, res, next) {
   try {
-    const { file_id, lignes, periode } = req.body;
+    const { file_id, lignes, periode, file_meta } = req.body;
     if (!lignes || !Array.isArray(lignes)) {
       return res.status(400).json({ success: false, message: 'lignes requis (tableau)' });
     }
-    const result = await service.executeImport(lignes, periode || {});
+
+    // Recover file metadata from temp if available
+    let fileMeta = file_meta || {};
+    if (file_id && !fileMeta.hash) {
+      try {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const tempPath = path.default.resolve('uploads/import-temp', `${file_id}.json`);
+        const raw = JSON.parse(await fs.default.readFile(tempPath, 'utf-8'));
+        if (raw.file_meta) fileMeta = raw.file_meta;
+      } catch { /* noop */ }
+    }
+
+    const result = await service.executeImport(lignes, periode || {}, fileMeta, req.user);
     if (file_id) await service.cleanupTempFile(file_id);
     try {
-      const total = result.total || lignes.length || 0;
-      const depassements = result.depassements || result.summary?.depassements || 0;
-      const montant = result.montant_total || result.summary?.montant_total || 0;
-      const errors = result.errors?.length || result.summary?.errors || 0;
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'releves_importes', module: 'releves',
-        description: `Import de ${total} relevés compteurs${depassements ? ` (${depassements} dépassements détectés)` : ''}`,
-        details: { lignes_total: total, depassements, montant_total: montant, lignes_erreur: errors },
-        statut: errors > 0 ? 'partiel' : 'succes',
+        action: 'releves_importes', module: 'imports_releves',
+        description: `Import ${result.numero_batch || ''} — ${result.imported} relevé(s) importé(s)${result.depassements ? ` (${result.depassements} dépassements)` : ''}`,
+        entityType: 'import_releves',
+        entityId: result.import_id,
+        entityLabel: result.numero_batch,
+        details: {
+          lignes_total: result.total,
+          imported: result.imported,
+          ignored: result.ignored,
+          depassements: result.depassements,
+          montant_total: result.montant_total_depassement_ht,
+          lignes_erreur: result.errors,
+        },
+        statut: result.errors > 0 ? 'partiel' : 'succes',
         ipAddress: activityLog.getClientIp(req),
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }

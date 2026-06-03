@@ -108,10 +108,9 @@ export default function MarquesPage() {
     try {
       const formData = new FormData();
       formData.append('logo', file);
-      const token = localStorage.getItem('token');
       const res = await fetch(`${API_URL}/marques/${marqueId}/logo`, {
         method: 'POST',
-        headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+        credentials: 'include',
         body: formData,
       });
       const data = await res.json();

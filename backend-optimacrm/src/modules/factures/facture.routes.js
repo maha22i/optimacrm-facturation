@@ -36,6 +36,13 @@ router.post(
 router.put('/:id', checkPermission('factures_write'), ctrl.updateFacture);
 router.delete('/:id', checkPermission('factures_write'), ctrl.deleteFacture);
 
+// ── Gestion des lignes ───────────────────────────────────────────────────
+
+router.post('/:id/lignes', checkPermission('factures_write'), ctrl.ajouterLigne);
+router.put('/:id/lignes/:lid', checkPermission('factures_write'), ctrl.modifierLigne);
+router.delete('/:id/lignes/:lid', checkPermission('factures_write'), ctrl.supprimerLigne);
+router.put('/:id/recalculer', checkPermission('factures_write'), ctrl.recalculerTotaux);
+
 // ── Actions workflow ─────────────────────────────────────────────────────
 
 router.post('/:id/valider', checkPermission('factures_write'), ctrl.validerFacture);
@@ -50,5 +57,10 @@ router.post('/:id/dupliquer', checkPermission('factures_write'), ctrl.dupliquerF
 router.post('/generer-depuis-contrat/:contratId', checkPermission('factures_write'), ctrl.genererDepuisContrat);
 router.post('/generer-depuis-devis/:devisId', checkPermission('factures_write'), ctrl.genererDepuisDevis);
 router.post('/generer-lot', checkPermission('factures_write'), ctrl.executerGenerationLot);
+
+// ── Actions en masse ──────────────────────────────────────────────────────
+router.post('/valider-lot', checkPermission('factures_write'), ctrl.validerLot);
+router.post('/envoyer-lot', checkPermission('factures_write'), ctrl.envoyerLot);
+router.post('/telecharger-lot', checkPermission('factures_write'), ctrl.telechargerLot);
 
 export default router;

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
-import type { ApiResponse, PaginatedResponse, ParcMachine, ReleveCompteur } from '@/lib/types';
+import type { ApiResponse, PaginatedResponse, ParcMachine, ReleveCompteur, MachineTimelineEntry } from '@/lib/types';
 
 function formatDate(d: string | null) {
   if (!d) return '—';
@@ -54,6 +54,9 @@ export default function FicheMachinePage({ params }: { params: Promise<{ id: str
   const [relevesLoading, setRelevesLoading] = useState(false);
   const [relevesTotal, setRelevesTotal] = useState(0);
 
+  const [timeline, setTimeline] = useState<MachineTimelineEntry[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+
   const [showReleveModal, setShowReleveModal] = useState(false);
   const [editingReleve, setEditingReleve] = useState<ReleveCompteur | null>(null);
   const [releveForm, setReleveForm] = useState({ date_releve: new Date().toISOString().split('T')[0], date_debut_periode: '', date_fin_periode: '', compteur_nb: '', compteur_couleur: '', notes: '' });
@@ -81,8 +84,22 @@ export default function FicheMachinePage({ params }: { params: Promise<{ id: str
     finally { setRelevesLoading(false); }
   }, [machineId]);
 
+  const loadTimeline = useCallback(async () => {
+    setTimelineLoading(true);
+    try {
+      const res = await api.get<ApiResponse<MachineTimelineEntry[]>>(`/parc-machines/${machineId}/timeline`);
+      setTimeline(res.data);
+    } catch { /* */ }
+    finally { setTimelineLoading(false); }
+  }, [machineId]);
+
   useEffect(() => { loadMachine(); }, [loadMachine]);
-  useEffect(() => { if (activeTab === 'releves') loadReleves(); }, [activeTab, loadReleves]);
+  useEffect(() => {
+    if (activeTab === 'releves') {
+      loadReleves();
+      loadTimeline();
+    }
+  }, [activeTab, loadReleves, loadTimeline]);
 
   function openNewReleveModal() {
     setEditingReleve(null);
@@ -469,33 +486,80 @@ export default function FicheMachinePage({ params }: { params: Promise<{ id: str
                 </div>
               )}
 
-              {/* Onglet Historique */}
+              {/* Onglet Historique — Timeline enrichie */}
               {activeTab === 'historique' && (
                 <div className="space-y-4">
-                  <div className="border-l-2 border-gray-200 ml-3 pl-6 space-y-6">
-                    {machine.date_installation && (
+                  {timelineLoading ? (
+                    <div className="text-center py-8"><div className="h-6 w-6 mx-auto rounded-full border-2 border-blue-500/20 border-t-blue-500 animate-spin" /></div>
+                  ) : (
+                    <div className="border-l-2 border-gray-200 ml-3 pl-6 space-y-6">
+                      {machine.date_installation && (
+                        <div className="relative">
+                          <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-blue-500 border-2 border-white" />
+                          <p className="text-xs text-gray-400">{formatDate(machine.date_installation)}</p>
+                          <p className="text-sm font-medium text-gray-900">Installation</p>
+                          <p className="text-xs text-gray-500">Machine installée{machine.client_raison_sociale ? ` chez ${machine.client_raison_sociale}` : ''}</p>
+                        </div>
+                      )}
+                      {timeline.length > 0 ? timeline.map(entry => {
+                        const isAnnule = entry.import_statut === 'Annule';
+                        return (
+                          <div key={entry.releve_id} className={`relative ${isAnnule ? 'opacity-50' : ''}`}>
+                            <div className={`absolute -left-[31px] top-0.5 h-4 w-4 rounded-full border-2 border-white ${
+                              isAnnule ? 'bg-red-400' : entry.est_facture ? 'bg-emerald-500' : 'bg-amber-400'
+                            }`} />
+                            <p className="text-xs text-gray-400">{formatDate(entry.date_releve)}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-gray-900">Relevé compteur</p>
+                              {entry.numero_batch && (
+                                <Link href={`/dashboard/parc-machines/imports/${entry.import_id}`} className="text-[11px] font-mono text-blue-600 hover:underline">
+                                  {entry.numero_batch}
+                                </Link>
+                              )}
+                              {isAnnule && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-medium">Import annulé</span>}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Compteur NB: {formatNumber(entry.compteur_nb)} &bull; Couleur: {formatNumber(entry.compteur_couleur)}
+                            </p>
+                            {(entry.volume_nb > 0 || entry.volume_couleur > 0) && (
+                              <p className="text-xs text-emerald-600 mt-0.5">
+                                Volume période: +{formatNumber(entry.volume_nb)} NB / +{formatNumber(entry.volume_couleur)} couleur
+                              </p>
+                            )}
+                            {entry.volume_nb === 0 && entry.volume_couleur === 0 && (
+                              <p className="text-xs text-gray-400 mt-0.5">Volume période: Initialisation</p>
+                            )}
+                            {entry.factures && entry.factures.length > 0 && (
+                              <div className="mt-1.5 space-y-1">
+                                {entry.factures.map(f => (
+                                  <Link key={f.id} href={`/dashboard/factures/${f.id}`}
+                                    className="flex items-center gap-2 text-xs text-gray-600 hover:text-blue-600">
+                                    <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                                    <span className="font-mono font-medium">{f.numero}</span>
+                                    <span>({formatDate(f.date)})</span>
+                                    <span className="font-medium">{f.montant_ttc?.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € TTC</span>
+                                  </Link>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }) : machine.derniers_releves?.map(r => (
+                        <div key={r.id} className="relative">
+                          <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-emerald-500 border-2 border-white" />
+                          <p className="text-xs text-gray-400">{formatDate(r.date_releve)}</p>
+                          <p className="text-sm font-medium text-gray-900">Relevé compteur</p>
+                          <p className="text-xs text-gray-500">NB: {formatNumber(r.compteur_nb)} / Couleur: {formatNumber(r.compteur_couleur)} ({r.source})</p>
+                        </div>
+                      ))}
                       <div className="relative">
-                        <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-blue-500 border-2 border-white" />
-                        <p className="text-xs text-gray-400">{formatDate(machine.date_installation)}</p>
-                        <p className="text-sm font-medium text-gray-900">Installation</p>
-                        <p className="text-xs text-gray-500">Machine installée{machine.client_raison_sociale ? ` chez ${machine.client_raison_sociale}` : ''}</p>
+                        <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-gray-300 border-2 border-white" />
+                        <p className="text-xs text-gray-400">{formatDate(machine.created_at)}</p>
+                        <p className="text-sm font-medium text-gray-900">Création fiche</p>
+                        <p className="text-xs text-gray-500">Machine ajoutée au parc</p>
                       </div>
-                    )}
-                    {machine.derniers_releves?.map(r => (
-                      <div key={r.id} className="relative">
-                        <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-emerald-500 border-2 border-white" />
-                        <p className="text-xs text-gray-400">{formatDate(r.date_releve)}</p>
-                        <p className="text-sm font-medium text-gray-900">Relevé compteur</p>
-                        <p className="text-xs text-gray-500">NB: {formatNumber(r.compteur_nb)} / Couleur: {formatNumber(r.compteur_couleur)} ({r.source})</p>
-                      </div>
-                    ))}
-                    <div className="relative">
-                      <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-gray-300 border-2 border-white" />
-                      <p className="text-xs text-gray-400">{formatDate(machine.created_at)}</p>
-                      <p className="text-sm font-medium text-gray-900">Création fiche</p>
-                      <p className="text-xs text-gray-500">Machine ajoutée au parc</p>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>

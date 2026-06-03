@@ -47,6 +47,31 @@ export default function ParcMachinesPage() {
   const [importMenuOpen, setImportMenuOpen] = useState(false);
   const importMenuRef = useRef<HTMLDivElement>(null);
 
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('xlsx');
+  const [exportApplyFilters, setExportApplyFilters] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const params = new URLSearchParams({ format: exportFormat });
+      if (exportApplyFilters) {
+        if (filterCategorie) params.set('categorie', filterCategorie);
+        if (filterStatut) params.set('statut', filterStatut);
+        if (searchDebounce) params.set('search', searchDebounce);
+      }
+      await api.download(`/parc-machines/export?${params}`);
+      setShowExportModal(false);
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : 'Erreur lors de l\'export');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounce(search), 300);
     return () => clearTimeout(t);
@@ -107,6 +132,16 @@ export default function ParcMachinesPage() {
             <p className="mt-0.5 text-sm text-gray-500">Gérez vos équipements déployés · {total} équipement{total > 1 ? 's' : ''} au total</p>
           </div>
         </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Exporter
+          </button>
         <div className="relative" ref={importMenuRef}>
           <button
             onClick={() => setImportMenuOpen(!importMenuOpen)}
@@ -139,6 +174,7 @@ export default function ParcMachinesPage() {
               </button>
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -410,6 +446,73 @@ export default function ParcMachinesPage() {
           </div>
         )}
       </div>
+
+      {/* Modal Export */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 relative">
+            <button onClick={() => setShowExportModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+            </button>
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Exporter le parc machines</h3>
+            <p className="text-sm text-gray-500 mb-5">Choisissez les options d&apos;export.</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Format du fichier</label>
+                <div className="flex gap-3">
+                  {(['xlsx', 'csv'] as const).map(f => (
+                    <button key={f} onClick={() => setExportFormat(f)}
+                      className={`flex-1 py-2 px-4 rounded-lg border text-sm font-medium transition-all cursor-pointer ${exportFormat === f ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {f === 'xlsx' ? 'Excel (.xlsx)' : 'CSV (.csv)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Périmètre</label>
+                <div className="flex gap-3">
+                  <button onClick={() => setExportApplyFilters(false)}
+                    className={`flex-1 py-2 px-4 rounded-lg border text-sm font-medium transition-all cursor-pointer ${!exportApplyFilters ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Toutes les machines
+                  </button>
+                  <button onClick={() => setExportApplyFilters(true)}
+                    className={`flex-1 py-2 px-4 rounded-lg border text-sm font-medium transition-all cursor-pointer ${exportApplyFilters ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Filtres actuels
+                  </button>
+                </div>
+                {exportApplyFilters && (filterCategorie || filterStatut || searchDebounce) && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    Filtres actifs : {[filterCategorie && `Catégorie = ${filterCategorie}`, filterStatut && `Statut = ${filterStatut}`, searchDebounce && `Recherche = "${searchDebounce}"`].filter(Boolean).join(', ')}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {exportError && <p className="mt-4 text-sm text-red-600">{exportError}</p>}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => setShowExportModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">
+                Annuler
+              </button>
+              <button onClick={handleExport} disabled={exporting}
+                className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors cursor-pointer inline-flex items-center gap-2"
+              >
+                {exporting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                    Export en cours...
+                  </>
+                ) : 'Télécharger'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

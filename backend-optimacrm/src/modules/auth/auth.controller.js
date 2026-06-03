@@ -2,16 +2,30 @@ import * as authService from './auth.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
 
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  maxAge: 24 * 60 * 60 * 1000,
+  path: '/',
+};
+
+function setTokenCookie(res, token) {
+  res.cookie('token', token, COOKIE_OPTIONS);
+}
+
 export async function register(req, res, next) {
   try {
     const result = await authService.register(req.body);
-    sendSuccess(res, result, 'Registration successful', 201);
+    setTokenCookie(res, result.token);
+    sendSuccess(res, { user: result.user }, 'Registration successful', 201);
   } catch (err) { next(err); }
 }
 
 export async function login(req, res, next) {
   try {
     const result = await authService.login(req.body.email, req.body.password);
+    setTokenCookie(res, result.token);
     try {
       const nom = `${result.user?.first_name || ''} ${result.user?.last_name || ''}`.trim();
       await activityLog.log({
@@ -23,8 +37,13 @@ export async function login(req, res, next) {
         ipAddress: activityLog.getClientIp(req),
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
-    sendSuccess(res, result, 'Login successful');
+    sendSuccess(res, { user: result.user }, 'Login successful');
   } catch (err) { next(err); }
+}
+
+export async function logout(_req, res) {
+  res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
+  sendSuccess(res, null, 'Logged out');
 }
 
 export async function getProfile(req, res, next) {

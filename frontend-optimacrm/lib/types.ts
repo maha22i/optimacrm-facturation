@@ -76,6 +76,7 @@ export interface Client {
   siren: string | null;
   tva_intracommunautaire: string | null;
   code_ape: string | null;
+  numero_rcs: string | null;
   site_web: string | null;
   telephone_principal: string | null;
   email_principal: string;
@@ -92,10 +93,66 @@ export interface Client {
   bic: string | null;
   reference_mandat_sepa: string | null;
   date_mandat_sepa: string | null;
+  sequence_mandat: string | null;
   notes: string | null;
   champs_personnalises: ClientChampPersonnalise[];
   created_at: string;
   updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// SEPA
+// ---------------------------------------------------------------------------
+
+export interface SepaCreancier {
+  id: number;
+  nom: string;
+  ics: string;
+  iban: string;
+  bic: string;
+  updated_at: string;
+}
+
+export interface SepaFactureEligible {
+  facture_id: number;
+  numero_facture: string;
+  total_ttc: number;
+  statut: string;
+  date_creation: string;
+  client_id: number;
+  code_client: string;
+  client_raison_sociale: string;
+  numero_client: string;
+  raison_sociale: string;
+  iban: string | null;
+  bic: string | null;
+  reference_mandat_sepa: string | null;
+  date_mandat_sepa: string | null;
+  sequence_mandat: string | null;
+  pret: boolean;
+  champs_manquants: string[];
+}
+
+export interface SepaRemise {
+  id: number;
+  msg_id: string;
+  pmt_inf_id: string;
+  date_creation: string;
+  date_prelevement: string;
+  nb_transactions: number;
+  montant_total: number;
+  statut: string;
+  user_nom: string | null;
+}
+
+export interface SepaGenerationResult {
+  remise_id: number;
+  msg_id: string;
+  pmt_inf_id: string;
+  nb_transactions: number;
+  montant_total: string;
+  date_prelevement: string;
+  xml: string;
 }
 
 export interface ClientAdresse {
@@ -203,7 +260,10 @@ export interface DevisHistorique {
 export interface Devis {
   id: number;
   numero_devis: string;
-  client_id: number;
+  client_id: number | null;
+  nom_client_libre?: string | null;
+  commercial?: string | null;
+  client_raison_sociale_fiche?: string | null;
   contact_id: number | null;
   adresse_facturation_id: number | null;
   adresse_livraison_id: number | null;
@@ -231,6 +291,11 @@ export interface Devis {
   message_client: string | null;
   facture_id: number | null;
   bon_commande_id: number | null;
+  /** Métadonnées import Excel (ligne de synthèse si pas de devis_lignes) */
+  situation_affaire?: string | null;
+  type_produit?: string | null;
+  ordre_service?: string | null;
+  provenance?: string | null;
   client_nom?: string;
   numero_client?: string;
   created_at: string;
@@ -429,6 +494,8 @@ export interface EmailConfig {
   signature: string | null;
   template_facture_sujet: string | null;
   template_facture_corps: string | null;
+  template_devis_sujet: string | null;
+  template_devis_corps: string | null;
   est_configure: boolean;
   derniere_verification: string | null;
   created_at: string;
@@ -545,7 +612,8 @@ export type CategorieLigne =
   | 'Forfait Copie Couleur'
   | 'Service Connectic'
   | 'PLC'
-  | 'Hors Forfait';
+  | 'Hors Forfait'
+  | 'Personnalisé';
 
 export interface ContratLigne {
   id?: number;
@@ -926,9 +994,11 @@ export interface ImportRelevesParseResult {
     compteur_couleur?: string;
     date_releve?: string;
   };
+  file_hash: string;
+  file_size: number;
 }
 
-export type ReleveLigneStatut = 'OK' | 'DEPASSEMENT' | 'ANOMALIE' | 'PREMIER_RELEVE' | 'SANS_CONTRAT' | 'HORS_CONTRAT';
+export type ReleveLigneStatut = 'OK' | 'DEPASSEMENT' | 'ANOMALIE' | 'PREMIER_RELEVE' | 'AU_COMPTEUR' | 'SANS_CONTRAT' | 'HORS_CONTRAT';
 
 export interface ReleveLigneAnalyse {
   row_number: number;
@@ -967,6 +1037,7 @@ export interface ImportRelevesAnalyseResult {
     machines_inconnues: number;
     avec_depassement: number;
     sans_contrat: number;
+    au_compteur: number;
     anomalies: number;
     premier_releve: number;
     hors_contrat: number;
@@ -978,12 +1049,118 @@ export interface ImportRelevesAnalyseResult {
 export interface ImportRelevesExecuteResult {
   total: number;
   imported: number;
+  ignored: number;
   errors: number;
   depassements: number;
   montant_total_depassement_ht: number;
   anomalies_ignorees: number;
   machines_inconnues_ignorees: number;
   error_details: { row_number: number; numero_serie: string; error: string }[];
+  numero_batch: string | null;
+  import_id: number | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Imports Relevés (Historique)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type StatutImport = 'Actif' | 'Annule';
+
+export interface ImportReleve {
+  id: number;
+  numero_batch: string;
+  nom_fichier: string;
+  taille_fichier: number | null;
+  hash_fichier: string;
+  user_id: number | null;
+  user_nom: string | null;
+  date_import: string;
+  nb_lignes_fichier: number;
+  nb_releves_crees: number;
+  nb_lignes_ignorees: number;
+  nb_lignes_erreur: number;
+  periode_debut: string | null;
+  periode_fin: string | null;
+  statut: StatutImport;
+  date_annulation: string | null;
+  user_annulation_id: number | null;
+  motif_annulation: string | null;
+  rapport_erreurs: ImportRapportErreur[] | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  nb_factures?: number;
+  montant_total_ht?: number;
+}
+
+export interface ImportRapportErreur {
+  ligne: number;
+  matricule: string;
+  type_erreur: string;
+  detail: string;
+}
+
+export interface ImportReleveDetail extends ImportReleve {
+  releves?: ImportReleveRow[];
+  factures?: ImportFactureRow[];
+}
+
+export interface ImportReleveRow {
+  id: number;
+  date_releve: string;
+  machine_id: number;
+  numero_serie: string;
+  modele: string | null;
+  marque: string | null;
+  designation: string | null;
+  client_raison_sociale: string | null;
+  compteur_nb: number;
+  compteur_couleur: number;
+  volume_nb: number;
+  volume_couleur: number;
+  est_facture: boolean;
+  facture_numero: string | null;
+  facture_id: number | null;
+}
+
+export interface ImportFactureRow {
+  id: number;
+  numero_facture: string;
+  date_creation: string;
+  client_id: number;
+  client_nom: string;
+  total_ht: number;
+  total_ttc: number;
+  statut: string;
+  nb_releves_source: number;
+}
+
+export interface ImportsRelevesStats {
+  total_imports: number;
+  imports_ce_mois: number;
+  releves_non_factures: number;
+  imports_annules: number;
+}
+
+export interface MachineTimelineEntry {
+  releve_id: number;
+  date_releve: string;
+  compteur_nb: number;
+  compteur_couleur: number;
+  volume_nb: number;
+  volume_couleur: number;
+  est_facture: boolean;
+  import_id: number | null;
+  numero_batch: string | null;
+  date_import: string | null;
+  import_statut: string | null;
+  factures: {
+    id: number;
+    numero: string;
+    date: string;
+    montant_ttc: number;
+    statut: string;
+  }[] | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1018,6 +1195,18 @@ export interface FactureLigne {
   remise_montant: number;
   taux_tva: number;
   total_ht: number;
+  releve_compteur_id?: number | null;
+  releve_info?: {
+    id: number;
+    date_releve: string;
+    machine_numero_serie: string;
+    compteur_nb: number;
+    compteur_couleur: number;
+    import_id: number | null;
+    numero_batch: string | null;
+    date_import: string | null;
+    user_nom: string | null;
+  } | null;
 }
 
 export interface FactureReglement {
@@ -1145,4 +1334,71 @@ export interface GenerationLotResult {
     total_ttc: number;
   }[];
   erreurs: { contrat_id: number; message: string }[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Avoirs (Notes de crédit)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type StatutAvoir = 'Brouillon' | 'Validé' | 'Remboursé' | 'Imputé' | 'Annulé';
+export type TypeAvoir = 'TOTAL' | 'PARTIEL';
+export type ModeUtilisation = 'REMBOURSEMENT' | 'IMPUTATION';
+
+export interface AvoirLigne {
+  id?: number;
+  avoir_id?: number;
+  facture_ligne_id?: number | null;
+  designation: string;
+  quantite: number;
+  prix_unitaire_ht: number;
+  taux_tva: number;
+  montant_ht: number;
+  montant_ttc: number;
+}
+
+export interface Avoir {
+  id: number;
+  numero: string;
+  facture_id: number;
+  client_id: number;
+  type_avoir: TypeAvoir;
+  motif: string | null;
+  date_avoir: string;
+  montant_ht: number;
+  montant_tva: number;
+  montant_ttc: number;
+  statut: StatutAvoir;
+  mode_utilisation: ModeUtilisation | null;
+  facture_imputee_id: number | null;
+  pdf_url: string | null;
+  created_at: string;
+  updated_at: string;
+  client_nom?: string;
+  numero_facture?: string;
+  facture_client_raison_sociale?: string;
+  facture_date_creation?: string;
+  facture_total_ttc?: number;
+  facture_imputee_numero?: string;
+}
+
+export interface AvoirDetail extends Avoir {
+  lignes: AvoirLigne[];
+  total_avoirs_existants?: number;
+  reste_avoirable?: number;
+}
+
+export interface AvoirsPossibles {
+  facture: Facture;
+  lignes: FactureLigne[];
+  total_ttc: number;
+  total_avoirs_existants: number;
+  reste_avoirable: number;
+  avoirs_existants: { id: number; numero: string; montant_ttc: number; statut: string; type_avoir: string; date_avoir: string }[];
+}
+
+export interface AvoirsFacture {
+  avoirs: Avoir[];
+  facture_total_ttc: number;
+  total_avoirs: number;
+  net_du: number;
 }

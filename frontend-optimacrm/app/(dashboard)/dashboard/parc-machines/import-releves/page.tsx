@@ -50,11 +50,12 @@ const STATUT_CONFIG: Record<ReleveLigneStatut, { label: string; icon: string; bg
   DEPASSEMENT: { label: 'Dépassement', icon: '⚠️', bg: 'bg-amber-50', text: 'text-amber-700', rowBg: 'bg-amber-50/40' },
   ANOMALIE: { label: 'Anomalie', icon: '🔴', bg: 'bg-red-50', text: 'text-red-700', rowBg: 'bg-red-50/40' },
   PREMIER_RELEVE: { label: '1er relevé', icon: 'ℹ️', bg: 'bg-blue-50', text: 'text-blue-700', rowBg: 'bg-blue-50/40' },
+  AU_COMPTEUR: { label: 'Au compteur', icon: '💠', bg: 'bg-indigo-50', text: 'text-indigo-700', rowBg: 'bg-indigo-50/40' },
   SANS_CONTRAT: { label: 'Sans contrat', icon: '🟡', bg: 'bg-gray-50', text: 'text-gray-600', rowBg: 'bg-gray-50/40' },
   HORS_CONTRAT: { label: 'Hors contrat', icon: '🟢', bg: 'bg-gray-50', text: 'text-gray-500', rowBg: 'bg-gray-50/40' },
 };
 
-type FilterKey = 'all' | 'DEPASSEMENT' | 'ANOMALIE' | 'SANS_CONTRAT' | 'PREMIER_RELEVE';
+type FilterKey = 'all' | 'DEPASSEMENT' | 'ANOMALIE' | 'SANS_CONTRAT' | 'AU_COMPTEUR' | 'PREMIER_RELEVE';
 
 const STEPS = [
   { label: 'Upload', icon: '1' },
@@ -96,6 +97,10 @@ export default function ImportRelevesPage() {
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<ImportRelevesExecuteResult | null>(null);
 
+  // Duplicate check
+  const [duplicateImport, setDuplicateImport] = useState<{ numero_batch: string; date_import: string; user_nom: string; nb_releves_crees: number; id: number } | null>(null);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+
   // ─── Upload ──────────────────────────────────────────────────────────
 
   const handleFile = useCallback(async (file: File) => {
@@ -118,6 +123,25 @@ export default function ImportRelevesPage() {
         compteur_couleur: suggested.compteur_couleur || '',
         date_releve: suggested.date_releve || '',
       });
+
+      // Check for duplicate file
+      if (res.data.file_hash) {
+        try {
+          const dupRes = await api.post<ApiResponse<{ duplicate: boolean; existing_import: Record<string, unknown> | null }>>('/imports-releves/check-duplicate', { hash: res.data.file_hash });
+          if (dupRes.data.duplicate && dupRes.data.existing_import) {
+            const ei = dupRes.data.existing_import;
+            setDuplicateImport({
+              numero_batch: String(ei.numero_batch),
+              date_import: String(ei.date_import),
+              user_nom: String(ei.user_nom || ''),
+              nb_releves_crees: Number(ei.nb_releves_crees || 0),
+              id: Number(ei.id),
+            });
+            setShowDuplicateWarning(true);
+          }
+        } catch { /* ignore check errors */ }
+      }
+
       setStep(1);
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Erreur lors du parsing', type: 'error' });
@@ -177,6 +201,7 @@ export default function ImportRelevesPage() {
       if (filter === 'DEPASSEMENT') arr = arr.filter(l => l.statut === 'DEPASSEMENT');
       else if (filter === 'ANOMALIE') arr = arr.filter(l => l.statut === 'ANOMALIE');
       else if (filter === 'SANS_CONTRAT') arr = arr.filter(l => l.statut === 'SANS_CONTRAT' || l.statut === 'HORS_CONTRAT');
+      else if (filter === 'AU_COMPTEUR') arr = arr.filter(l => l.statut === 'AU_COMPTEUR');
       else if (filter === 'PREMIER_RELEVE') arr = arr.filter(l => l.statut === 'PREMIER_RELEVE');
     }
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -221,6 +246,11 @@ export default function ImportRelevesPage() {
         file_id: parseResult.file_id,
         lignes: lignesPayload,
         periode: { date_debut: periodeDebut || null, date_fin: periodeFin || null },
+        file_meta: {
+          hash: parseResult.file_hash,
+          name: fileName,
+          size: parseResult.file_size,
+        },
       });
       setExecuteResult(res.data);
       setStep(3);
@@ -265,12 +295,36 @@ export default function ImportRelevesPage() {
         </div>
       </div>
 
+      {/* Duplicate warning banner */}
+      {showDuplicateWarning && duplicateImport && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <svg className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+          <div className="flex-1">
+            <p className="font-semibold text-amber-800 text-sm">Ce fichier a déjà été importé</p>
+            <p className="text-sm text-amber-700 mt-1">
+              Import <span className="font-mono font-semibold">{duplicateImport.numero_batch}</span> — le {new Date(duplicateImport.date_import).toLocaleDateString('fr-FR')} par {duplicateImport.user_nom} — {duplicateImport.nb_releves_crees} relevés créés
+            </p>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => router.push(`/dashboard/parc-machines/imports/${duplicateImport.id}`)} className="text-xs font-medium text-amber-700 underline cursor-pointer">Voir cet import</button>
+              <button onClick={() => setShowDuplicateWarning(false)} className="text-xs font-medium text-amber-700 underline cursor-pointer">Importer quand même</button>
+              <button onClick={() => { setShowDuplicateWarning(false); setStep(0); setParseResult(null); }} className="text-xs font-medium text-gray-500 underline cursor-pointer">Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══ STEP 0: UPLOAD ═══ */}
       {step === 0 && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-800">
             <p className="font-semibold mb-1">Import intelligent des relevés</p>
             <p>Le fichier doit contenir un <strong>numéro de série</strong> et les <strong>compteurs</strong> (Total mono / Total couleur). Le système retrouve automatiquement le client, la machine et le contrat, puis calcule les dépassements.</p>
+            <ul className="mt-2 text-xs text-blue-700 space-y-1 list-disc list-inside">
+              <li>Chaque import est tracé dans l&apos;historique avec un numéro unique (IMP-XXXX)</li>
+              <li>Si vous importez deux fois le même fichier, vous serez prévenu</li>
+              <li>Vous pouvez annuler un import tant qu&apos;aucune facture n&apos;a été générée</li>
+            </ul>
+            <button onClick={() => router.push('/dashboard/parc-machines/imports')} className="mt-2 text-xs font-medium text-blue-700 underline cursor-pointer">Voir l&apos;historique des imports</button>
           </div>
 
           {/* Période optionnelle */}
@@ -418,6 +472,7 @@ export default function ImportRelevesPage() {
                   { key: 'all' as FilterKey, label: 'Tous', count: analyseResult.lignes.length },
                   { key: 'DEPASSEMENT' as FilterKey, label: 'Dépassements ⚠️', count: analyseResult.summary.avec_depassement },
                   { key: 'ANOMALIE' as FilterKey, label: 'Anomalies 🔴', count: analyseResult.summary.anomalies },
+                  { key: 'AU_COMPTEUR' as FilterKey, label: 'Au compteur 💠', count: analyseResult.summary.au_compteur || 0 },
                   { key: 'SANS_CONTRAT' as FilterKey, label: 'Sans contrat', count: analyseResult.summary.sans_contrat + analyseResult.summary.hors_contrat },
                   { key: 'PREMIER_RELEVE' as FilterKey, label: '1er relevé', count: analyseResult.summary.premier_releve },
                 ]).map(f => (
@@ -482,12 +537,12 @@ export default function ImportRelevesPage() {
                         <CellNum value={l.ancien_compteur_nb} placeholder={l.statut === 'PREMIER_RELEVE' ? '0 (init)' : undefined} muted={l.statut === 'ANOMALIE'} />
                         <CellNum value={l.nouveau_compteur_nb} muted={l.statut === 'ANOMALIE'} />
                         <CellNum value={l.volume_nb} warn={l.depassement_nb > 0} muted={l.statut === 'ANOMALIE'} />
-                        <CellNum value={l.forfait_nb} muted={!l.forfait_nb} placeholder={!l.forfait_nb && l.statut === 'SANS_CONTRAT' ? '—' : undefined} />
+                        <CellNum value={l.forfait_nb} muted={!l.forfait_nb} placeholder={!l.forfait_nb && (l.statut === 'SANS_CONTRAT' || l.statut === 'AU_COMPTEUR') ? '—' : undefined} />
                         <CellNum value={l.depassement_nb} warn={l.depassement_nb > 0} muted={l.statut === 'ANOMALIE'} />
                         <CellNum value={l.ancien_compteur_couleur} placeholder={l.statut === 'PREMIER_RELEVE' ? '0 (init)' : undefined} muted={l.statut === 'ANOMALIE'} />
                         <CellNum value={l.nouveau_compteur_couleur} muted={l.statut === 'ANOMALIE'} />
                         <CellNum value={l.volume_couleur} warn={l.depassement_couleur > 0} muted={l.statut === 'ANOMALIE'} />
-                        <CellNum value={l.forfait_couleur} muted={!l.forfait_couleur} placeholder={!l.forfait_couleur && l.statut === 'SANS_CONTRAT' ? '—' : undefined} />
+                        <CellNum value={l.forfait_couleur} muted={!l.forfait_couleur} placeholder={!l.forfait_couleur && (l.statut === 'SANS_CONTRAT' || l.statut === 'AU_COMPTEUR') ? '—' : undefined} />
                         <CellNum value={l.depassement_couleur} warn={l.depassement_couleur > 0} muted={l.statut === 'ANOMALIE'} />
                         <td className={`px-3 py-2 text-right text-sm whitespace-nowrap ${l.montant_total_ht > 0 ? 'font-bold text-gray-900' : 'text-gray-400'}`}>
                           {l.statut === 'ANOMALIE' ? '—' : fmtEur(l.montant_total_ht)}
@@ -529,6 +584,11 @@ export default function ImportRelevesPage() {
             <svg className="h-8 w-8 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Import des relevés terminé</h2>
+          {executeResult.numero_batch && (
+            <p className="text-sm text-gray-500 mb-1">
+              Import <span className="font-mono font-semibold text-blue-600">{executeResult.numero_batch}</span> enregistré
+            </p>
+          )}
 
           <div className="flex flex-wrap justify-center gap-6 my-6">
             <ResultStat value={executeResult.imported} label="Relevés importés" color="emerald" />
@@ -547,11 +607,16 @@ export default function ImportRelevesPage() {
           )}
 
           <div className="flex justify-center gap-3 mt-8">
-            <button onClick={() => router.push('/dashboard/parc-machines')} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 cursor-pointer">
-              Voir le parc machine
+            {executeResult.import_id && (
+              <button onClick={() => router.push(`/dashboard/parc-machines/imports/${executeResult.import_id}`)} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 cursor-pointer">
+                Voir le détail de cet import
+              </button>
+            )}
+            <button onClick={() => router.push('/dashboard/parc-machines/imports')} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+              Historique des imports
             </button>
-            <button disabled className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed" title="Bientôt disponible">
-              Générer les factures
+            <button onClick={() => router.push('/dashboard/parc-machines')} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+              Voir le parc machine
             </button>
           </div>
         </div>

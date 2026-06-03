@@ -476,6 +476,41 @@ async function refreshMachineCounters(machineId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+export async function getMachinesForExport({ search, categorie, statut, client_id }) {
+  const conditions = [];
+  const params = [];
+  let i = 1;
+
+  if (categorie) { conditions.push(`pm.categorie = $${i++}`); params.push(categorie); }
+  if (statut) { conditions.push(`pm.statut = $${i++}`); params.push(statut); }
+  if (client_id) { conditions.push(`pm.client_id = $${i++}`); params.push(parseInt(client_id)); }
+  if (search) {
+    conditions.push(`(pm.numero_serie ILIKE $${i} OR pm.designation ILIKE $${i} OR pm.marque ILIKE $${i} OR pm.modele ILIKE $${i} OR cl.raison_sociale ILIKE $${i})`);
+    params.push(`%${search}%`);
+    i++;
+  }
+
+  const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+  const result = await query(
+    `SELECT ${MACHINE_FIELDS},
+            cl.raison_sociale AS client_raison_sociale,
+            cl.numero_client AS client_code,
+            cl.email_principal AS client_email
+     FROM parc_machines pm
+     LEFT JOIN clients cl ON pm.client_id = cl.id
+     ${where}
+     ORDER BY pm.numero_serie ASC`,
+    params,
+  );
+
+  return result.rows;
+}
+
 export async function checkNumeroSerieExists(numeroSerie, excludeId) {
   const params = [numeroSerie];
   let sql = 'SELECT id FROM parc_machines WHERE numero_serie = $1';

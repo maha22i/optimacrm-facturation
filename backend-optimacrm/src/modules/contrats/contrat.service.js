@@ -620,6 +620,68 @@ export async function listContratsByClient(clientId) {
 }
 
 // ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+export async function getContratsForExport({ type_contrat, statut, search, includeLignes, includeMachines }) {
+  const conditions = ['c.deleted_at IS NULL'];
+  const params = [];
+  let i = 1;
+
+  if (type_contrat) { conditions.push(`c.type_contrat = $${i++}`); params.push(type_contrat); }
+  if (statut) { conditions.push(`c.statut = $${i++}`); params.push(statut); }
+  if (search) {
+    conditions.push(`(c.numero_contrat ILIKE $${i} OR cl.raison_sociale ILIKE $${i})`);
+    params.push(`%${search}%`);
+    i++;
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const contratsRes = await query(
+    `SELECT ${CONTRAT_FIELDS},
+      cl.raison_sociale AS client_raison_sociale,
+      cl.numero_client AS client_code,
+      cl.email_principal AS client_email,
+      (SELECT COALESCE(SUM(
+        CASE WHEN lg.actif THEN lg.quantite * lg.prix_unitaire_ht * (1 - lg.remise_pourcentage / 100) ELSE 0 END
+      ), 0) FROM contrat_lignes lg WHERE lg.contrat_id = c.id) AS montant_ht,
+      (SELECT string_agg(DISTINCT cm2.modele || ' (' || cm2.numero_serie || ')', ', ')
+       FROM contrat_machines cm2 WHERE cm2.contrat_id = c.id AND cm2.actif = true) AS machines_resume
+     FROM contrats c
+     JOIN clients cl ON cl.id = c.client_id
+     ${where}
+     ORDER BY c.numero_contrat ASC`,
+    params,
+  );
+
+  const contrats = contratsRes.rows;
+  if (contrats.length === 0) return { contrats: [], lignes: [], machines: [] };
+
+  const contratIds = contrats.map(c => c.id);
+  let lignes = [];
+  let machines = [];
+
+  if (includeLignes) {
+    const lignesRes = await query(
+      `SELECT * FROM contrat_lignes WHERE contrat_id = ANY($1) ORDER BY contrat_id, ordre`,
+      [contratIds],
+    );
+    lignes = lignesRes.rows;
+  }
+
+  if (includeMachines) {
+    const machinesRes = await query(
+      `SELECT * FROM contrat_machines WHERE contrat_id = ANY($1) ORDER BY contrat_id, id`,
+      [contratIds],
+    );
+    machines = machinesRes.rows;
+  }
+
+  return { contrats, lignes, machines };
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

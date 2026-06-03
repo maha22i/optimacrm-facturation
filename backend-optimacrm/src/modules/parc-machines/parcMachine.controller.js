@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import * as parcService from './parcMachine.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
@@ -117,6 +118,81 @@ export async function checkNumeroSerie(req, res, next) {
     const { numero_serie, exclude_id } = req.query;
     const exists = await parcService.checkNumeroSerieExists(numero_serie, exclude_id ? parseInt(exclude_id) : null);
     sendSuccess(res, { exists });
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+function fmtDate(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+export async function exportMachines(req, res, next) {
+  try {
+    const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
+    const { search, categorie, statut, client_id } = req.query;
+
+    const machines = await parcService.getMachinesForExport({ search, categorie, statut, client_id });
+
+    const rows = machines.map(m => ({
+      'N° Série': m.numero_serie,
+      'Matricule': m.matricule || '',
+      'Désignation': m.designation,
+      'Marque': m.marque || '',
+      'Modèle': m.modele || '',
+      'Catégorie': m.categorie,
+      'Statut': m.statut,
+      'Client': m.client_raison_sociale || '',
+      'Code client': m.client_code || '',
+      'Email client': m.client_email || '',
+      'Site installation': m.site_installation || '',
+      'N° Contrat': m.numero_contrat || '',
+      'Date installation': fmtDate(m.date_installation),
+      'Date fin garantie': fmtDate(m.date_fin_garantie),
+      'Date retrait': fmtDate(m.date_retrait),
+      'Compteur N&B': m.dernier_compteur_nb || 0,
+      'Compteur Couleur': m.dernier_compteur_couleur || 0,
+      'Date dernier relevé': fmtDate(m.date_dernier_releve),
+      'Coût copie N&B': m.cout_copie_nb || '',
+      'Coût copie Couleur': m.cout_copie_couleur || '',
+      'Volume offert N&B': m.volume_offert_nb || 0,
+      'Volume offert Couleur': m.volume_offert_couleur || 0,
+      'Vitesse (ppm)': m.vitesse_ppm || '',
+      'Format max': m.format_max || '',
+      'Recto-verso': m.recto_verso ? 'Oui' : 'Non',
+      'Réseau': m.reseau ? 'Oui' : 'Non',
+      'Réf. produit': m.reference_produit || '',
+      'Notes': m.notes || '',
+      'Date création': fmtDate(m.created_at),
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    if (rows.length > 0) {
+      ws['!cols'] = Object.keys(rows[0]).map(key => ({
+        wch: Math.max(key.length, ...rows.map(r => String(r[key] || '').length).slice(0, 50)) + 2,
+      }));
+    }
+    XLSX.utils.book_append_sheet(wb, ws, 'Parc Machines');
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `parc_machines_export_${timestamp}`;
+
+    if (format === 'xlsx') {
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
+      return res.send(Buffer.from(buf));
+    }
+
+    const csvContent = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+    return res.send('\ufeff' + csvContent);
   } catch (err) { next(err); }
 }
 

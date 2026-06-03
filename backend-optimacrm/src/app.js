@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import swaggerUi from 'swagger-ui-express';
@@ -30,11 +31,20 @@ import * as factureController from './modules/factures/facture.controller.js';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import emailRoutes from './modules/email/email.routes.js';
+import importsRelevesRoutes from './modules/imports-releves/importsReleves.routes.js';
+import * as importsRelevesController from './modules/imports-releves/importsReleves.controller.js';
+import sepaRoutes from './modules/sepa/sepa.routes.js';
+import avoirRoutes from './modules/avoirs/avoir.routes.js';
+import * as avoirController from './modules/avoirs/avoir.controller.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+}));
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
 
@@ -65,8 +75,14 @@ app.use('/api/permissions', permissionsRoutes);
 app.use('/api/parc-machines', parcMachineRoutes);
 app.use('/api/import/parc', importParcRoutes);
 app.use('/api/releves-compteurs/import', importRelevesCompteursRoutes);
+app.get('/api/factures/:id/avoirs-possibles', authenticate, checkPermission('factures_read'), avoirController.getAvoirsPossibles);
+app.get('/api/factures/:id/avoirs', authenticate, checkPermission('factures_read'), avoirController.getAvoirsParFacture);
 app.use('/api/factures', factureRoutes);
+app.use('/api/avoirs', avoirRoutes);
 app.get('/api/releves-compteurs', authenticate, checkPermission('factures_read'), factureController.listRelevesCompteurs);
+app.use('/api/imports-releves', importsRelevesRoutes);
+app.get('/api/parc-machines/:id/timeline', authenticate, checkPermission('parc_read'), importsRelevesController.getMachineTimeline);
+app.use('/api/sepa', sepaRoutes);
 app.use('/api/activity-logs', activityLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/email', emailRoutes);

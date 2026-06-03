@@ -1,4 +1,7 @@
 import * as devisService from './devis.service.js';
+import { parseDevisFile, executeDevisImport } from './importDevis.service.js';
+import { generateDevisPdf } from './pdf.service.js';
+import { sendDevisEmail, getRenderedDevisTemplate } from '../email/email.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
 
@@ -112,6 +115,57 @@ export async function envoyerDevis(req, res, next) {
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
     sendSuccess(res, devis, 'Devis envoyé');
+  } catch (err) { next(err); }
+}
+
+export async function getDevisEmailTemplate(req, res, next) {
+  try {
+    const devis = await devisService.getDevisById(parseInt(req.params.id));
+    const template = await getRenderedDevisTemplate(devis);
+    sendSuccess(res, template);
+  } catch (err) { next(err); }
+}
+
+export async function envoyerDevisEmail(req, res, next) {
+  try {
+    const devis = await devisService.getDevisById(parseInt(req.params.id));
+    if (!['BROUILLON', 'ENVOYE'].includes(devis.statut)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le devis doit être en brouillon ou envoyé pour un envoi par email',
+      });
+    }
+
+    const { destinataire, sujet, corps } = req.body;
+    if (!destinataire || !sujet) {
+      return res.status(400).json({ success: false, message: 'Destinataire et sujet sont requis' });
+    }
+
+    const { pdf } = await generateDevisPdf(devis.id);
+
+    await sendDevisEmail({
+      devis,
+      pdfBuffer: pdf,
+      destinataire,
+      sujet,
+      corps: corps || '',
+    });
+
+    await devisService.envoyerDevis(devis.id, req.user.id, { destinataire });
+
+    try {
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'devis_envoye_email', module: 'devis',
+        description: `Devis ${devis.numero_devis || ''} envoyé par email à ${destinataire}`,
+        entityType: 'devis', entityId: devis.id, entityLabel: devis.numero_devis,
+        details: { destinataire, sujet },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+
+    const updated = await devisService.getDevisById(devis.id);
+    sendSuccess(res, updated, `Devis envoyé par email à ${destinataire}`);
   } catch (err) { next(err); }
 }
 
@@ -244,6 +298,43 @@ export async function supprimerChamp(req, res, next) {
   try {
     await devisService.supprimerChamp(parseInt(req.params.id), parseInt(req.params.champId));
     sendSuccess(res, null, 'Champ supprimé');
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// IMPORT XLS
+// ---------------------------------------------------------------------------
+
+export async function importParse(req, res, next) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucun fichier fourni' });
+    }
+    const result = parseDevisFile(req.file.buffer, req.file.originalname);
+    sendSuccess(res, result, `${result.totalRows} lignes détectées`);
+  } catch (err) { next(err); }
+}
+
+export async function importExecute(req, res, next) {
+  try {
+    const { rows, options } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'Aucune donnée à importer' });
+    }
+    const result = await executeDevisImport(rows, options || {});
+    try {
+      await activityLog.log({
+        userId: req.user.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'devis_import',
+        module: 'devis',
+        description: `Import de devis : ${result.imported} créés, ${result.updated} mis à jour, ${result.errors.length} erreurs`,
+        entityType: 'devis',
+        details: { imported: result.imported, updated: result.updated, errors: result.errors.length },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `Import terminé : ${result.imported} importés, ${result.updated} mis à jour`);
   } catch (err) { next(err); }
 }
 

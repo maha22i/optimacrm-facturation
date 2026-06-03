@@ -2,12 +2,19 @@ import { pool, query } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 
 const TEMP_DIR = path.resolve('uploads/import-temp');
 
 const HORS_CONTRAT_KEYWORDS = [
   'hors contrat', 'contrat resilie', 'contrat rompu', 'bloque', 'debranchee',
   'résilié', 'résiliée', 'bloqué', 'bloquée', 'débranchée',
+];
+
+// Lignes de récapitulatif Excel à ignorer silencieusement (somme par contrat/machine)
+const TOTAL_LINE_KEYWORDS = [
+  'total machine', 'total contrat', 'total client', 'sous total', 'sous-total',
+  'total general', 'total général',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -50,6 +57,13 @@ function parseDate(val) {
 function isHorsContrat(designation, statut, notes) {
   const text = normalize([designation, statut, notes].filter(Boolean).join(' '));
   return HORS_CONTRAT_KEYWORDS.some(kw => text.includes(normalize(kw)));
+}
+
+// Détecte une ligne "TOTAL MACHINE/CONTRAT/CLIENT" (récap Excel, à ignorer)
+function isTotalLine(row) {
+  const concatenated = Object.values(row || {}).map(v => String(v || '')).join(' ');
+  const norm = normalize(concatenated);
+  return TOTAL_LINE_KEYWORDS.some(kw => norm.includes(normalize(kw)));
 }
 
 // Auto-mapping synonymes pour les 4 champs
@@ -147,9 +161,13 @@ export async function parseFile(fileBuffer, originalname) {
   // Filter out empty headers
   headers = headers.filter(h => h && h.trim());
 
+  const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
   const fileId = `releves_v2_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await fs.mkdir(TEMP_DIR, { recursive: true });
-  await fs.writeFile(path.join(TEMP_DIR, `${fileId}.json`), JSON.stringify({ headers, rows }));
+  await fs.writeFile(path.join(TEMP_DIR, `${fileId}.json`), JSON.stringify({
+    headers, rows,
+    file_meta: { hash: fileHash, name: originalname, size: fileBuffer.length },
+  }));
 
   const suggestions = suggestSimpleMapping(headers);
 
@@ -159,6 +177,8 @@ export async function parseFile(fileBuffer, originalname) {
     preview: rows.slice(0, 5),
     total_rows: rows.length,
     suggested_mapping: suggestions,
+    file_hash: fileHash,
+    file_size: fileBuffer.length,
   };
 }
 
@@ -229,6 +249,8 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
   const summary = {
     total_lignes: rows.length,
+    lignes_ignorees: 0,
+    au_compteur: 0,
     machines_trouvees: 0,
     machines_inconnues: 0,
     avec_depassement: 0,
@@ -241,6 +263,8 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
   const lignes = [];
 
+  // ─── Étape A — Pré-traitement : parsing + filtrage des lignes TOTAL ─────────
+  const parsedRows = [];
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i];
     const ns = (raw[colSerie] || '').trim();
@@ -250,9 +274,41 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
       || (periode.date_fin ? periode.date_fin : null)
       || new Date().toISOString().split('T')[0];
 
+    // Ligne de récap Excel ("TOTAL MACHINE …") → ignorée silencieusement
+    if (!ns && isTotalLine(raw)) {
+      summary.lignes_ignorees++;
+      continue;
+    }
+
+    parsedRows.push({ row_number: i + 1, raw, ns, nouveauNb, nouveauCouleur, dateReleve });
+  }
+
+  // ─── Étape B — Tri par (numéro de série, date croissante) pour chaîner les compteurs ─
+  parsedRows.sort((a, b) => {
+    const nsA = a.ns.toUpperCase();
+    const nsB = b.ns.toUpperCase();
+    if (nsA !== nsB) return nsA.localeCompare(nsB);
+    return String(a.dateReleve).localeCompare(String(b.dateReleve));
+  });
+
+  // ─── Étape C — Boucle d'analyse avec cache dynamique des compteurs ─────────
+  // Le cache part de la DB et est mis à jour à chaque ligne traitée pour
+  // permettre le chaînage des relevés du même fichier.
+  const compteurCache = new Map();
+  for (const [machineId, r] of lastReleveMap.entries()) {
+    compteurCache.set(machineId, {
+      compteur_nb: r.compteur_nb || 0,
+      compteur_couleur: r.compteur_couleur || 0,
+      date_releve: r.date_releve,
+    });
+  }
+
+  for (const parsed of parsedRows) {
+    const { row_number, ns, nouveauNb, nouveauCouleur, dateReleve } = parsed;
+
     if (!ns) {
       lignes.push({
-        row_number: i + 1,
+        row_number,
         numero_serie: '',
         statut: 'ANOMALIE',
         alertes: ['Numéro de série vide'],
@@ -272,7 +328,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     const machine = machineMap.get(ns.toUpperCase());
     if (!machine) {
       lignes.push({
-        row_number: i + 1,
+        row_number,
         numero_serie: ns,
         statut: 'ANOMALIE',
         alertes: ['Machine inconnue — numéro de série non trouvé dans le parc'],
@@ -321,14 +377,16 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     // Check HORS CONTRAT
     const horsContrat = isHorsContrat(machine.designation, machine.machine_statut, machine.machine_notes);
 
-    // Last relevé: prefer from DB, fallback to parc_machines counters
-    const lastReleve = lastReleveMap.get(machine.id);
+    // Le cache contient soit le dernier relevé en DB, soit le dernier relevé déjà
+    // analysé dans CE fichier pour cette machine. C'est ce qui permet de chaîner
+    // correctement plusieurs trimestres importés en une seule fois.
+    const cached = compteurCache.get(machine.id);
     let ancienNb = 0, ancienCouleur = 0;
     let premierReleve = false;
 
-    if (lastReleve) {
-      ancienNb = lastReleve.compteur_nb || 0;
-      ancienCouleur = lastReleve.compteur_couleur || 0;
+    if (cached) {
+      ancienNb = cached.compteur_nb || 0;
+      ancienCouleur = cached.compteur_couleur || 0;
     } else if ((machine.dernier_compteur_nb || 0) > 0 || (machine.dernier_compteur_couleur || 0) > 0) {
       ancienNb = machine.dernier_compteur_nb || 0;
       ancienCouleur = machine.dernier_compteur_couleur || 0;
@@ -339,9 +397,16 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     const volumeNb = nouveauNb - ancienNb;
     const volumeCouleur = nouveauCouleur - ancienCouleur;
 
+    // Mise à jour du cache APRÈS calcul, pour la prochaine ligne de cette machine
+    compteurCache.set(machine.id, {
+      compteur_nb: nouveauNb,
+      compteur_couleur: nouveauCouleur,
+      date_releve: dateReleve,
+    });
+
     // Build line data
     const ligne = {
-      row_number: i + 1,
+      row_number,
       numero_serie: ns,
       statut: 'OK',
       alertes: [],
@@ -424,11 +489,15 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
       continue;
     }
 
-    // No forfait defined
+    // Contrat AU COMPTEUR — pas de forfait, facturé à la copie
     if (forfaitNb === 0 && forfaitCouleur === 0) {
-      ligne.statut = 'SANS_CONTRAT';
-      ligne.alertes.push('Contrat sans forfait défini — pas de calcul de dépassement');
-      summary.sans_contrat++;
+      ligne.statut = 'AU_COMPTEUR';
+      const montantNb = Math.round(volumeNb * coutCopieNb * 100) / 100;
+      const montantCoul = Math.round(volumeCouleur * coutCopieCouleur * 100) / 100;
+      ligne.montant_total_ht = Math.round((montantNb + montantCoul) * 100) / 100;
+      ligne.alertes.push('Contrat au compteur (sans forfait) — facturation à la copie');
+      summary.au_compteur++;
+      summary.montant_total_depassement_ht += ligne.montant_total_ht;
       lignes.push(ligne);
       continue;
     }
@@ -468,7 +537,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
   // Sort by montant_total_ht descending
   lignes.sort((a, b) => {
-    const statusOrder = { ANOMALIE: 0, DEPASSEMENT: 1, PREMIER_RELEVE: 2, SANS_CONTRAT: 3, HORS_CONTRAT: 4, OK: 5 };
+    const statusOrder = { ANOMALIE: 0, DEPASSEMENT: 1, PREMIER_RELEVE: 2, AU_COMPTEUR: 3, SANS_CONTRAT: 4, HORS_CONTRAT: 5, OK: 6 };
     const sa = statusOrder[a.statut] ?? 5;
     const sb = statusOrder[b.statut] ?? 5;
     if (sa !== sb) return sa - sb;
@@ -482,90 +551,101 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 // EXECUTE — Step 3
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function executeImport(lignes, periode = {}) {
-  const validStatuts = ['OK', 'DEPASSEMENT', 'PREMIER_RELEVE', 'SANS_CONTRAT', 'HORS_CONTRAT'];
+export async function executeImport(lignes, periode = {}, fileMeta = {}, user = null) {
+  const validStatuts = ['OK', 'DEPASSEMENT', 'PREMIER_RELEVE', 'AU_COMPTEUR', 'SANS_CONTRAT', 'HORS_CONTRAT'];
   const toImport = lignes.filter(l => l.selected !== false && validStatuts.includes(l.statut) && l.machine_id);
 
   if (toImport.length === 0) throw ApiError.badRequest('Aucune ligne valide à importer');
 
-  const client = await pool.connect();
-  let imported = 0, errorCount = 0;
+  const dbClient = await pool.connect();
+  let imported = 0, ignoredCount = 0, errorCount = 0;
   const errorDetails = [];
+  const rapportErreurs = [];
   let totalDepassementHt = 0;
   let depassementCount = 0;
+  let numeroBatch = null;
+  let importRecordId = null;
 
   try {
-    await client.query('BEGIN');
+    await dbClient.query('BEGIN');
 
-    const importLog = await client.query(
-      `INSERT INTO import_logs (entity_type, total_rows, created_at)
-       VALUES ('RELEVES_COMPTEURS', $1, NOW()) RETURNING id`,
-      [toImport.length],
+    // Generate batch number IMP-YYYY-NNNN
+    const year = new Date().getFullYear();
+    const seqResult = await dbClient.query("SELECT nextval('imports_releves_batch_seq')::int AS seq");
+    numeroBatch = `IMP-${year}-${String(seqResult.rows[0].seq).padStart(4, '0')}`;
+
+    const fileHash = fileMeta.hash || crypto.createHash('sha256').update(String(Date.now())).digest('hex');
+    const fileName = fileMeta.name || 'unknown';
+    const fileSize = fileMeta.size || 0;
+    const userName = user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : null;
+
+    // Build error report for anomalies
+    for (const l of lignes) {
+      if (l.statut === 'ANOMALIE' || (!l.machine_id && l.numero_serie)) {
+        rapportErreurs.push({
+          ligne: l.row_number,
+          matricule: l.numero_serie,
+          type_erreur: !l.machine_id ? 'Machine inconnue' : 'Anomalie',
+          detail: l.alertes?.join('; ') || 'Erreur',
+        });
+      }
+    }
+
+    // Create imports_releves record
+    const importResult = await dbClient.query(
+      `INSERT INTO imports_releves (
+        numero_batch, nom_fichier, taille_fichier, hash_fichier,
+        user_id, user_nom, nb_lignes_fichier,
+        statut, rapport_erreurs
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Actif', $8)
+      RETURNING id`,
+      [
+        numeroBatch, fileName, fileSize, fileHash,
+        user?.id || null, userName, lignes.length,
+        rapportErreurs.length > 0 ? JSON.stringify(rapportErreurs) : null,
+      ],
     );
-    const importId = importLog.rows[0].id;
+    importRecordId = importResult.rows[0].id;
+
+    let minDate = null, maxDate = null;
 
     for (const ligne of toImport) {
       try {
-        // Check for duplicate: same machine + same date
-        const existingReleve = await client.query(
+        const existingReleve = await dbClient.query(
           `SELECT id FROM releves_compteurs WHERE machine_id = $1 AND date_releve = $2`,
           [ligne.machine_id, ligne.date_releve],
         );
+
         if (existingReleve.rows.length > 0) {
-          // Update existing
-          await client.query(
-            `UPDATE releves_compteurs SET
-              compteur_nb = $1, compteur_couleur = $2,
-              ancien_compteur_nb = $3, ancien_compteur_couleur = $4,
-              volume_nb = $5, volume_couleur = $6,
-              depassement_nb = $7, depassement_couleur = $8,
-              montant_depassement_nb = $9, montant_depassement_couleur = $10,
-              forfait_nb = $11, forfait_couleur = $12,
-              statut = $13, source_import = 'Import_Releve',
-              date_debut_periode = $14, date_fin_periode = $15,
-              import_id = $16, source = 'Import'
-            WHERE id = $17`,
-            [
-              ligne.nouveau_compteur_nb, ligne.nouveau_compteur_couleur,
-              ligne.ancien_compteur_nb, ligne.ancien_compteur_couleur,
-              Math.max(0, ligne.volume_nb), Math.max(0, ligne.volume_couleur),
-              ligne.depassement_nb || 0, ligne.depassement_couleur || 0,
-              ligne.montant_depassement_nb || 0, ligne.montant_depassement_couleur || 0,
-              ligne.forfait_nb || 0, ligne.forfait_couleur || 0,
-              ligne.statut,
-              periode.date_debut || null, periode.date_fin || ligne.date_releve,
-              importId,
-              existingReleve.rows[0].id,
-            ],
-          );
-        } else {
-          await client.query(
-            `INSERT INTO releves_compteurs (
-              machine_id, date_releve, date_debut_periode, date_fin_periode,
-              compteur_nb, compteur_couleur,
-              ancien_compteur_nb, ancien_compteur_couleur,
-              volume_nb, volume_couleur,
-              depassement_nb, depassement_couleur,
-              montant_depassement_nb, montant_depassement_couleur,
-              forfait_nb, forfait_couleur,
-              statut, source, source_import, import_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'Import','Import_Releve',$18)`,
-            [
-              ligne.machine_id, ligne.date_releve,
-              periode.date_debut || null, periode.date_fin || ligne.date_releve,
-              ligne.nouveau_compteur_nb, ligne.nouveau_compteur_couleur,
-              ligne.ancien_compteur_nb, ligne.ancien_compteur_couleur,
-              Math.max(0, ligne.volume_nb), Math.max(0, ligne.volume_couleur),
-              ligne.depassement_nb || 0, ligne.depassement_couleur || 0,
-              ligne.montant_depassement_nb || 0, ligne.montant_depassement_couleur || 0,
-              ligne.forfait_nb || 0, ligne.forfait_couleur || 0,
-              ligne.statut, importId,
-            ],
-          );
+          ignoredCount++;
+          continue;
         }
 
-        // Update parc_machines counters
-        await client.query(
+        await dbClient.query(
+          `INSERT INTO releves_compteurs (
+            machine_id, date_releve, date_debut_periode, date_fin_periode,
+            compteur_nb, compteur_couleur,
+            ancien_compteur_nb, ancien_compteur_couleur,
+            volume_nb, volume_couleur,
+            depassement_nb, depassement_couleur,
+            montant_depassement_nb, montant_depassement_couleur,
+            forfait_nb, forfait_couleur,
+            statut, source, source_import, import_id, ligne_fichier
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'Import','Import_Releve',$18,$19)`,
+          [
+            ligne.machine_id, ligne.date_releve,
+            periode.date_debut || null, periode.date_fin || ligne.date_releve,
+            ligne.nouveau_compteur_nb, ligne.nouveau_compteur_couleur,
+            ligne.ancien_compteur_nb, ligne.ancien_compteur_couleur,
+            Math.max(0, ligne.volume_nb), Math.max(0, ligne.volume_couleur),
+            ligne.depassement_nb || 0, ligne.depassement_couleur || 0,
+            ligne.montant_depassement_nb || 0, ligne.montant_depassement_couleur || 0,
+            ligne.forfait_nb || 0, ligne.forfait_couleur || 0,
+            ligne.statut, importRecordId, ligne.row_number,
+          ],
+        );
+
+        await dbClient.query(
           `UPDATE parc_machines SET
             dernier_compteur_nb = GREATEST(dernier_compteur_nb, $1),
             dernier_compteur_couleur = GREATEST(dernier_compteur_couleur, $2),
@@ -580,34 +660,59 @@ export async function executeImport(lignes, periode = {}) {
           depassementCount++;
           totalDepassementHt += ligne.montant_total_ht || 0;
         }
+
+        // Track period
+        const d = ligne.date_releve;
+        if (!minDate || d < minDate) minDate = d;
+        if (!maxDate || d > maxDate) maxDate = d;
       } catch (err) {
         errorCount++;
         errorDetails.push({ row_number: ligne.row_number, numero_serie: ligne.numero_serie, error: err.message });
+        rapportErreurs.push({
+          ligne: ligne.row_number,
+          matricule: ligne.numero_serie,
+          type_erreur: 'Erreur insertion',
+          detail: err.message,
+        });
       }
     }
 
-    await client.query(
-      `UPDATE import_logs SET success_count = $1, error_count = $2 WHERE id = $3`,
-      [imported, errorCount, importId],
+    // Update imports_releves with final stats
+    await dbClient.query(
+      `UPDATE imports_releves SET
+        nb_releves_crees = $1, nb_lignes_ignorees = $2, nb_lignes_erreur = $3,
+        periode_debut = $4, periode_fin = $5,
+        rapport_erreurs = $6, updated_at = NOW()
+      WHERE id = $7`,
+      [
+        imported, ignoredCount,
+        errorCount + lignes.filter(l => l.statut === 'ANOMALIE').length,
+        minDate, maxDate,
+        rapportErreurs.length > 0 ? JSON.stringify(rapportErreurs) : null,
+        importRecordId,
+      ],
     );
 
-    await client.query('COMMIT');
+    await dbClient.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    dbClient.release();
   }
 
   return {
     total: toImport.length,
     imported,
+    ignored: ignoredCount,
     errors: errorCount,
     depassements: depassementCount,
     montant_total_depassement_ht: Math.round(totalDepassementHt * 100) / 100,
     anomalies_ignorees: lignes.filter(l => l.statut === 'ANOMALIE').length,
     machines_inconnues_ignorees: lignes.filter(l => !l.machine_id && l.statut === 'ANOMALIE').length,
     error_details: errorDetails,
+    numero_batch: numeroBatch,
+    import_id: importRecordId,
   };
 }
 

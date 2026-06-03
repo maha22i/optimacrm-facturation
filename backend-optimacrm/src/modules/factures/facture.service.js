@@ -148,17 +148,61 @@ export async function getFactureById(id) {
   );
   if (!facture) throw new ApiError(404, 'Facture introuvable');
 
-  const { rows: lignes } = await query(
-    `SELECT * FROM facture_lignes WHERE facture_id = $1 ORDER BY position`, [id]
-  );
-  const { rows: reglements } = await query(
-    `SELECT * FROM facture_reglements WHERE facture_id = $1 ORDER BY date_reglement DESC`, [id]
-  );
-  const { rows: historique } = await query(
-    `SELECT * FROM facture_historique WHERE facture_id = $1 ORDER BY created_at DESC`, [id]
-  );
+  const [lignesRes, reglementsRes, historiqueRes, clientLiveRes] = await Promise.all([
+    query(
+      `SELECT fl.*,
+         CASE WHEN rc.id IS NOT NULL THEN json_build_object(
+           'id', rc.id,
+           'date_releve', rc.date_releve,
+           'machine_numero_serie', pm.numero_serie,
+           'compteur_nb', rc.compteur_nb,
+           'compteur_couleur', rc.compteur_couleur,
+           'import_id', rc.import_id,
+           'numero_batch', ir.numero_batch,
+           'date_import', ir.date_import,
+           'user_nom', ir.user_nom
+         ) ELSE NULL END AS releve_info
+       FROM facture_lignes fl
+       LEFT JOIN releves_compteurs rc ON rc.id = fl.releve_compteur_id
+       LEFT JOIN parc_machines pm ON pm.id = rc.machine_id
+       LEFT JOIN imports_releves ir ON ir.id = rc.import_id
+       WHERE fl.facture_id = $1
+       ORDER BY fl.position`, [id]
+    ),
+    query(
+      `SELECT * FROM facture_reglements WHERE facture_id = $1 ORDER BY date_reglement DESC`, [id]
+    ),
+    query(
+      `SELECT * FROM facture_historique WHERE facture_id = $1 ORDER BY created_at DESC`, [id]
+    ),
+    facture.client_id ? query(
+      `SELECT c.numero_client, c.raison_sociale, c.email_principal, c.telephone_principal,
+              c.tva_intracommunautaire,
+              ca.ligne1, ca.ligne2, ca.code_postal, ca.ville
+       FROM clients c
+       LEFT JOIN client_adresses ca ON ca.client_id = c.id AND ca.est_defaut = true AND ca.type = 'FACTURATION'
+       WHERE c.id = $1`, [facture.client_id]
+    ) : { rows: [] },
+  ]);
 
-  return { ...facture, lignes, reglements, historique };
+  const clientLive = clientLiveRes.rows[0] || null;
+
+  return {
+    ...facture,
+    lignes: lignesRes.rows,
+    reglements: reglementsRes.rows,
+    historique: historiqueRes.rows,
+    client_live: clientLive ? {
+      numero_client: clientLive.numero_client,
+      raison_sociale: clientLive.raison_sociale,
+      email: clientLive.email_principal,
+      telephone: clientLive.telephone_principal,
+      tva_numero: clientLive.tva_intracommunautaire,
+      adresse: [clientLive.ligne1, clientLive.ligne2].filter(Boolean).join(', '),
+      code_postal: clientLive.code_postal || '',
+      ville: clientLive.ville || '',
+    } : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -166,31 +210,25 @@ export async function getFactureById(id) {
 // ---------------------------------------------------------------------------
 
 export async function getFacturesStats() {
-  const now = new Date();
-  const moisDebut = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const moisFin = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-
-  const [caMois, enAttente, envoyeesMois] = await Promise.all([
+  const [caTotal, enAttente, envoyees] = await Promise.all([
     query(
-      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*) AS count FROM factures
-       WHERE date_creation >= $1 AND date_creation <= $2 AND statut != 'Annulée' AND est_avoir = false`,
-      [moisDebut, moisFin]
+      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
+       WHERE statut != 'Annulée' AND est_avoir = false`
     ),
     query(
-      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*) AS count FROM factures
-       WHERE statut = 'Validée' AND est_avoir = false`
+      `SELECT COALESCE(SUM(net_a_payer), 0) AS montant, COUNT(*)::int AS count FROM factures
+       WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0 AND est_avoir = false`
     ),
     query(
-      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*) AS count FROM factures
-       WHERE statut = 'Envoyée' AND date_creation >= $1 AND date_creation <= $2 AND est_avoir = false`,
-      [moisDebut, moisFin]
+      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
+       WHERE statut = 'Envoyée' AND est_avoir = false`
     ),
   ]);
 
   return {
-    ca_mois: { count: parseInt(caMois.rows[0].count), montant: parseFloat(caMois.rows[0].montant) },
+    ca_mois: { count: parseInt(caTotal.rows[0].count), montant: parseFloat(caTotal.rows[0].montant) },
     en_attente: { count: parseInt(enAttente.rows[0].count), montant: parseFloat(enAttente.rows[0].montant) },
-    envoyees_mois: { count: parseInt(envoyeesMois.rows[0].count), montant: parseFloat(envoyeesMois.rows[0].montant) },
+    envoyees_mois: { count: parseInt(envoyees.rows[0].count), montant: parseFloat(envoyees.rows[0].montant) },
   };
 }
 
@@ -306,7 +344,9 @@ export async function updateFacture(id, data, userId) {
 
     const { rows: [existing] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [id]);
     if (!existing) throw new ApiError(404, 'Facture introuvable');
-    if (existing.statut !== 'Brouillon') throw new ApiError(400, 'Seules les factures en brouillon peuvent être modifiées');
+    if (!['Brouillon', 'Annulée'].includes(existing.statut)) throw new ApiError(400, 'Seules les factures en brouillon ou annulées peuvent être modifiées');
+
+    const wasAnnulee = existing.statut === 'Annulée';
 
     await dbClient.query(
       `UPDATE factures SET
@@ -324,6 +364,7 @@ export async function updateFacture(id, data, userId) {
         site_concerne_cp = COALESCE($12, site_concerne_cp),
         site_concerne_ville = COALESCE($13, site_concerne_ville),
         site_concerne_email = COALESCE($14, site_concerne_email),
+        statut = CASE WHEN statut = 'Annulée' THEN 'Brouillon' ELSE statut END,
         updated_at = NOW()
       WHERE id = $15`,
       [
@@ -374,7 +415,8 @@ export async function updateFacture(id, data, userId) {
     }
 
     await recalculerFacture(dbClient, id);
-    await ajouterHistorique(dbClient, id, 'Modification', 'Facture modifiée', userId);
+    const histDesc = wasAnnulee ? 'Facture réouverte et modifiée (ex-annulée → brouillon)' : 'Facture modifiée';
+    await ajouterHistorique(dbClient, id, 'Modification', histDesc, userId);
 
     await dbClient.query('COMMIT');
     return getFactureById(id);
@@ -393,7 +435,7 @@ export async function updateFacture(id, data, userId) {
 export async function deleteFacture(id, userId) {
   const { rows: [f] } = await query('SELECT statut FROM factures WHERE id = $1', [id]);
   if (!f) throw new ApiError(404, 'Facture introuvable');
-  if (f.statut !== 'Brouillon') throw new ApiError(400, 'Seules les factures en brouillon peuvent être supprimées');
+  if (!['Brouillon', 'Annulée'].includes(f.statut)) throw new ApiError(400, 'Seules les factures en brouillon ou annulées peuvent être supprimées');
   await query('DELETE FROM factures WHERE id = $1', [id]);
 }
 
@@ -584,120 +626,213 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
       );
 
       let machineInfo = {};
-      if (machines.length > 0) {
-        const m = machines[0];
-        machineInfo = { numero_serie: m.numero_serie, modele_machine: `${m.marque || ''} ${m.modele || ''}`.trim() };
+      const releveIdsToMark = [];
+      let isFirstMachine = true;
 
-        let releveNb = null;
-        let releveCoul = null;
+      for (const m of machines) {
+        if (!machineInfo.numero_serie) {
+          machineInfo = { numero_serie: m.numero_serie, modele_machine: `${m.marque || ''} ${m.modele || ''}`.trim() };
+        }
 
-        if (releve_compteur_nb_id) {
+        const aForfait = (Number(m.volume_forfait_nb) > 0) || (Number(m.volume_forfait_couleur) > 0);
+
+        // Récupérer le relevé non facturé le plus récent (sans filtre de date ni exclusion PREMIER_RELEVE)
+        let releve = null;
+        if (isFirstMachine && releve_compteur_nb_id) {
           const { rows: [rNb] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_nb_id]);
-          if (rNb) releveNb = rNb;
+          if (rNb) releve = rNb;
         }
-        if (releve_compteur_coul_id) {
+        if (!releve && isFirstMachine && releve_compteur_coul_id) {
           const { rows: [rC] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_coul_id]);
-          if (rC) releveCoul = rC;
+          if (rC) releve = rC;
         }
-
-        if (!releveNb && !releveCoul) {
-          const { rows: releves } = await dbClient.query(
+        if (!releve) {
+          const { rows: releveRows } = await dbClient.query(
             `SELECT rc.* FROM releves_compteurs rc
              JOIN parc_machines pm ON pm.id = rc.machine_id
-             WHERE pm.numero_serie = $1 AND rc.est_facture = false
-             ORDER BY rc.date_releve DESC LIMIT 1`,
+             WHERE pm.numero_serie = $1
+               AND rc.est_facture = false
+             ORDER BY rc.date_releve DESC
+             LIMIT 1`,
             [m.numero_serie]
           );
-          if (releves.length > 0) {
-            releveNb = releves[0];
-            releveCoul = releves[0];
-          }
+          if (releveRows.length > 0) releve = releveRows[0];
         }
+        isFirstMachine = false;
 
-        const r = releveNb || releveCoul;
-        if (r) {
+        if (aForfait) {
+          // ── TYPE A — Contrat AVEC FORFAIT ──
+          // Les lignes de forfait sont TOUJOURS générées, indépendamment du relevé.
 
-          if (r.volume_nb > 0 || r.compteur_nb > 0) {
+          if (Number(m.volume_forfait_nb) > 0) {
+            const totalNb = Math.round(Number(m.volume_forfait_nb) * Number(m.cout_copie_nb) * 100) / 100;
             lignes.push({
-              position: position++, type_ligne: 'REGULARISATION_NB',
-              designation: 'REGULARISATION VOLUME NOIR ET BLANC',
-              description: `Période du ${formatDateFR(r.date_debut_periode)} au ${formatDateFR(r.date_fin_periode)} - Ancien compteur: ${r.compteur_nb - r.volume_nb} - Nouveau compteur: ${r.compteur_nb}`,
-              ancien_compteur: r.compteur_nb - r.volume_nb,
-              nouveau_compteur: r.compteur_nb,
-              compteur_periode_debut: r.date_debut_periode,
-              compteur_periode_fin: r.date_fin_periode,
-              quantite: 0, prix_unitaire: 0, total_ht: 0,
-            });
-          }
-
-          if (r.volume_couleur > 0 || r.compteur_couleur > 0) {
-            lignes.push({
-              position: position++, type_ligne: 'REGULARISATION_COULEUR',
-              designation: 'REGULARISATION VOLUME COULEUR',
-              description: `Période du ${formatDateFR(r.date_debut_periode)} au ${formatDateFR(r.date_fin_periode)} - Ancien compteur: ${r.compteur_couleur - r.volume_couleur} - Nouveau compteur: ${r.compteur_couleur}`,
-              ancien_compteur: r.compteur_couleur - r.volume_couleur,
-              nouveau_compteur: r.compteur_couleur,
-              compteur_periode_debut: r.date_debut_periode,
-              compteur_periode_fin: r.date_fin_periode,
-              quantite: 0, prix_unitaire: 0, total_ht: 0,
-            });
-          }
-
-          const releveIdsToMark = new Set();
-          if (releveNb) releveIdsToMark.add(releveNb.id);
-          if (releveCoul) releveIdsToMark.add(releveCoul.id);
-          if (releveIdsToMark.size === 0) releveIdsToMark.add(r.id);
-          for (const rid of releveIdsToMark) {
-            await dbClient.query(`UPDATE releves_compteurs SET est_facture = true WHERE id = $1`, [rid]);
-          }
-        }
-
-        if (m.volume_forfait_nb > 0 && m.cout_copie_nb > 0) {
-          const totalNb = Math.round(m.volume_forfait_nb * parseFloat(m.cout_copie_nb) * 100) / 100;
-          lignes.push({
-            position: position++, type_ligne: 'FORFAIT_NB', reference: 'FORF1',
-            designation: 'Forfait coût copie noir et blanc',
-            description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
-            ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-            quantite: m.volume_forfait_nb, prix_unitaire: m.cout_copie_nb, total_ht: totalNb,
-          });
-        }
-
-        if (m.volume_forfait_couleur > 0 && m.cout_copie_couleur > 0) {
-          const totalCoul = Math.round(m.volume_forfait_couleur * parseFloat(m.cout_copie_couleur) * 100) / 100;
-          lignes.push({
-            position: position++, type_ligne: 'FORFAIT_COULEUR', reference: 'FORF2',
-            designation: 'Forfait coût copie couleur',
-            description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
-            ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-            quantite: m.volume_forfait_couleur, prix_unitaire: m.cout_copie_couleur, total_ht: totalCoul,
-          });
-        }
-
-        const services = [
-          { key: 'service_connectic', label: 'Service Connectic' },
-          { key: 'service_collecteur', label: 'Service Collecteur' },
-          { key: 'service_divers', label: 'Service Divers' },
-          { key: 'service_autre', label: 'Service Autre' },
-        ];
-        for (const svc of services) {
-          if (parseFloat(m[svc.key]) > 0) {
-            lignes.push({
-              position: position++, type_ligne: 'SERVICE', reference: 'CNTC',
-              designation: svc.label,
+              position: position++, type_ligne: 'FORFAIT_NB', reference: 'FORF1',
+              designation: 'FORFAIT NOIR ET BLANC',
               description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
               ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-              quantite: 1, prix_unitaire: parseFloat(m[svc.key]),
-              total_ht: parseFloat(m[svc.key]),
+              quantite: Number(m.volume_forfait_nb), prix_unitaire: Number(m.cout_copie_nb), total_ht: totalNb,
+            });
+          }
+
+          if (Number(m.volume_forfait_couleur) > 0) {
+            const totalCoul = Math.round(Number(m.volume_forfait_couleur) * Number(m.cout_copie_couleur) * 100) / 100;
+            lignes.push({
+              position: position++, type_ligne: 'FORFAIT_COULEUR', reference: 'FORF2',
+              designation: 'FORFAIT COULEUR',
+              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+              ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
+              quantite: Number(m.volume_forfait_couleur), prix_unitaire: Number(m.cout_copie_couleur), total_ht: totalCoul,
+            });
+          }
+
+          // Régularisation : valeurs PRÉ-CALCULÉES à l'import, lues directement depuis releves_compteurs
+          if (releve && releve.statut !== 'PREMIER_RELEVE') {
+            if (Number(releve.depassement_nb) > 0) {
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'REGUL_NB',
+                designation: 'REGULARISATION VOLUME NOIR ET BLANC',
+                description: `Dépassement de ${Number(releve.depassement_nb)} copies sur la période`,
+                ancien_compteur: Number(releve.ancien_compteur_nb || 0),
+                nouveau_compteur: Number(releve.compteur_nb),
+                compteur_periode_debut: releve.date_debut_periode,
+                compteur_periode_fin: releve.date_fin_periode,
+                quantite: Number(releve.depassement_nb), prix_unitaire: Number(m.cout_copie_nb),
+                total_ht: Number(releve.montant_depassement_nb),
+                releve_compteur_id: releve.id,
+              });
+            }
+
+            if (Number(releve.depassement_couleur) > 0) {
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'REGUL_COUL',
+                designation: 'REGULARISATION VOLUME COULEUR',
+                description: `Dépassement de ${Number(releve.depassement_couleur)} copies sur la période`,
+                ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
+                nouveau_compteur: Number(releve.compteur_couleur),
+                compteur_periode_debut: releve.date_debut_periode,
+                compteur_periode_fin: releve.date_fin_periode,
+                quantite: Number(releve.depassement_couleur), prix_unitaire: Number(m.cout_copie_couleur),
+                total_ht: Number(releve.montant_depassement_couleur),
+                releve_compteur_id: releve.id,
+              });
+            }
+
+            releveIdsToMark.push(releve.id);
+          } else if (releve && releve.statut === 'PREMIER_RELEVE') {
+            releveIdsToMark.push(releve.id);
+          }
+
+        } else {
+          // ── TYPE B — Contrat AU COMPTEUR (sans forfait) ──
+          if (!releve) continue;
+
+          if (['OK', 'DEPASSEMENT', 'AU_COMPTEUR'].includes(releve.statut)) {
+            const volumeNb = Number(releve.volume_nb || 0);
+            const coutNb = Number(m.cout_copie_nb || 0);
+            if (volumeNb > 0 && coutNb > 0) {
+              const totalNb = Math.round(volumeNb * coutNb * 100) / 100;
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'COPIES_NB',
+                designation: 'COPIES NOIR ET BLANC',
+                description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
+                ancien_compteur: Number(releve.ancien_compteur_nb || 0),
+                nouveau_compteur: Number(releve.compteur_nb),
+                compteur_periode_debut: releve.date_debut_periode,
+                compteur_periode_fin: releve.date_fin_periode,
+                quantite: volumeNb, prix_unitaire: coutNb, total_ht: totalNb,
+                releve_compteur_id: releve.id,
+              });
+            }
+
+            const volumeCoul = Number(releve.volume_couleur || 0);
+            const coutCoul = Number(m.cout_copie_couleur || 0);
+            if (volumeCoul > 0 && coutCoul > 0) {
+              const totalCoul = Math.round(volumeCoul * coutCoul * 100) / 100;
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'COPIES_COUL',
+                designation: 'COPIES COULEUR',
+                description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
+                ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
+                nouveau_compteur: Number(releve.compteur_couleur),
+                compteur_periode_debut: releve.date_debut_periode,
+                compteur_periode_fin: releve.date_fin_periode,
+                quantite: volumeCoul, prix_unitaire: coutCoul, total_ht: totalCoul,
+                releve_compteur_id: releve.id,
+              });
+            }
+
+            releveIdsToMark.push(releve.id);
+          } else if (releve.statut === 'PREMIER_RELEVE') {
+            const cNb = Number(releve.compteur_nb || 0);
+            const cCoul = Number(releve.compteur_couleur || 0);
+            const coutNb = Number(m.cout_copie_nb || 0);
+            const coutCoul = Number(m.cout_copie_couleur || 0);
+
+            if (cNb > 0 && coutNb > 0) {
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'COPIES_NB',
+                designation: 'COPIES NOIR ET BLANC (premier relevé)',
+                description: `Compteur initial : ${cNb}`,
+                nouveau_compteur: cNb,
+                quantite: cNb, prix_unitaire: coutNb,
+                total_ht: Math.round(cNb * coutNb * 100) / 100,
+                releve_compteur_id: releve.id,
+              });
+            }
+            if (cCoul > 0 && coutCoul > 0) {
+              lignes.push({
+                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'COPIES_COUL',
+                designation: 'COPIES COULEUR (premier relevé)',
+                description: `Compteur initial : ${cCoul}`,
+                nouveau_compteur: cCoul,
+                quantite: cCoul, prix_unitaire: coutCoul,
+                total_ht: Math.round(cCoul * coutCoul * 100) / 100,
+                releve_compteur_id: releve.id,
+              });
+            }
+
+            releveIdsToMark.push(releve.id);
+          }
+        }
+
+        const serviceRefs = { service_connectic: 'CNTC', service_collecteur: 'COLL', service_divers: 'DIV', service_autre: 'AUT' };
+        const serviceLabels = { service_connectic: 'Service Connectic', service_collecteur: 'Service Collecteur', service_divers: 'Service Divers', service_autre: 'Service Autre' };
+        for (const [key, ref] of Object.entries(serviceRefs)) {
+          if (parseFloat(m[key]) > 0) {
+            lignes.push({
+              position: position++, type_ligne: 'SERVICE', reference: ref,
+              designation: serviceLabels[key],
+              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+              ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
+              quantite: 1, prix_unitaire: parseFloat(m[key]),
+              total_ht: parseFloat(m[key]),
             });
           }
         }
+      }
+
+      if (lignes.length === 0) {
+        throw new ApiError(
+          400,
+          `Aucune ligne à facturer pour le contrat ${contrat.numero_contrat} sur la période ` +
+          `${periodeDebut} → ${periodeFin}. Vérifiez que les relevés compteurs ont bien été importés ` +
+          `et qu'un coût copie ou un forfait est défini sur les machines du contrat.`
+        );
       }
 
       const { rows: [facture] } = await insertFactureFromContrat(dbClient, {
         numero, contrat, snapshot, periodeDebut, periodeFin, dateEcheance, lignes,
         ...machineInfo,
       });
+
+      const uniqueReleveIds = [...new Set(releveIdsToMark)];
+      for (const rid of uniqueReleveIds) {
+        await dbClient.query(
+          `UPDATE releves_compteurs SET est_facture = true, facture_id = $1, facture_numero = $2 WHERE id = $3`,
+          [facture.id, facture.numero_facture, rid]
+        );
+      }
 
       await updateContratApresFacturation(dbClient, contrat, facture, mois, periodeFin);
       await ajouterHistorique(dbClient, facture.id, 'Création',
@@ -741,6 +876,14 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
           quantite: qte, prix_unitaire: pu,
           remise_pourcentage: remPct, total_ht: totalHt,
         });
+      }
+
+      if (lignes.length === 0) {
+        throw new ApiError(
+          400,
+          `Aucune ligne à facturer pour le contrat ${contrat.numero_contrat} : ` +
+          `aucune ligne active n'est définie sur ce contrat.`
+        );
       }
 
       const { rows: [facture] } = await insertFactureFromContrat(dbClient, {
@@ -828,6 +971,89 @@ export async function executerGenerationLot(contratIds, periodeDebut, periodeFin
       resultats.erreurs.push({
         contrat_id: contratId,
         message: err.message,
+      });
+    }
+  }
+
+  return resultats;
+}
+
+// ---------------------------------------------------------------------------
+// Validation en lot (Brouillon → Validée)
+// ---------------------------------------------------------------------------
+
+export async function validerLot(ids, userId) {
+  const resultats = { valides: 0, erreurs: [] };
+
+  for (const id of ids) {
+    try {
+      await validerFacture(id, userId);
+      resultats.valides++;
+    } catch (err) {
+      resultats.erreurs.push({ id, message: err.message });
+    }
+  }
+
+  return resultats;
+}
+
+// ---------------------------------------------------------------------------
+// Envoi email en lot (Validée → Envoyée)
+// ---------------------------------------------------------------------------
+
+export async function envoyerLot(ids, userId, { sujet: sujetOverride, corps: corpsOverride } = {}) {
+  const { sendFactureEmail, getRenderedTemplate } = await import('../email/email.service.js');
+  const { generateFacturePdf } = await import('./pdf.service.js');
+
+  const resultats = { envoyees: 0, erreurs: [] };
+
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    try {
+      const facture = await getFactureById(id);
+
+      if (facture.statut !== 'Validée') {
+        resultats.erreurs.push({
+          numero: facture.numero_facture,
+          client: facture.client_raison_sociale,
+          motif: `Statut « ${facture.statut} » — seules les factures validées peuvent être envoyées`,
+        });
+        continue;
+      }
+
+      const email = facture.client_email;
+      if (!email) {
+        resultats.erreurs.push({
+          numero: facture.numero_facture,
+          client: facture.client_raison_sociale,
+          motif: 'Pas d\'email renseigné pour ce client',
+        });
+        continue;
+      }
+
+      const template = await getRenderedTemplate(facture);
+      const { pdf } = await generateFacturePdf(facture.id);
+
+      await sendFactureEmail({
+        facture,
+        pdfBuffer: pdf,
+        destinataire: email,
+        sujet: sujetOverride || template.sujet,
+        corps: corpsOverride !== undefined ? corpsOverride : template.corps,
+      });
+
+      await envoyerFacture(facture.id, userId);
+      resultats.envoyees++;
+
+      if (i < ids.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    } catch (err) {
+      const facture = await getFactureById(id).catch(() => null);
+      resultats.erreurs.push({
+        numero: facture?.numero_facture || `#${id}`,
+        client: facture?.client_raison_sociale || 'Inconnu',
+        motif: err.message,
       });
     }
   }
@@ -995,6 +1221,187 @@ export async function genererDepuisDevis(devisId, userId) {
 
 
 // ---------------------------------------------------------------------------
+// Gestion des lignes de facture (brouillon uniquement)
+// ---------------------------------------------------------------------------
+
+export async function ajouterLigne(factureId, ligne, userId) {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
+    if (!f) throw new ApiError(404, 'Facture introuvable');
+    if (!['Brouillon', 'Annulée'].includes(f.statut)) throw new ApiError(400, 'Facture verrouillée');
+
+    if (f.statut === 'Annulée') {
+      await dbClient.query(`UPDATE factures SET statut = 'Brouillon', updated_at = NOW() WHERE id = $1`, [factureId]);
+    }
+
+    if (!ligne.designation || !ligne.designation.trim()) throw new ApiError(400, 'La désignation est obligatoire');
+    if (!ligne.quantite || parseFloat(ligne.quantite) <= 0) throw new ApiError(400, 'La quantité doit être supérieure à 0');
+    if (ligne.prix_unitaire === undefined || ligne.prix_unitaire === null) throw new ApiError(400, 'Le prix unitaire est obligatoire');
+
+    const { rows: posRows } = await dbClient.query(
+      'SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM facture_lignes WHERE facture_id = $1', [factureId]
+    );
+    const nextPos = posRows[0].next_pos;
+
+    const totalHt = calculerTotalLigne({
+      type_ligne: ligne.type_ligne || 'PRODUIT',
+      quantite: ligne.quantite,
+      prix_unitaire: ligne.prix_unitaire,
+      remise_pourcentage: ligne.remise_pourcentage,
+      remise_montant: ligne.remise_montant,
+    });
+
+    const { rows: [newLigne] } = await dbClient.query(
+      `INSERT INTO facture_lignes (
+        facture_id, position, type_ligne, reference, designation, description,
+        ligne_periode_debut, ligne_periode_fin,
+        quantite, prix_unitaire, remise_pourcentage, remise_montant, taux_tva, total_ht
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [
+        factureId, nextPos, ligne.type_ligne || 'PRODUIT', ligne.reference || null,
+        ligne.designation.trim(), ligne.description || null,
+        ligne.ligne_periode_debut || null, ligne.ligne_periode_fin || null,
+        parseFloat(ligne.quantite), parseFloat(ligne.prix_unitaire),
+        parseFloat(ligne.remise_pourcentage) || 0, parseFloat(ligne.remise_montant) || 0,
+        parseFloat(ligne.taux_tva) || 20, totalHt,
+      ]
+    );
+
+    await recalculerFacture(dbClient, factureId);
+    await ajouterHistorique(dbClient, factureId, 'AJOUT_LIGNE',
+      `Ligne ajoutée : ${ligne.designation.trim()}`, userId);
+
+    await dbClient.query('COMMIT');
+    return getFactureById(factureId);
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+}
+
+export async function modifierLigne(factureId, ligneId, ligne, userId) {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
+    if (!f) throw new ApiError(404, 'Facture introuvable');
+    if (!['Brouillon', 'Annulée'].includes(f.statut)) throw new ApiError(400, 'Facture verrouillée');
+
+    if (f.statut === 'Annulée') {
+      await dbClient.query(`UPDATE factures SET statut = 'Brouillon', updated_at = NOW() WHERE id = $1`, [factureId]);
+    }
+
+    const { rows: [existing] } = await dbClient.query(
+      'SELECT * FROM facture_lignes WHERE id = $1 AND facture_id = $2', [ligneId, factureId]
+    );
+    if (!existing) throw new ApiError(404, 'Ligne introuvable');
+
+    if (ligne.designation !== undefined && !ligne.designation.trim()) throw new ApiError(400, 'La désignation est obligatoire');
+    if (ligne.quantite !== undefined && parseFloat(ligne.quantite) <= 0) throw new ApiError(400, 'La quantité doit être supérieure à 0');
+
+    const merged = {
+      type_ligne: ligne.type_ligne ?? existing.type_ligne,
+      quantite: ligne.quantite !== undefined ? parseFloat(ligne.quantite) : parseFloat(existing.quantite),
+      prix_unitaire: ligne.prix_unitaire !== undefined ? parseFloat(ligne.prix_unitaire) : parseFloat(existing.prix_unitaire),
+      remise_pourcentage: ligne.remise_pourcentage !== undefined ? parseFloat(ligne.remise_pourcentage) : parseFloat(existing.remise_pourcentage),
+      remise_montant: ligne.remise_montant !== undefined ? parseFloat(ligne.remise_montant) : parseFloat(existing.remise_montant),
+    };
+    const totalHt = calculerTotalLigne(merged);
+
+    await dbClient.query(
+      `UPDATE facture_lignes SET
+        type_ligne = $1, reference = $2, designation = $3, description = $4,
+        ligne_periode_debut = $5, ligne_periode_fin = $6,
+        quantite = $7, prix_unitaire = $8, remise_pourcentage = $9, remise_montant = $10,
+        taux_tva = $11, total_ht = $12
+      WHERE id = $13 AND facture_id = $14`,
+      [
+        merged.type_ligne,
+        ligne.reference !== undefined ? (ligne.reference || null) : existing.reference,
+        ligne.designation !== undefined ? ligne.designation.trim() : existing.designation,
+        ligne.description !== undefined ? (ligne.description || null) : existing.description,
+        ligne.ligne_periode_debut !== undefined ? (ligne.ligne_periode_debut || null) : existing.ligne_periode_debut,
+        ligne.ligne_periode_fin !== undefined ? (ligne.ligne_periode_fin || null) : existing.ligne_periode_fin,
+        merged.quantite, merged.prix_unitaire, merged.remise_pourcentage, merged.remise_montant,
+        ligne.taux_tva !== undefined ? parseFloat(ligne.taux_tva) : parseFloat(existing.taux_tva),
+        totalHt, ligneId, factureId,
+      ]
+    );
+
+    await recalculerFacture(dbClient, factureId);
+    await ajouterHistorique(dbClient, factureId, 'MODIF_LIGNE',
+      `Ligne modifiée : ${ligne.designation !== undefined ? ligne.designation.trim() : existing.designation}`, userId);
+
+    await dbClient.query('COMMIT');
+    return getFactureById(factureId);
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+}
+
+export async function supprimerLigne(factureId, ligneId, userId) {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
+    if (!f) throw new ApiError(404, 'Facture introuvable');
+    if (!['Brouillon', 'Annulée'].includes(f.statut)) throw new ApiError(400, 'Facture verrouillée');
+
+    if (f.statut === 'Annulée') {
+      await dbClient.query(`UPDATE factures SET statut = 'Brouillon', updated_at = NOW() WHERE id = $1`, [factureId]);
+    }
+
+    const { rows: [existing] } = await dbClient.query(
+      'SELECT * FROM facture_lignes WHERE id = $1 AND facture_id = $2', [ligneId, factureId]
+    );
+    if (!existing) throw new ApiError(404, 'Ligne introuvable');
+
+    await dbClient.query('DELETE FROM facture_lignes WHERE id = $1 AND facture_id = $2', [ligneId, factureId]);
+
+    await recalculerFacture(dbClient, factureId);
+    await ajouterHistorique(dbClient, factureId, 'SUPPR_LIGNE',
+      `Ligne supprimée : ${existing.designation}`, userId);
+
+    await dbClient.query('COMMIT');
+    return getFactureById(factureId);
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+}
+
+export async function recalculerTotaux(factureId) {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
+    if (!f) throw new ApiError(404, 'Facture introuvable');
+
+    await recalculerFacture(dbClient, factureId);
+    await dbClient.query('COMMIT');
+    return getFactureById(factureId);
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers internes
 // ---------------------------------------------------------------------------
 
@@ -1040,8 +1447,9 @@ async function insertFactureFromContrat(dbClient, { numero, contrat, snapshot, p
         facture_id, position, type_ligne, reference, designation, description,
         ligne_periode_debut, ligne_periode_fin,
         ancien_compteur, nouveau_compteur, compteur_periode_debut, compteur_periode_fin,
-        quantite, prix_unitaire, remise_pourcentage, remise_montant, taux_tva, total_ht
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        quantite, prix_unitaire, remise_pourcentage, remise_montant, taux_tva, total_ht,
+        releve_compteur_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         facture.id, l.position, l.type_ligne, l.reference || null,
         l.designation, l.description || null,
@@ -1051,6 +1459,7 @@ async function insertFactureFromContrat(dbClient, { numero, contrat, snapshot, p
         l.quantite || 0, l.prix_unitaire || 0,
         l.remise_pourcentage || 0, l.remise_montant || 0,
         l.taux_tva || 20, l.total_ht || 0,
+        l.releve_compteur_id || null,
       ]
     );
   }

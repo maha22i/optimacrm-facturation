@@ -32,10 +32,17 @@ function formatQte(val) {
 function formatPU(val) {
   if (!val) return '';
   const n = parseFloat(val);
-  const dec = n < 1 && n > 0 ? 4 : 2;
+  if (isNaN(n)) return '';
+  if (n === 0) return '0,00 €';
+
+  let str = n.toFixed(10);
+  str = str.replace(/0+$/, '').replace(/\.$/, '');
+  const decimals = str.includes('.') ? str.split('.')[1].length : 0;
+  const minDec = Math.max(decimals, n < 1 && n > 0 ? 6 : 2);
+
   return n.toLocaleString('fr-FR', {
-    minimumFractionDigits: dec,
-    maximumFractionDigits: dec,
+    minimumFractionDigits: minDec,
+    maximumFractionDigits: minDec,
   }) + ' €';
 }
 

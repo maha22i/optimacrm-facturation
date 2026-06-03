@@ -67,7 +67,7 @@ export async function listProduits({ page = 1, limit = 20, categorie, search, ac
     params.push(parseInt(fournisseur_id));
   }
   if (search) {
-    conditions.push(`(p.designation ILIKE $${i} OR p.reference ILIKE $${i} OR p.description ILIKE $${i})`);
+    conditions.push(`(p.designation ILIKE $${i} OR p.reference ILIKE $${i} OR p.description ILIKE $${i} OR p.modele ILIKE $${i} OR m.nom ILIKE $${i})`);
     params.push(`%${search}%`);
     i++;
   }
@@ -77,15 +77,17 @@ export async function listProduits({ page = 1, limit = 20, categorie, search, ac
   const [prodRes, countRes] = await Promise.all([
     query(
       `SELECT ${LIST_FIELDS},
-              f.nom AS fournisseur_nom
+              f.nom AS fournisseur_nom,
+              m.nom AS marque_nom
        FROM catalogue_produits p
        LEFT JOIN fournisseurs f ON f.id = p.fournisseur_id
+       LEFT JOIN marques m ON m.id = p.marque_id
        ${where}
        ORDER BY p.categorie, p.designation
        LIMIT $${i} OFFSET $${i + 1}`,
       [...params, limit, offset]
     ),
-    query(`SELECT COUNT(*)::int AS total FROM catalogue_produits p ${where}`, params),
+    query(`SELECT COUNT(*)::int AS total FROM catalogue_produits p LEFT JOIN marques m ON m.id = p.marque_id ${where}`, params),
   ]);
 
   return {
@@ -320,6 +322,27 @@ export async function deleteProduit(id) {
   return result.rows[0];
 }
 
+// ── DELETE ALL ──────────────────────────────────────────────────────────────────
+
+export async function deleteAllProduits() {
+  const conn = await pool.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query('UPDATE devis_lignes SET catalogue_id = NULL');
+    await conn.query('UPDATE contrat_lignes SET catalogue_produit_id = NULL');
+    await conn.query('UPDATE contrat_machines SET catalogue_produit_id = NULL');
+    // CASCADE supprime : détails catégorie, tarifs clients, comptabilité
+    const result = await conn.query('DELETE FROM catalogue_produits RETURNING id');
+    await conn.query('COMMIT');
+    return { deletedCount: result.rowCount };
+  } catch (err) {
+    await conn.query('ROLLBACK');
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 // ── DUPLICATE ───────────────────────────────────────────────────────────────────
 
 export async function duplicateProduit(id) {
@@ -469,6 +492,46 @@ export async function deleteImage(id) {
   await deleteOldImage(existing.rows[0].image_url);
   await query('UPDATE catalogue_produits SET image_url = NULL, updated_at = NOW() WHERE id = $1', [id]);
   return { deleted: true };
+}
+
+// ── EXPORT ──────────────────────────────────────────────────────────────────────
+
+export async function getProduitsForExport({ categorie, search, actif }) {
+  const conditions = [];
+  const params = [];
+  let i = 1;
+
+  if (actif !== undefined) {
+    conditions.push(`p.actif = $${i++}`);
+    params.push(actif === 'true' || actif === true);
+  }
+  if (categorie) {
+    conditions.push(`p.categorie = $${i++}`);
+    params.push(categorie);
+  }
+  if (search) {
+    conditions.push(`(p.designation ILIKE $${i} OR p.reference ILIKE $${i} OR p.description ILIKE $${i} OR p.modele ILIKE $${i} OR m.nom ILIKE $${i})`);
+    params.push(`%${search}%`);
+    i++;
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const result = await query(
+    `SELECT ${LIST_FIELDS},
+            f.nom AS fournisseur_nom,
+            m.nom AS marque_nom,
+            fam.nom AS famille_nom
+     FROM catalogue_produits p
+     LEFT JOIN fournisseurs f ON f.id = p.fournisseur_id
+     LEFT JOIN marques m ON m.id = p.marque_id
+     LEFT JOIN familles_produits fam ON fam.id = p.famille_id
+     ${where}
+     ORDER BY p.categorie, p.designation`,
+    params,
+  );
+
+  return result.rows;
 }
 
 // ── NAVIGATION (précédent / suivant) ────────────────────────────────────────────

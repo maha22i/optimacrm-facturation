@@ -9,18 +9,17 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from './api';
-import type { User, AuthResponse, ApiResponse, PermissionKey } from './types';
+import type { User, ApiResponse, PermissionKey } from './types';
 
 interface AuthState {
   user: User | null;
-  token: string | null;
   isLoading: boolean;
 }
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (data: { email: string; password: string; first_name: string; last_name: string }) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   hasPermission: (...perms: PermissionKey[]) => boolean;
 }
@@ -30,23 +29,24 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
-    token: null,
     isLoading: true,
   });
 
   const refreshUser = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const hasFlag = !!localStorage.getItem('auth_active');
+    const onProtectedPage = window.location.pathname.startsWith('/dashboard');
+    if (!hasFlag && !onProtectedPage) {
+      setState({ user: null, isLoading: false });
+      return;
+    }
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setState({ user: null, token: null, isLoading: false });
-        return;
-      }
-
       const res = await api.get<ApiResponse<User>>('/auth/profile');
-      setState({ user: res.data, token, isLoading: false });
+      localStorage.setItem('auth_active', '1');
+      setState({ user: res.data, isLoading: false });
     } catch {
-      localStorage.removeItem('token');
-      setState({ user: null, token: null, isLoading: false });
+      localStorage.removeItem('auth_active');
+      setState({ user: null, isLoading: false });
     }
   }, []);
 
@@ -55,20 +55,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshUser]);
 
   const login = async (email: string, password: string) => {
-    const res = await api.post<AuthResponse>('/auth/login', { email, password });
-    localStorage.setItem('token', res.data.token);
-    setState({ user: res.data.user, token: res.data.token, isLoading: false });
+    const res = await api.post<ApiResponse<{ user: User }>>('/auth/login', { email, password });
+    localStorage.setItem('auth_active', '1');
+    setState({ user: res.data.user, isLoading: false });
   };
 
   const register = async (data: { email: string; password: string; first_name: string; last_name: string }) => {
-    const res = await api.post<AuthResponse>('/auth/register', data);
-    localStorage.setItem('token', res.data.token);
-    setState({ user: res.data.user, token: res.data.token, isLoading: false });
+    const res = await api.post<ApiResponse<{ user: User }>>('/auth/register', data);
+    localStorage.setItem('auth_active', '1');
+    setState({ user: res.data.user, isLoading: false });
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    setState({ user: null, token: null, isLoading: false });
+  const logout = async () => {
+    try { await api.post('/auth/logout', {}); } catch { /* ignore */ }
+    localStorage.removeItem('auth_active');
+    setState({ user: null, isLoading: false });
   };
 
   const hasPermission = useCallback((...perms: PermissionKey[]) => {

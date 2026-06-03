@@ -1,15 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { ApiResponse, ClientDetail } from '@/lib/types';
 import ChampsPersonnalisesForm from '@/components/ChampsPersonnalisesForm';
+import { useSiretLookup } from '@/lib/hooks/useSiretLookup';
 
 interface EditFormData {
   raison_sociale: string;
   forme_juridique: string;
   siret: string;
+  siren: string;
+  numero_rcs: string;
   tva_intracommunautaire: string;
   code_ape: string;
   site_web: string;
@@ -28,6 +31,7 @@ interface EditFormData {
   bic: string;
   reference_mandat_sepa: string;
   date_mandat_sepa: string;
+  sequence_mandat: string;
 }
 
 function FieldError({ error }: { error?: string }) {
@@ -61,6 +65,8 @@ export default function ModifierClientPage() {
         raison_sociale: c.raison_sociale,
         forme_juridique: c.forme_juridique,
         siret: c.siret || '',
+        siren: c.siren || '',
+        numero_rcs: c.numero_rcs || '',
         tva_intracommunautaire: c.tva_intracommunautaire || '',
         code_ape: c.code_ape || '',
         site_web: c.site_web || '',
@@ -79,6 +85,7 @@ export default function ModifierClientPage() {
         bic: c.bic || '',
         reference_mandat_sepa: c.reference_mandat_sepa || '',
         date_mandat_sepa: c.date_mandat_sepa || '',
+        sequence_mandat: c.sequence_mandat || 'RCUR',
       });
     } catch {
       setToast({ message: 'Erreur lors du chargement', type: 'error' });
@@ -98,6 +105,49 @@ export default function ModifierClientPage() {
 
   const [champsPersoValeurs, setChampsPersoValeurs] = useState<Record<string, string>>({});
   const handleChampsPersoChange = useCallback((v: Record<string, string>) => setChampsPersoValeurs(v), []);
+
+  const { lookup: siretLookup, status: siretStatus, error: siretError, reset: siretReset } = useSiretLookup();
+  const siretDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const isInitialSiretRef = useRef(true);
+
+  useEffect(() => {
+    if (form?.siret) isInitialSiretRef.current = false;
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSiretChange = (value: string) => {
+    const sanitized = value.replace(/\D/g, '').slice(0, 14);
+    updateField('siret', sanitized);
+    isInitialSiretRef.current = false;
+
+    const cleaned = sanitized.replace(/\s/g, '');
+    if (cleaned.length !== 9 && cleaned.length !== 14) {
+      siretReset();
+      return;
+    }
+
+    if (siretDebounceRef.current) clearTimeout(siretDebounceRef.current);
+    siretDebounceRef.current = setTimeout(async () => {
+      const result = await siretLookup(cleaned);
+      if (result) {
+        setForm(prev => prev ? ({
+          ...prev,
+          raison_sociale: prev.raison_sociale || result.raisonSociale,
+          forme_juridique: prev.forme_juridique === 'SARL' ? result.formeJuridique : prev.forme_juridique,
+          siret: result.siret || sanitized,
+          siren: prev.siren || result.siren,
+          numero_rcs: prev.numero_rcs || result.numeroRcs,
+          tva_intracommunautaire: prev.tva_intracommunautaire || result.tvaIntra,
+          code_ape: prev.code_ape || result.codeApe,
+        }) : prev);
+      }
+    }, 500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (siretDebounceRef.current) clearTimeout(siretDebounceRef.current);
+    };
+  }, []);
 
   const updateField = (field: string, value: string) => {
     setForm(f => f ? { ...f, [field]: value } : f);
@@ -125,6 +175,8 @@ export default function ModifierClientPage() {
         raison_sociale: form.raison_sociale,
         forme_juridique: form.forme_juridique,
         siret: form.siret || null,
+        siren: form.siren || null,
+        numero_rcs: form.numero_rcs || null,
         tva_intracommunautaire: form.tva_intracommunautaire || null,
         code_ape: form.code_ape || null,
         site_web: form.site_web || null,
@@ -143,6 +195,7 @@ export default function ModifierClientPage() {
         bic: form.bic || null,
         reference_mandat_sepa: form.reference_mandat_sepa || null,
         date_mandat_sepa: form.date_mandat_sepa || null,
+        sequence_mandat: form.sequence_mandat || 'RCUR',
       });
 
       if (Object.keys(champsPersoValeurs).length > 0) {
@@ -276,15 +329,90 @@ export default function ModifierClientPage() {
 
             {/* SIRET */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">SIRET</label>
-              <input value={form.siret} onChange={e => updateField('siret', e.target.value.replace(/\D/g, '').slice(0, 14))} maxLength={14} className={inputClass('siret')} placeholder="14 chiffres" />
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                SIRET <span className="text-xs font-normal text-gray-400">(9 ou 14 chiffres pour auto-remplir)</span>
+              </label>
+              <div className="relative">
+                <input
+                  value={form.siret}
+                  onChange={e => handleSiretChange(e.target.value)}
+                  maxLength={14}
+                  className={`${inputClass('siret')} pr-10`}
+                  placeholder="14 chiffres"
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  {siretStatus === 'loading' && (
+                    <svg className="animate-spin h-5 w-5 text-violet-500" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  )}
+                  {siretStatus === 'success' && (
+                    <svg className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                  )}
+                  {(siretStatus === 'error' || siretStatus === 'not_found') && (
+                    <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                    </svg>
+                  )}
+                </div>
+              </div>
               <FieldError error={errors.siret} />
-              {form.siret && form.siret.length === 14 && (
+              {siretStatus === 'success' && (
+                <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                  Informations récupérées depuis l&apos;INSEE
+                </p>
+              )}
+              {siretStatus === 'not_found' && (
+                <p className="mt-1.5 text-xs text-orange-600 flex items-center gap-1">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  Aucune entreprise trouvée — saisie manuelle requise
+                </p>
+              )}
+              {siretStatus === 'error' && (
+                <p className="mt-1.5 text-xs text-red-600 flex items-center gap-1">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                  </svg>
+                  {siretError}
+                </p>
+              )}
+              {siretStatus === 'idle' && form.siret && form.siret.length === 14 && (
                 <p className="mt-1.5 text-xs text-gray-400 flex items-center gap-1">
                   <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
                   SIREN : {form.siret.substring(0, 9)}
                 </p>
               )}
+            </div>
+
+            {/* SIREN */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">SIREN</label>
+              <input
+                value={form.siren}
+                onChange={e => updateField('siren', e.target.value.replace(/\D/g, '').slice(0, 9))}
+                placeholder="9 chiffres"
+                maxLength={9}
+                className={inputClass('')}
+              />
+            </div>
+
+            {/* Numéro RCS */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Numéro RCS</label>
+              <input
+                value={form.numero_rcs}
+                onChange={e => updateField('numero_rcs', e.target.value)}
+                placeholder="Ex: RCS Paris B 123 456 789"
+                className={inputClass('')}
+              />
             </div>
 
             {/* TVA Intracommunautaire */}
@@ -400,6 +528,15 @@ export default function ModifierClientPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Date mandat SEPA</label>
               <input type="date" value={form.date_mandat_sepa} onChange={e => updateField('date_mandat_sepa', e.target.value)} className={inputClass('')} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Séquence mandat</label>
+              <select value={form.sequence_mandat} onChange={e => updateField('sequence_mandat', e.target.value)} className={inputClass('')}>
+                <option value="FRST">FRST (Premier)</option>
+                <option value="RCUR">RCUR (Récurrent)</option>
+                <option value="FNAL">FNAL (Dernier)</option>
+                <option value="OOFF">OOFF (Ponctuel)</option>
+              </select>
             </div>
           </div>
         </section>

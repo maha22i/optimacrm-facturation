@@ -33,6 +33,7 @@ export async function updateEmailConfig(data) {
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password',
     'smtp_from_name', 'smtp_from_email', 'reply_to_email', 'signature',
     'template_facture_sujet', 'template_facture_corps',
+    'template_devis_sujet', 'template_devis_corps',
   ];
 
   const setClauses = [];
@@ -200,6 +201,76 @@ export async function sendFactureEmail({ facture, pdfBuffer, destinataire, sujet
   }
 }
 
+// ── Envoi devis par email ─────────────────────────────────────────────────────
+
+export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, corps }) {
+  const config = await getEmailConfigRaw();
+  if (!config || !config.est_configure) {
+    throw ApiError.badRequest('Le SMTP n\'est pas configuré. Configurez-le dans Paramètres > Email.');
+  }
+
+  const transporter = createTransporter(config);
+  const fromName = config.smtp_from_name || 'OptimaCRM';
+  const fromEmail = config.smtp_from_email || config.smtp_user;
+
+  const signature = config.signature || '';
+  const signatureHtml = signature ? `<br><br><div style="color:#6b7280;font-size:13px;white-space:pre-line;border-top:1px solid #e5e7eb;padding-top:12px;margin-top:12px;">${escapeHtml(signature)}</div>` : '';
+
+  const corpsHtml = escapeHtml(corps).replace(/\n/g, '<br>');
+  const numero = devis.numero_devis || String(devis.id);
+  const filename = `DEVIS-${numero}.pdf`;
+
+  try {
+    await transporter.sendMail({
+      from: `"${fromName}" <${fromEmail}>`,
+      to: destinataire,
+      replyTo: config.reply_to_email || fromEmail,
+      subject: sujet,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+          <div style="background:#2563EB;padding:16px 20px;border-radius:8px 8px 0 0;text-align:center;">
+            <h1 style="color:white;margin:0;font-size:18px;">${escapeHtml(fromName)}</h1>
+          </div>
+          <div style="background:#ffffff;padding:24px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;">
+            <div style="color:#1a1a2e;font-size:14px;line-height:1.6;">${corpsHtml}</div>
+            ${signatureHtml}
+          </div>
+          <div style="text-align:center;padding:12px;color:#9ca3af;font-size:11px;">
+            Envoyé via OptimaCRM
+          </div>
+        </div>
+      `,
+      attachments: [{
+        filename,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      }],
+    });
+
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'envoyé',
+    });
+
+    return { success: true };
+  } catch (err) {
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'erreur',
+      message_erreur: err.message,
+    });
+    throw ApiError.badRequest(`Erreur d'envoi : ${err.message}`);
+  }
+}
+
 // ── Templates ────────────────────────────────────────────────────────────────
 
 export async function getRenderedTemplate(facture) {
@@ -228,6 +299,38 @@ export async function getRenderedTemplate(facture) {
   }
 
   return { sujet, corps, destinataire: facture.client_email || '' };
+}
+
+export async function getRenderedDevisTemplate(devis) {
+  const config = await getEmailConfigRaw();
+  const societe = await query('SELECT * FROM societe_config WHERE id = 1');
+  const s = societe.rows[0] || {};
+
+  const sujetTemplate = config?.template_devis_sujet || 'Votre devis {{numero}} - {{societe}}';
+  const corpsTemplate = config?.template_devis_corps || 'Bonjour,\n\nVeuillez trouver ci-joint votre devis.';
+
+  const clientLabel = devis.client?.raison_sociale || devis.nom_client_libre || '';
+  const destinataire = devis.contact?.email || devis.client?.email_principal || '';
+
+  const vars = {
+    '{{numero}}': devis.numero_devis || '',
+    '{{societe}}': s.raison_sociale || '',
+    '{{montant_ttc}}': formatMontant(devis.montant_ttc),
+    '{{montant_ht}}': formatMontant(devis.montant_ht),
+    '{{date_validite}}': formatDate(devis.date_validite),
+    '{{date_emission}}': formatDate(devis.date_emission || devis.date_creation),
+    '{{client}}': clientLabel,
+    '{{objet}}': devis.objet || '',
+  };
+
+  let sujet = sujetTemplate;
+  let corps = corpsTemplate;
+  for (const [key, val] of Object.entries(vars)) {
+    sujet = sujet.replaceAll(key, val);
+    corps = corps.replaceAll(key, val);
+  }
+
+  return { sujet, corps, destinataire };
 }
 
 // ── Logs ─────────────────────────────────────────────────────────────────────

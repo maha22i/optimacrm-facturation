@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { DevisDetail, DevisLigne, DevisChamp, ApiResponse, StatutDevis } from '@/lib/types';
+import { lignesAfficheesPourDevis } from '@/lib/devisImportView';
+import type { DevisDetail, DevisLigne, DevisChamp, ApiResponse, StatutDevis, EmailTemplate } from '@/lib/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -143,6 +144,151 @@ function IconClock() {
   return <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>;
 }
 
+function SendDevisEmailModal({ devis, onClose, onSent }: { devis: DevisDetail; onClose: () => void; onSent: () => void }) {
+  const [loadTpl, setLoadTpl] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [destinataire, setDestinataire] = useState('');
+  const [sujet, setSujet] = useState('');
+  const [corps, setCorps] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get<ApiResponse<EmailTemplate>>(`/devis/${devis.id}/email-template`);
+        setDestinataire(res.data.destinataire || '');
+        setSujet(res.data.sujet || '');
+        setCorps(res.data.corps || '');
+      } catch {
+        const fallback = devis.contact?.email || devis.client?.email_principal || '';
+        setDestinataire(fallback);
+        setSujet(`Devis ${devis.numero_devis}`);
+        setCorps('Bonjour,\n\nVeuillez trouver ci-joint notre devis.\n\nCordialement');
+      } finally {
+        setLoadTpl(false);
+      }
+    })();
+  }, [devis]);
+
+  const handleSend = async () => {
+    setError('');
+    if (!destinataire) { setError('Veuillez saisir une adresse email destinataire'); return; }
+    if (!sujet) { setError('Veuillez saisir un objet'); return; }
+
+    setSending(true);
+    try {
+      await api.post(`/devis/${devis.id}/envoyer-email`, { destinataire, sujet, corps });
+      onSent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur lors de l'envoi");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const pdfName = `DEVIS-${devis.numero_devis || devis.id}.pdf`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Envoyer par email</h2>
+              <p className="text-xs text-gray-400">Devis {devis.numero_devis} — Le PDF sera joint automatiquement</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 transition cursor-pointer">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {loadTpl ? (
+          <div className="p-10 flex justify-center">
+            <div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" />
+          </div>
+        ) : (
+          <div className="p-6 space-y-5">
+            {error && (
+              <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex items-start gap-2.5">
+                <svg className="h-4 w-4 text-red-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+                <p className="text-xs text-red-700 font-medium">{error}</p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Destinataire</label>
+              <input
+                type="email"
+                value={destinataire}
+                onChange={e => setDestinataire(e.target.value)}
+                placeholder="client@email.com"
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Objet</label>
+              <input
+                value={sujet}
+                onChange={e => setSujet(e.target.value)}
+                placeholder="Devis n°..."
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Message</label>
+              <textarea
+                value={corps}
+                onChange={e => setCorps(e.target.value)}
+                rows={8}
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition resize-y"
+              />
+            </div>
+
+            <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 flex items-center gap-3">
+              <div className="h-8 w-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <svg className="h-4 w-4 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-700">{pdfName}</p>
+                <p className="text-xs text-gray-400">Le PDF du devis sera généré et joint automatiquement</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/50">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || !destinataire || !sujet}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {sending ? (
+              <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Envoi en cours...</>
+            ) : (
+              <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>Envoyer</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function DevisDetailPage() {
@@ -155,6 +301,8 @@ export default function DevisDetailPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [modal, setModal] = useState<{ type: 'delete' | 'transformer' } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
 
   const fetchDevis = useCallback(async () => {
     try {
@@ -171,6 +319,23 @@ export default function DevisDetailPage() {
 
   const handleAction = async (action: string) => {
     if (!devis) return;
+    if (action === 'pdf') {
+      setPdfLoading(true);
+      try {
+        const response = await fetch(`${API_URL}/devis/${devis.id}/pdf`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Erreur génération PDF');
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      } catch {
+        setToast({ message: 'Erreur lors de la génération du PDF', type: 'error' });
+      } finally {
+        setPdfLoading(false);
+      }
+      return;
+    }
     setActionLoading(true);
     try {
       switch (action) {
@@ -203,9 +368,6 @@ export default function DevisDetailPage() {
           setToast({ message: 'Facture créée avec succès', type: 'success' });
           setModal(null);
           fetchDevis();
-          break;
-        case 'pdf':
-          window.open(`${API_URL}/devis/${devisId}/pdf`, '_blank');
           break;
         case 'supprimer':
           await api.delete(`/devis/${devisId}`);
@@ -242,12 +404,25 @@ export default function DevisDetailPage() {
     );
   }
 
-  const tvaBreakdown = computeTvaBreakdown(devis.lignes);
+  const lignesTable = lignesAfficheesPourDevis(devis);
+  const tvaBreakdown = computeTvaBreakdown(lignesTable);
   const pdfChamps = devis.champs_personnalises.filter(c => c.afficher_sur_pdf);
 
   return (
     <div>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
+      {showEmailModal && devis && (devis.statut === 'BROUILLON' || devis.statut === 'ENVOYE') && (
+        <SendDevisEmailModal
+          devis={devis}
+          onClose={() => setShowEmailModal(false)}
+          onSent={() => {
+            setShowEmailModal(false);
+            setToast({ message: 'Email envoyé avec succès', type: 'success' });
+            fetchDevis();
+          }}
+        />
+      )}
 
       {modal?.type === 'delete' && (
         <ConfirmModal
@@ -287,38 +462,40 @@ export default function DevisDetailPage() {
             {devis.statut === 'BROUILLON' && (
               <>
                 <ActionBtn label="Modifier" icon={<IconEdit />} onClick={() => handleAction('modifier')} />
-                <ActionBtn label="Envoyer" icon={<IconSend />} onClick={() => handleAction('envoyer')} variant="primary" disabled={actionLoading} />
+                <ActionBtn label="Par email" icon={<IconMail />} onClick={() => setShowEmailModal(true)} variant="primary" />
+                <ActionBtn label="Marquer envoyé" icon={<IconSend />} onClick={() => handleAction('envoyer')} disabled={actionLoading} />
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
-                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} />
+                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
                 <ActionBtn label="Supprimer" icon={<IconTrash />} onClick={() => setModal({ type: 'delete' })} variant="danger" />
               </>
             )}
             {devis.statut === 'ENVOYE' && (
               <>
                 <ActionBtn label="Modifier" icon={<IconEdit />} onClick={() => handleAction('modifier')} />
+                <ActionBtn label="Renvoyer email" icon={<IconMail />} onClick={() => setShowEmailModal(true)} />
                 <ActionBtn label="Accepter" icon={<IconCheck />} onClick={() => handleAction('accepter')} variant="success" disabled={actionLoading} />
                 <ActionBtn label="Refuser" icon={<IconX />} onClick={() => handleAction('refuser')} variant="danger" disabled={actionLoading} />
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
-                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} />
+                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
               </>
             )}
             {devis.statut === 'ACCEPTE' && (
               <>
                 <ActionBtn label="Transformer en facture" icon={<IconInvoice />} onClick={() => setModal({ type: 'transformer' })} variant="primary" disabled={actionLoading} />
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
-                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} />
+                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
               </>
             )}
             {(devis.statut === 'REFUSE' || devis.statut === 'EXPIRE') && (
               <>
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
-                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} />
+                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
               </>
             )}
             {devis.statut === 'FACTURE' && (
               <>
                 {devis.facture_id && <ActionBtn label="Voir la facture" icon={<IconEye />} onClick={() => handleAction('voir-facture')} variant="primary" />}
-                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} />
+                <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
               </>
             )}
           </div>
@@ -358,6 +535,11 @@ export default function DevisDetailPage() {
               {devis.client ? (
                 <>
                   <p className="text-sm font-bold text-gray-900">{devis.client.raison_sociale}</p>
+                  {devis.nom_client_libre && devis.nom_client_libre.trim() && devis.nom_client_libre.trim() !== devis.client.raison_sociale?.trim() && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Libellé import / Excel : <span className="font-medium text-gray-700">{devis.nom_client_libre}</span>
+                    </p>
+                  )}
                   {devis.adresse_facturation && (
                     <div className="text-sm text-gray-600 mt-1">
                       <p>{devis.adresse_facturation.ligne1}</p>
@@ -373,15 +555,22 @@ export default function DevisDetailPage() {
                     </p>
                   )}
                 </>
+              ) : devis.nom_client_libre && devis.nom_client_libre.trim() ? (
+                <>
+                  <p className="text-sm font-bold text-gray-900">{devis.nom_client_libre}</p>
+                  <p className="text-xs text-amber-700 mt-1.5 rounded-md bg-amber-50 border border-amber-100 px-2 py-1 inline-block">
+                    Client tel qu&apos;indiqué dans l&apos;import — aucune fiche client OptimaCRM n&apos;est liée pour l&apos;instant.
+                  </p>
+                </>
               ) : (
-                <p className="text-sm text-gray-400">Client #{devis.client_id}</p>
+                <p className="text-sm text-gray-400">Aucun client renseigné</p>
               )}
             </div>
 
             {/* Object banner */}
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg px-5 py-3 mb-6">
               <p className="text-[11px] font-semibold text-blue-200 uppercase tracking-wider">Objet</p>
-              <p className="text-sm font-semibold text-white mt-0.5">{devis.objet}</p>
+              <p className="text-sm font-semibold text-white mt-0.5">{devis.objet?.trim() ? devis.objet : '—'}</p>
             </div>
 
             {/* Lines table */}
@@ -398,8 +587,8 @@ export default function DevisDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {devis.lignes.sort((a, b) => a.ordre - b.ordre).map((ligne, idx) => (
-                    <LigneRow key={ligne.id ?? idx} ligne={ligne} />
+                  {lignesTable.map((ligne, idx) => (
+                    <LigneRow key={ligne.id ?? `l-${idx}`} ligne={ligne} />
                   ))}
                 </tbody>
               </table>
@@ -479,6 +668,9 @@ export default function DevisDetailPage() {
                   <div>
                     <p className="text-sm font-semibold text-gray-900">{devis.client.raison_sociale}</p>
                     <p className="text-xs text-gray-400">{devis.client.numero_client}</p>
+                    {devis.nom_client_libre && devis.nom_client_libre.trim() && devis.nom_client_libre.trim() !== devis.client.raison_sociale?.trim() && (
+                      <p className="text-[10px] text-gray-500 mt-0.5">Excel : {devis.nom_client_libre}</p>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-2 text-sm">
@@ -502,8 +694,13 @@ export default function DevisDetailPage() {
                   Voir la fiche client
                 </button>
               </div>
+            ) : devis.nom_client_libre && devis.nom_client_libre.trim() ? (
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{devis.nom_client_libre}</p>
+                <p className="text-xs text-amber-600 mt-1">Import Excel — pas de fiche client</p>
+              </div>
             ) : (
-              <p className="text-sm text-gray-400">Client #{devis.client_id}</p>
+              <p className="text-sm text-gray-400">Aucun client renseigné</p>
             )}
           </div>
 
@@ -597,8 +794,8 @@ export default function DevisDetailPage() {
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function ActionBtn({ label, icon, onClick, variant, disabled }: {
-  label: string; icon: React.ReactNode; onClick: () => void; variant?: 'primary' | 'danger' | 'success'; disabled?: boolean;
+function ActionBtn({ label, icon, onClick, variant, disabled, loading }: {
+  label: string; icon: React.ReactNode; onClick: () => void; variant?: 'primary' | 'danger' | 'success'; disabled?: boolean; loading?: boolean;
 }) {
   const base = 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
   const styles = {
@@ -608,8 +805,8 @@ function ActionBtn({ label, icon, onClick, variant, disabled }: {
     default: 'border border-gray-200 text-gray-700 hover:bg-gray-50',
   };
   return (
-    <button onClick={onClick} disabled={disabled} className={`${base} ${styles[variant || 'default']}`}>
-      {icon}
+    <button onClick={onClick} disabled={disabled || loading} className={`${base} ${styles[variant || 'default']}`}>
+      {loading ? <span className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : icon}
       <span className="hidden sm:inline">{label}</span>
     </button>
   );

@@ -17,6 +17,9 @@ router.get('/check-numero-serie', checkPermission('parc_read'), ctrl.checkNumero
 // ── Machines par client ───────────────────────────────────────────────────
 router.get('/by-client/:clientId', checkPermission('parc_read'), ctrl.getMachinesByClient);
 
+// ── Export ─────────────────────────────────────────────────────────────────
+router.get('/export', checkPermission('parc_read'), ctrl.exportMachines);
+
 // ── Machines CRUD ─────────────────────────────────────────────────────────
 
 router.get('/', checkPermission('parc_read'), ctrl.listMachines);

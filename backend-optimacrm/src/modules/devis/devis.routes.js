@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as ctrl from './devis.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
 import { generateDevisPdf } from './pdf.service.js';
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const router = Router();
 router.use(authenticate);
 
@@ -20,13 +22,21 @@ const CHAMP_TYPE_ENUM = ['TEXTE', 'NOMBRE', 'DATE', 'LISTE', 'BOOLEEN'];
 router.get('/', checkPermission('devis_read'), ctrl.listDevis);
 router.get('/stats', checkPermission('devis_read'), ctrl.getDevisStats);
 
+router.post('/import/parse', checkPermission('devis_write'), upload.single('file'), ctrl.importParse);
+router.post('/import/execute', checkPermission('devis_write'), ctrl.importExecute);
+
 router.get('/:id/pdf', checkPermission('devis_read'), async (req, res, next) => {
   try {
-    const { html } = await generateDevisPdf(parseInt(req.params.id));
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(html);
+    const { pdf, devis } = await generateDevisPdf(parseInt(req.params.id));
+    const filename = `DEVIS-${devis.numero_devis || devis.id}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(pdf);
   } catch (err) { next(err); }
 });
+
+router.get('/:id/email-template', checkPermission('devis_read'), ctrl.getDevisEmailTemplate);
+router.post('/:id/envoyer-email', checkPermission('devis_write'), ctrl.envoyerDevisEmail);
 
 router.get('/:id', checkPermission('devis_read'), ctrl.getDevis);
 

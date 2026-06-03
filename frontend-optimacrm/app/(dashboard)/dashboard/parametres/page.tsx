@@ -224,10 +224,9 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
     try {
       const formData = new FormData();
       formData.append('logo', file);
-      const token = localStorage.getItem('token');
       const res = await fetch(`${API_URL}/parametres/societe/logo`, {
         method: 'POST',
-        headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+        credentials: 'include',
         body: formData,
       });
       const data = await res.json();
@@ -262,6 +261,8 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
   const labelCls = 'block text-sm font-semibold text-gray-700 mb-2';
   const readOnly = !isAdmin;
 
+  const [socTab, setSocTab] = useState<'identite' | 'apparence' | 'bancaire'>('identite');
+
   if (loading) {
     return (
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm py-20">
@@ -285,411 +286,474 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
         </div>
       )}
 
-      {/* Identité légale */}
+      {/* Card principale avec onglets */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Identité légale</h2>
-              <p className="text-xs text-gray-400">Informations juridiques de votre société</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div>
-            <label className={labelCls}>Raison sociale</label>
-            <input value={form.raison_sociale} onChange={e => updateField('raison_sociale', e.target.value)} placeholder="Nom de votre société" className={inputCls} readOnly={readOnly} />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Forme juridique</label>
-              <div className="relative">
-                <select value={form.forme_juridique} onChange={e => updateField('forme_juridique', e.target.value)} className={`${inputCls} appearance-none pr-10 cursor-pointer`} disabled={readOnly}>
-                  <option value="">Sélectionner...</option>
-                  {FORMES_JURIDIQUES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                </select>
-                <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-              </div>
-            </div>
-            <div>
-              <label className={labelCls}>SIRET <span className="text-xs font-normal text-gray-400">(14 chiffres)</span></label>
-              <input value={form.siret} onChange={e => updateField('siret', e.target.value)} placeholder="12345678901234" maxLength={14} className={inputCls} readOnly={readOnly} />
-              {form.siren && <p className="mt-1.5 text-xs text-gray-400">SIREN : {form.siren}</p>}
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>N° TVA intracommunautaire</label>
-              <input value={form.tva_intracommunautaire} onChange={e => updateField('tva_intracommunautaire', e.target.value)} placeholder="FR12345678900" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Code APE / NAF</label>
-              <input value={form.code_ape} onChange={e => updateField('code_ape', e.target.value)} placeholder="6201Z" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            <div>
-              <label className={labelCls}>Capital social (€)</label>
-              <input type="number" step="0.01" min="0" value={form.capital_social} onChange={e => updateField('capital_social', e.target.value)} placeholder="10000" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Ville RCS</label>
-              <input value={form.rcs_ville} onChange={e => updateField('rcs_ville', e.target.value)} placeholder="Bobigny" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Numéro RCS</label>
-              <input value={form.numero_rcs} onChange={e => updateField('numero_rcs', e.target.value)} placeholder="123 456 789" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Coordonnées */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Coordonnées</h2>
-              <p className="text-xs text-gray-400">Adresse et moyens de contact</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div>
-            <label className={labelCls}>Adresse ligne 1</label>
-            <input value={form.adresse_ligne1} onChange={e => updateField('adresse_ligne1', e.target.value)} placeholder="123 rue de la Paix" className={inputCls} readOnly={readOnly} />
-          </div>
-          <div>
-            <label className={labelCls}>Adresse ligne 2 <span className="text-xs font-normal text-gray-400">(complément)</span></label>
-            <input value={form.adresse_ligne2} onChange={e => updateField('adresse_ligne2', e.target.value)} placeholder="Bâtiment A, 2ème étage" className={inputCls} readOnly={readOnly} />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            <div>
-              <label className={labelCls}>Code postal</label>
-              <input value={form.code_postal} onChange={e => updateField('code_postal', e.target.value)} placeholder="75001" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Ville</label>
-              <input value={form.ville} onChange={e => updateField('ville', e.target.value)} placeholder="Paris" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Pays</label>
-              <input value={form.pays} onChange={e => updateField('pays', e.target.value)} placeholder="France" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Téléphone</label>
-              <input value={form.telephone} onChange={e => updateField('telephone', e.target.value)} placeholder="01 23 45 67 89" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Email contact</label>
-              <input type="email" value={form.email_contact} onChange={e => updateField('email_contact', e.target.value)} placeholder="contact@societe.fr" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>
-                Email facturation
-                <span className="ml-1 relative group">
-                  <svg className="inline h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
-                  <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white opacity-0 group-hover:opacity-100 transition pointer-events-none z-10">
-                    Email utilisé comme expéditeur des factures envoyées aux clients. Si vide, l&apos;email contact sera utilisé.
-                  </span>
-                </span>
-              </label>
-              <input type="email" value={form.email_facturation} onChange={e => updateField('email_facturation', e.target.value)} placeholder="facturation@societe.fr" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Site web</label>
-              <input value={form.site_web} onChange={e => updateField('site_web', e.target.value)} placeholder="https://www.societe.fr" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Logo & Apparence */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Logo & Apparence</h2>
-              <p className="text-xs text-gray-400">Personnalisez l&apos;apparence de vos documents</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-6">
-          {/* Logo upload */}
-          <div>
-            <label className={labelCls}>Logo de la société</label>
-            {form.logo_url ? (
-              <div className="flex items-center gap-5">
-                <div className="h-24 w-48 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
-                  <img src={resolveLogoUrl(form.logo_url)} alt="Logo" className="max-h-full max-w-full object-contain" />
-                </div>
-                {isAdmin && (
-                  <div className="flex flex-col gap-2">
-                    <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
-                      Changer
-                    </button>
-                    <button onClick={handleLogoDelete} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                      Supprimer
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={() => isAdmin && fileInputRef.current?.click()}
-                disabled={!isAdmin || logoUploading}
-                className="w-full rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-400 bg-gray-50 hover:bg-blue-50/30 py-10 flex flex-col items-center gap-3 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {logoUploading ? (
-                  <div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" />
-                ) : (
-                  <svg className="h-10 w-10 text-gray-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
-                )}
-                <div className="text-center">
-                  <p className="text-sm font-medium text-gray-500">Glissez votre logo ici ou cliquez pour sélectionner</p>
-                  <p className="text-xs text-gray-400 mt-1">Logo affiché sur les factures PDF. Format recommandé : PNG transparent, 400×150px minimum. Max 2 Mo.</p>
-                </div>
-              </button>
-            )}
-            <input ref={fileInputRef} type="file" accept=".jpg,.jpeg,.png,.svg" onChange={handleLogoUpload} className="hidden" />
-          </div>
-
-          {/* Couleur principale */}
-          <div>
-            <label className={labelCls}>
-              Couleur des documents PDF
-              <span className="ml-1 relative group">
-                <svg className="inline h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
-                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white opacity-0 group-hover:opacity-100 transition pointer-events-none z-10">
-                  Cette couleur sera utilisée pour les en-têtes et accents de vos devis et factures
-                </span>
-              </span>
-            </label>
-            <div className="flex items-center gap-4">
-              <input
-                type="color"
-                value={form.couleur_principale}
-                onChange={e => updateField('couleur_principale', e.target.value)}
-                className="h-11 w-14 rounded-lg border border-gray-200 cursor-pointer p-1"
-                disabled={readOnly}
-              />
-              <input
-                value={form.couleur_principale}
-                onChange={e => {
-                  const v = e.target.value;
-                  if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) updateField('couleur_principale', v);
-                }}
-                placeholder="#1E40AF"
-                maxLength={7}
-                className={`${inputCls} w-32 font-mono text-sm`}
-                readOnly={readOnly}
-              />
-              <div className="h-10 w-10 rounded-lg border border-gray-200 shrink-0" style={{ backgroundColor: form.couleur_principale }} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Informations bancaires */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-cyan-50 flex items-center justify-center text-cyan-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Informations bancaires</h2>
-              <p className="text-xs text-gray-400">Ces informations apparaîtront sur vos factures pour les virements</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div>
-            <label className={labelCls}>Nom de la banque</label>
-            <input value={form.banque_nom} onChange={e => updateField('banque_nom', e.target.value)} placeholder="BNP Paribas" className={inputCls} readOnly={readOnly} />
-          </div>
-          <div>
-            <label className={labelCls}>IBAN</label>
-            <div className="relative">
-              <input
-                type={showIban ? 'text' : 'password'}
-                value={showIban ? form.iban : (form.iban ? maskIban(form.iban) : '')}
-                onChange={e => { if (showIban) updateField('iban', e.target.value); }}
-                placeholder="FR76 1234 5678 9012 3456 7890 042"
-                className={`${inputCls} pr-11 font-mono`}
-                readOnly={readOnly || !showIban}
-              />
-              <button
-                type="button"
-                onClick={() => setShowIban(!showIban)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
-              >
-                {showIban ? (
-                  <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
-                ) : (
-                  <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                )}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>BIC / SWIFT</label>
-            <input value={form.bic} onChange={e => updateField('bic', e.target.value)} placeholder="BNPAFRPP" className={`${inputCls} font-mono`} readOnly={readOnly} />
-          </div>
-        </div>
-      </div>
-
-      {/* Textes par défaut */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Textes par défaut des documents</h2>
-              <p className="text-xs text-gray-400">Textes pré-remplis sur vos devis, factures et emails</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div>
-            <label className={labelCls}>Mentions légales — affichées en pied de page des PDFs</label>
-            <textarea value={form.mentions_legales} onChange={e => updateField('mentions_legales', e.target.value)} placeholder="SARL au capital de 10 000€ — RCS Bobigny 123 456 789 — TVA FR12345678900" rows={3} className={`${inputCls} resize-y`} readOnly={readOnly} />
-          </div>
-          <div>
-            <label className={labelCls}>Conditions Générales de Vente — chargées par défaut dans vos devis</label>
-            <textarea value={form.cgv} onChange={e => updateField('cgv', e.target.value)} placeholder="Saisissez vos CGV ici..." rows={6} className={`${inputCls} resize-y`} readOnly={readOnly} />
-            <p className="mt-1.5 text-xs text-gray-400">Ces CGV seront pré-remplies sur chaque nouveau devis. Vous pourrez les modifier individuellement.</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Message devis par défaut</label>
-              <textarea value={form.message_devis_defaut} onChange={e => updateField('message_devis_defaut', e.target.value)} placeholder="Nous vous remercions de l'intérêt que vous portez à nos services..." rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Message facture par défaut</label>
-              <textarea value={form.message_facture_defaut} onChange={e => updateField('message_facture_defaut', e.target.value)} placeholder="Nous vous remercions de votre confiance. Paiement par virement sous 30 jours." rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>Signature email</label>
-            <textarea value={form.signature_email} onChange={e => updateField('signature_email', e.target.value)} placeholder="Cordialement,&#10;L'équipe commerciale" rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
-            <p className="mt-1.5 text-xs text-gray-400">Ajoutée automatiquement aux emails envoyés aux clients</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Numérotation */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5-3.9 19.5m-2.1-19.5-3.9 19.5" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Numérotation des documents</h2>
-              <p className="text-xs text-gray-400">Personnalisez les préfixes utilisés pour numéroter vos documents</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 flex items-start gap-2.5">
-            <svg className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
-            <p className="text-xs text-amber-700 font-medium">Modifier les préfixes n&apos;affecte pas les documents déjà créés.</p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {([
-              { field: 'prefixe_devis', label: 'Devis', preview: `${form.prefixe_devis}-${year}-00001` },
-              { field: 'prefixe_facture', label: 'Factures', preview: `${form.prefixe_facture}-${year}-00001` },
-              { field: 'prefixe_client', label: 'Clients', preview: `${form.prefixe_client}-00001` },
-              { field: 'prefixe_bon_commande', label: 'Bons de commande', preview: `${form.prefixe_bon_commande}-${year}-00001` },
-            ] as const).map(item => (
-              <div key={item.field}>
-                <label className={labelCls}>{item.label}</label>
-                <input
-                  value={form[item.field]}
-                  onChange={e => updateField(item.field, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 6))}
-                  placeholder="DEV"
-                  maxLength={6}
-                  className={`${inputCls} font-mono uppercase`}
-                  readOnly={readOnly}
-                />
-                <p className="mt-1.5 text-xs text-gray-400 font-mono">{item.preview}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={form.remise_a_zero_annuelle}
-                onClick={() => !readOnly && updateField('remise_a_zero_annuelle', !form.remise_a_zero_annuelle)}
-                className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${
-                  form.remise_a_zero_annuelle ? 'bg-blue-600' : 'bg-gray-300'
-                }`}
-              >
-                <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                  form.remise_a_zero_annuelle ? 'translate-x-5' : 'translate-x-0'
-                }`} />
-              </button>
-              <div>
-                <p className="text-sm font-semibold text-gray-700">Remise à zéro annuelle</p>
-                <p className="text-xs text-gray-400">La numérotation repart à 00001 chaque 1er janvier</p>
-              </div>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      {isAdmin && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-4 flex items-center justify-between">
-          <div>
-            {lastUpdate && (
-              <p className="text-xs text-gray-400">
-                Dernière modification le{' '}
-                {new Date(lastUpdate.date).toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </p>
-            )}
-          </div>
+        {/* Onglets */}
+        <div className="flex border-b border-gray-100">
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            onClick={() => setSocTab('identite')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-4 text-sm font-semibold transition-all cursor-pointer ${
+              socTab === 'identite'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/30'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
           >
-            {saving ? (
-              <>
-                <div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Enregistrement...
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-                Enregistrer les modifications
-              </>
-            )}
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+            Identité & Contact
+          </button>
+          <button
+            onClick={() => setSocTab('apparence')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-4 text-sm font-semibold transition-all cursor-pointer ${
+              socTab === 'apparence'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/30'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
+            Apparence & Docs
+          </button>
+          <button
+            onClick={() => setSocTab('bancaire')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-4 text-sm font-semibold transition-all cursor-pointer ${
+              socTab === 'bancaire'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/30'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" /></svg>
+            Bancaire & Textes
           </button>
         </div>
-      )}
+
+        {/* Tab: Identité & Contact */}
+        {socTab === 'identite' && (
+          <div className="divide-y divide-gray-100">
+            {/* Identité légale */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Identité légale</h3>
+              </div>
+
+              <div>
+                <label className={labelCls}>Raison sociale</label>
+                <input value={form.raison_sociale} onChange={e => updateField('raison_sociale', e.target.value)} placeholder="Nom de votre société" className={inputCls} readOnly={readOnly} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Forme juridique</label>
+                  <div className="relative">
+                    <select value={form.forme_juridique} onChange={e => updateField('forme_juridique', e.target.value)} className={`${inputCls} appearance-none pr-10 cursor-pointer`} disabled={readOnly}>
+                      <option value="">Sélectionner...</option>
+                      {FORMES_JURIDIQUES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                    </select>
+                    <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>SIRET <span className="text-xs font-normal text-gray-400">(14 chiffres)</span></label>
+                  <input value={form.siret} onChange={e => updateField('siret', e.target.value)} placeholder="12345678901234" maxLength={14} className={inputCls} readOnly={readOnly} />
+                  {form.siren && <p className="mt-1.5 text-xs text-gray-400">SIREN : {form.siren}</p>}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>N° TVA intracommunautaire</label>
+                  <input value={form.tva_intracommunautaire} onChange={e => updateField('tva_intracommunautaire', e.target.value)} placeholder="FR12345678900" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Code APE / NAF</label>
+                  <input value={form.code_ape} onChange={e => updateField('code_ape', e.target.value)} placeholder="6201Z" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className={labelCls}>Capital social (€)</label>
+                  <input type="number" step="0.01" min="0" value={form.capital_social} onChange={e => updateField('capital_social', e.target.value)} placeholder="10000" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Ville RCS</label>
+                  <input value={form.rcs_ville} onChange={e => updateField('rcs_ville', e.target.value)} placeholder="Bobigny" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Numéro RCS</label>
+                  <input value={form.numero_rcs} onChange={e => updateField('numero_rcs', e.target.value)} placeholder="123 456 789" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+            </div>
+
+            {/* Coordonnées */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Coordonnées</h3>
+                <span className="text-xs text-gray-400 ml-1">— Adresse et moyens de contact</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <label className={labelCls}>Adresse</label>
+                  <input value={form.adresse_ligne1} onChange={e => updateField('adresse_ligne1', e.target.value)} placeholder="123 rue de la Paix" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelCls}>Complément <span className="text-xs font-normal text-gray-400">(optionnel)</span></label>
+                  <input value={form.adresse_ligne2} onChange={e => updateField('adresse_ligne2', e.target.value)} placeholder="Bâtiment A, 2ème étage" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className={labelCls}>Code postal</label>
+                  <input value={form.code_postal} onChange={e => updateField('code_postal', e.target.value)} placeholder="75001" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Ville</label>
+                  <input value={form.ville} onChange={e => updateField('ville', e.target.value)} placeholder="Paris" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Pays</label>
+                  <input value={form.pays} onChange={e => updateField('pays', e.target.value)} placeholder="France" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Téléphone</label>
+                  <input value={form.telephone} onChange={e => updateField('telephone', e.target.value)} placeholder="01 23 45 67 89" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Email contact</label>
+                  <input type="email" value={form.email_contact} onChange={e => updateField('email_contact', e.target.value)} placeholder="contact@societe.fr" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>
+                    Email facturation
+                    <span className="ml-1 relative group">
+                      <svg className="inline h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
+                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white opacity-0 group-hover:opacity-100 transition pointer-events-none z-10">
+                        Email utilisé comme expéditeur des factures envoyées aux clients. Si vide, l&apos;email contact sera utilisé.
+                      </span>
+                    </span>
+                  </label>
+                  <input type="email" value={form.email_facturation} onChange={e => updateField('email_facturation', e.target.value)} placeholder="facturation@societe.fr" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Site web</label>
+                  <input value={form.site_web} onChange={e => updateField('site_web', e.target.value)} placeholder="https://www.societe.fr" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer tab */}
+            {isAdmin && (
+              <div className="px-6 py-4 bg-gray-50/80 flex items-center justify-between">
+                <div>
+                  {lastUpdate && (
+                    <p className="text-xs text-gray-400">
+                      Modifié le{' '}
+                      {new Date(lastUpdate.date).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {saving ? (
+                    <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
+                  ) : (
+                    <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Enregistrer</>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Apparence & Documents */}
+        {socTab === 'apparence' && (
+          <div className="divide-y divide-gray-100">
+            {/* Logo */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Logo & Couleur</h3>
+                <span className="text-xs text-gray-400 ml-1">— Utilisés sur vos documents PDF</span>
+              </div>
+
+              <div>
+                <label className={labelCls}>Logo de la société</label>
+                {form.logo_url ? (
+                  <div className="flex items-center gap-5">
+                    <div className="h-20 w-44 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                      <img src={resolveLogoUrl(form.logo_url)} alt="Logo" className="max-h-full max-w-full object-contain" />
+                    </div>
+                    {isAdmin && (
+                      <div className="flex flex-col gap-2">
+                        <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
+                          Changer
+                        </button>
+                        <button onClick={handleLogoDelete} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                          Supprimer
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => isAdmin && fileInputRef.current?.click()}
+                    disabled={!isAdmin || logoUploading}
+                    className="w-full rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-400 bg-gray-50 hover:bg-blue-50/30 py-8 flex flex-col items-center gap-2.5 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {logoUploading ? (
+                      <div className="animate-spin h-7 w-7 border-[3px] border-blue-600 border-t-transparent rounded-full" />
+                    ) : (
+                      <svg className="h-9 w-9 text-gray-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
+                    )}
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-gray-500">Cliquez pour sélectionner votre logo</p>
+                      <p className="text-xs text-gray-400 mt-0.5">PNG transparent, 400×150px min. Max 2 Mo.</p>
+                    </div>
+                  </button>
+                )}
+                <input ref={fileInputRef} type="file" accept=".jpg,.jpeg,.png,.svg" onChange={handleLogoUpload} className="hidden" />
+              </div>
+
+              <div>
+                <label className={labelCls}>Couleur des documents PDF</label>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="color"
+                    value={form.couleur_principale}
+                    onChange={e => updateField('couleur_principale', e.target.value)}
+                    className="h-11 w-14 rounded-lg border border-gray-200 cursor-pointer p-1"
+                    disabled={readOnly}
+                  />
+                  <input
+                    value={form.couleur_principale}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) updateField('couleur_principale', v);
+                    }}
+                    placeholder="#1E40AF"
+                    maxLength={7}
+                    className={`${inputCls} w-32 font-mono text-sm`}
+                    readOnly={readOnly}
+                  />
+                  <div className="h-10 w-10 rounded-lg border border-gray-200 shrink-0" style={{ backgroundColor: form.couleur_principale }} />
+                  <span className="text-xs text-gray-400">En-têtes et accents des devis/factures</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Numérotation */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5-3.9 19.5m-2.1-19.5-3.9 19.5" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Numérotation</h3>
+                <span className="text-xs text-gray-400 ml-1">— Préfixes de vos documents</span>
+              </div>
+
+              <div className="rounded-xl bg-amber-50/70 border border-amber-200 p-3 flex items-start gap-2.5">
+                <svg className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <p className="text-xs text-amber-700 font-medium">Modifier les préfixes n&apos;affecte pas les documents déjà créés.</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {([
+                  { field: 'prefixe_devis', label: 'Devis', preview: `${form.prefixe_devis}-${year}-00001` },
+                  { field: 'prefixe_facture', label: 'Factures', preview: `${form.prefixe_facture}-${year}-00001` },
+                  { field: 'prefixe_client', label: 'Clients', preview: `${form.prefixe_client}-00001` },
+                  { field: 'prefixe_bon_commande', label: 'Bons de commande', preview: `${form.prefixe_bon_commande}-${year}-00001` },
+                ] as const).map(item => (
+                  <div key={item.field}>
+                    <label className={labelCls}>{item.label}</label>
+                    <input
+                      value={form[item.field]}
+                      onChange={e => updateField(item.field, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 6))}
+                      placeholder="DEV"
+                      maxLength={6}
+                      className={`${inputCls} font-mono uppercase`}
+                      readOnly={readOnly}
+                    />
+                    <p className="mt-1.5 text-xs text-gray-400 font-mono">{item.preview}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.remise_a_zero_annuelle}
+                    onClick={() => !readOnly && updateField('remise_a_zero_annuelle', !form.remise_a_zero_annuelle)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${
+                      form.remise_a_zero_annuelle ? 'bg-blue-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      form.remise_a_zero_annuelle ? 'translate-x-5' : 'translate-x-0'
+                    }`} />
+                  </button>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700">Remise à zéro annuelle</p>
+                    <p className="text-xs text-gray-400">La numérotation repart à 00001 chaque 1er janvier</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer tab */}
+            {isAdmin && (
+              <div className="px-6 py-4 bg-gray-50/80 flex items-center justify-between">
+                <div>
+                  {lastUpdate && (
+                    <p className="text-xs text-gray-400">
+                      Modifié le{' '}
+                      {new Date(lastUpdate.date).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {saving ? (
+                    <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
+                  ) : (
+                    <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Enregistrer</>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Bancaire & Textes */}
+        {socTab === 'bancaire' && (
+          <div className="divide-y divide-gray-100">
+            {/* Informations bancaires */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-cyan-50 flex items-center justify-center text-cyan-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Informations bancaires</h3>
+                <span className="text-xs text-gray-400 ml-1">— Affichées sur vos factures</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Nom de la banque</label>
+                  <input value={form.banque_nom} onChange={e => updateField('banque_nom', e.target.value)} placeholder="BNP Paribas" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>BIC / SWIFT</label>
+                  <input value={form.bic} onChange={e => updateField('bic', e.target.value)} placeholder="BNPAFRPP" className={`${inputCls} font-mono`} readOnly={readOnly} />
+                </div>
+              </div>
+              <div>
+                <label className={labelCls}>IBAN</label>
+                <div className="relative">
+                  <input
+                    type={showIban ? 'text' : 'password'}
+                    value={showIban ? form.iban : (form.iban ? maskIban(form.iban) : '')}
+                    onChange={e => { if (showIban) updateField('iban', e.target.value); }}
+                    placeholder="FR76 1234 5678 9012 3456 7890 042"
+                    className={`${inputCls} pr-11 font-mono`}
+                    readOnly={readOnly || !showIban}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowIban(!showIban)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
+                  >
+                    {showIban ? (
+                      <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                    ) : (
+                      <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Textes par défaut */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Textes par défaut</h3>
+                <span className="text-xs text-gray-400 ml-1">— Pré-remplis sur vos documents</span>
+              </div>
+
+              <div>
+                <label className={labelCls}>Mentions légales <span className="text-xs font-normal text-gray-400">— pied de page PDF</span></label>
+                <textarea value={form.mentions_legales} onChange={e => updateField('mentions_legales', e.target.value)} placeholder="SARL au capital de 10 000€ — RCS Bobigny 123 456 789 — TVA FR12345678900" rows={3} className={`${inputCls} resize-y`} readOnly={readOnly} />
+              </div>
+              <div>
+                <label className={labelCls}>Conditions Générales de Vente</label>
+                <textarea value={form.cgv} onChange={e => updateField('cgv', e.target.value)} placeholder="Saisissez vos CGV ici..." rows={5} className={`${inputCls} resize-y`} readOnly={readOnly} />
+                <p className="mt-1.5 text-xs text-gray-400">Pré-remplies sur chaque nouveau devis. Modifiables individuellement.</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Message devis</label>
+                  <textarea value={form.message_devis_defaut} onChange={e => updateField('message_devis_defaut', e.target.value)} placeholder="Nous vous remercions de l'intérêt que vous portez à nos services..." rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Message facture</label>
+                  <textarea value={form.message_facture_defaut} onChange={e => updateField('message_facture_defaut', e.target.value)} placeholder="Nous vous remercions de votre confiance. Paiement par virement sous 30 jours." rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
+                </div>
+              </div>
+              <div>
+                <label className={labelCls}>Signature email</label>
+                <textarea value={form.signature_email} onChange={e => updateField('signature_email', e.target.value)} placeholder="Cordialement,&#10;L'équipe commerciale" rows={3} className={`${inputCls} resize-y`} readOnly={readOnly} />
+                <p className="mt-1.5 text-xs text-gray-400">Ajoutée automatiquement aux emails envoyés aux clients</p>
+              </div>
+            </div>
+
+            {/* Footer tab */}
+            {isAdmin && (
+              <div className="px-6 py-4 bg-gray-50/80 flex items-center justify-between">
+                <div>
+                  {lastUpdate && (
+                    <p className="text-xs text-gray-400">
+                      Modifié le{' '}
+                      {new Date(lastUpdate.date).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {saving ? (
+                    <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
+                  ) : (
+                    <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Enregistrer</>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -697,10 +761,11 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
 function EmailSection({ toast, isAdmin }: SocieteSectionProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const [savingAndVerifying, setSavingAndVerifying] = useState(false);
   const [testSending, setTestSending] = useState(false);
   const [testEmail, setTestEmail] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [activeTab, setActiveTab] = useState<'connexion' | 'templates'>('connexion');
 
   const [form, setForm] = useState({
     smtp_host: '',
@@ -714,6 +779,8 @@ function EmailSection({ toast, isAdmin }: SocieteSectionProps) {
     signature: '',
     template_facture_sujet: '',
     template_facture_corps: '',
+    template_devis_sujet: '',
+    template_devis_corps: '',
   });
   const [estConfigure, setEstConfigure] = useState(false);
   const [derniereVerification, setDerniereVerification] = useState<string | null>(null);
@@ -735,6 +802,8 @@ function EmailSection({ toast, isAdmin }: SocieteSectionProps) {
         signature: c.signature || '',
         template_facture_sujet: c.template_facture_sujet || '',
         template_facture_corps: c.template_facture_corps || '',
+        template_devis_sujet: c.template_devis_sujet || '',
+        template_devis_corps: c.template_devis_corps || '',
       });
       setEstConfigure(c.est_configure);
       setDerniereVerification(c.derniere_verification);
@@ -769,17 +838,25 @@ function EmailSection({ toast, isAdmin }: SocieteSectionProps) {
     }
   };
 
-  const handleVerify = async () => {
-    setVerifying(true);
+  const handleSaveAndVerify = async () => {
+    setSavingAndVerifying(true);
     try {
+      const body = {
+        ...form,
+        smtp_port: parseInt(form.smtp_port) || 587,
+      };
+      await api.put<ApiResponse<EmailConfig>>('/email/config', body);
+      toast({ message: 'Configuration enregistrée, vérification en cours...', type: 'success' });
+
       await api.post<ApiResponse<{ success: boolean }>>('/email/verify', {});
-      toast({ message: 'Connexion SMTP vérifiée avec succès', type: 'success' });
+      toast({ message: 'Connexion SMTP vérifiée avec succès !', type: 'success' });
       loadConfig();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Échec de la vérification SMTP';
       toast({ message, type: 'error' });
+      loadConfig();
     } finally {
-      setVerifying(false);
+      setSavingAndVerifying(false);
     }
   };
 
@@ -827,234 +904,293 @@ function EmailSection({ toast, isAdmin }: SocieteSectionProps) {
         </div>
       )}
 
-      {/* Statut */}
-      <div className={`rounded-xl p-4 flex items-center gap-3 ${estConfigure ? 'bg-emerald-50 border border-emerald-200' : 'bg-orange-50 border border-orange-200'}`}>
-        <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${estConfigure ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
-          {estConfigure ? (
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-          ) : (
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+      {/* Statut SMTP - Bandeau */}
+      <div className={`rounded-2xl overflow-hidden border ${estConfigure ? 'border-emerald-200' : 'border-orange-200'}`}>
+        <div className={`px-5 py-4 flex items-center justify-between ${estConfigure ? 'bg-gradient-to-r from-emerald-50 to-emerald-50/30' : 'bg-gradient-to-r from-orange-50 to-orange-50/30'}`}>
+          <div className="flex items-center gap-3">
+            <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${estConfigure ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
+              {estConfigure ? (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+              ) : (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+              )}
+            </div>
+            <div>
+              <p className={`text-sm font-bold ${estConfigure ? 'text-emerald-800' : 'text-orange-800'}`}>
+                {estConfigure ? 'SMTP configuré et vérifié' : 'SMTP non configuré'}
+              </p>
+              <p className={`text-xs mt-0.5 ${estConfigure ? 'text-emerald-600' : 'text-orange-600'}`}>
+                {estConfigure
+                  ? `Dernière vérification : ${derniereVerification ? new Date(derniereVerification).toLocaleString('fr-FR') : 'jamais'}`
+                  : 'Configurez vos paramètres SMTP ci-dessous puis cliquez sur "Enregistrer & Vérifier"'}
+              </p>
+            </div>
+          </div>
+          {estConfigure && (
+            <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-semibold text-emerald-700">Actif</span>
+            </div>
           )}
-        </div>
-        <div>
-          <p className={`text-sm font-semibold ${estConfigure ? 'text-emerald-800' : 'text-orange-800'}`}>
-            {estConfigure ? 'SMTP configuré et vérifié' : 'SMTP non configuré'}
-          </p>
-          <p className={`text-xs ${estConfigure ? 'text-emerald-600' : 'text-orange-600'}`}>
-            {estConfigure
-              ? `Dernière vérification : ${derniereVerification ? new Date(derniereVerification).toLocaleString('fr-FR') : 'jamais'}`
-              : 'Renseignez les paramètres SMTP pour activer l\'envoi d\'emails'}
-          </p>
         </div>
       </div>
 
-      {/* Serveur SMTP */}
+      {/* Onglets Connexion / Templates */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Serveur SMTP</h2>
-              <p className="text-xs text-gray-400">Paramètres de connexion au serveur de messagerie</p>
-            </div>
-          </div>
+        <div className="flex border-b border-gray-100">
+          <button
+            onClick={() => setActiveTab('connexion')}
+            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-all cursor-pointer ${
+              activeTab === 'connexion'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/30'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" /></svg>
+            Connexion SMTP
+          </button>
+          <button
+            onClick={() => setActiveTab('templates')}
+            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-all cursor-pointer ${
+              activeTab === 'templates'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/30'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+            Modèles d&apos;emails
+          </button>
         </div>
-        <div className="p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Serveur SMTP</label>
-              <input value={form.smtp_host} onChange={e => updateField('smtp_host', e.target.value)} placeholder="smtp.gmail.com" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelCls}>Port</label>
-                <input type="number" value={form.smtp_port} onChange={e => updateField('smtp_port', e.target.value)} placeholder="587" className={inputCls} readOnly={readOnly} />
+
+        {/* Tab: Connexion SMTP */}
+        {activeTab === 'connexion' && (
+          <div className="divide-y divide-gray-100">
+            {/* Serveur SMTP */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Serveur SMTP</h3>
               </div>
-              <div>
-                <label className={labelCls}>SSL/TLS</label>
-                <div className="mt-1">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.smtp_secure}
-                    onClick={() => !readOnly && updateField('smtp_secure', !form.smtp_secure)}
-                    className={`relative inline-flex h-8 w-14 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${form.smtp_secure ? 'bg-blue-600' : 'bg-gray-300'}`}
-                  >
-                    <span className={`pointer-events-none inline-block h-7 w-7 rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${form.smtp_secure ? 'translate-x-6' : 'translate-x-0'}`} />
-                  </button>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="sm:col-span-1">
+                  <label className={labelCls}>Hôte SMTP</label>
+                  <input value={form.smtp_host} onChange={e => updateField('smtp_host', e.target.value)} placeholder="smtp.gmail.com" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Port</label>
+                  <input type="number" value={form.smtp_port} onChange={e => updateField('smtp_port', e.target.value)} placeholder="587" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>SSL/TLS</label>
+                  <div className="flex items-center gap-3 mt-1.5">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.smtp_secure}
+                      onClick={() => !readOnly && updateField('smtp_secure', !form.smtp_secure)}
+                      className={`relative inline-flex h-7 w-12 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${readOnly ? 'cursor-not-allowed' : 'cursor-pointer'} ${form.smtp_secure ? 'bg-blue-600' : 'bg-gray-300'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-6 w-6 rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${form.smtp_secure ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                    <span className="text-xs text-gray-500">{form.smtp_secure ? 'Activé (port 465)' : 'Désactivé (STARTTLS)'}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Identifiant</label>
+                  <input value={form.smtp_user} onChange={e => updateField('smtp_user', e.target.value)} placeholder="votre@email.com" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Mot de passe</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={form.smtp_password}
+                      onChange={e => updateField('smtp_password', e.target.value)}
+                      placeholder="Mot de passe ou App Password"
+                      className={`${inputCls} pr-11`}
+                      readOnly={readOnly}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
+                    >
+                      {showPassword ? (
+                        <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                      ) : (
+                        <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                      )}
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-xs text-gray-400">Pour Gmail, utilisez un &quot;Mot de passe d&apos;application&quot;</p>
                 </div>
               </div>
             </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Utilisateur SMTP</label>
-              <input value={form.smtp_user} onChange={e => updateField('smtp_user', e.target.value)} placeholder="votre@email.com" className={inputCls} readOnly={readOnly} />
+
+            {/* Expéditeur */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Expéditeur</h3>
+                <span className="text-xs text-gray-400 ml-1">— Nom et adresse affichés dans les emails envoyés</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Nom affiché</label>
+                  <input value={form.smtp_from_name} onChange={e => updateField('smtp_from_name', e.target.value)} placeholder="Ma Société" className={inputCls} readOnly={readOnly} />
+                </div>
+                <div>
+                  <label className={labelCls}>Email expéditeur</label>
+                  <input type="email" value={form.smtp_from_email} onChange={e => updateField('smtp_from_email', e.target.value)} placeholder="facturation@masociete.fr" className={inputCls} readOnly={readOnly} />
+                </div>
+              </div>
+              <div>
+                <label className={labelCls}>
+                  Email de réponse (Reply-To)
+                  <span className="ml-1 text-xs font-normal text-gray-400">optionnel</span>
+                </label>
+                <input type="email" value={form.reply_to_email} onChange={e => updateField('reply_to_email', e.target.value)} placeholder="contact@masociete.fr" className={inputCls} readOnly={readOnly} />
+                <p className="mt-1.5 text-xs text-gray-400">Si différent de l&apos;email expéditeur. Les réponses des clients iront à cette adresse.</p>
+              </div>
             </div>
-            <div>
-              <label className={labelCls}>Mot de passe SMTP</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={form.smtp_password}
-                  onChange={e => updateField('smtp_password', e.target.value)}
-                  placeholder="Mot de passe ou App Password"
-                  className={`${inputCls} pr-11`}
-                  readOnly={readOnly}
-                />
+
+            {/* Actions SMTP */}
+            {isAdmin && (
+              <div className="px-6 py-5 bg-gradient-to-r from-gray-50/80 to-white">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <button
+                    onClick={handleSaveAndVerify}
+                    disabled={savingAndVerifying || !form.smtp_host || !form.smtp_user || !form.smtp_password}
+                    className="inline-flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 cursor-pointer"
+                  >
+                    {savingAndVerifying ? (
+                      <>
+                        <div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                        Enregistrement & vérification...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                        Enregistrer & Vérifier la connexion
+                      </>
+                    )}
+                  </button>
+                  <span className="text-xs text-gray-400 sm:ml-2">Enregistre vos paramètres puis teste automatiquement la connexion au serveur SMTP</span>
+                </div>
+
+                {/* Test d'envoi */}
+                {estConfigure && (
+                  <div className="mt-5 pt-5 border-t border-gray-200/60">
+                    <div className="flex items-center gap-2 mb-3">
+                      <svg className="h-4 w-4 text-emerald-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>
+                      <span className="text-sm font-semibold text-gray-700">Envoyer un email de test</span>
+                    </div>
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <input type="email" value={testEmail} onChange={e => setTestEmail(e.target.value)} placeholder="destinataire@example.com" className={inputCls} />
+                      </div>
+                      <button
+                        onClick={handleTestEmail}
+                        disabled={testSending || !testEmail}
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                      >
+                        {testSending ? (
+                          <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Envoi...</>
+                        ) : (
+                          <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>Envoyer</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Modèles d'emails */}
+        {activeTab === 'templates' && (
+          <div className="divide-y divide-gray-100">
+            {/* Template Facture */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Modèle facture</h3>
+              </div>
+              <div className="rounded-xl bg-blue-50/70 border border-blue-100 p-3">
+                <p className="text-xs text-blue-700 font-medium">Variables : <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{numero}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{societe}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{montant_ttc}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{montant_ht}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{date_echeance}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{client}}'}</code></p>
+              </div>
+              <div>
+                <label className={labelCls}>Objet</label>
+                <input value={form.template_facture_sujet} onChange={e => updateField('template_facture_sujet', e.target.value)} placeholder="Votre facture {{numero}} - {{societe}}" className={inputCls} readOnly={readOnly} />
+              </div>
+              <div>
+                <label className={labelCls}>Corps</label>
+                <textarea value={form.template_facture_corps} onChange={e => updateField('template_facture_corps', e.target.value)} placeholder="Bonjour,&#10;&#10;Veuillez trouver ci-joint votre facture..." rows={6} className={`${inputCls} resize-y`} readOnly={readOnly} />
+              </div>
+            </div>
+
+            {/* Template Devis */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Modèle devis</h3>
+              </div>
+              <div className="rounded-xl bg-blue-50/70 border border-blue-100 p-3">
+                <p className="text-xs text-blue-700 font-medium">Variables : <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{numero}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{societe}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{montant_ttc}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{montant_ht}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{date_validite}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{client}}'}</code> <code className="bg-blue-100 px-1.5 py-0.5 rounded text-[11px]">{'{{objet}}'}</code></p>
+              </div>
+              <div>
+                <label className={labelCls}>Objet</label>
+                <input value={form.template_devis_sujet} onChange={e => updateField('template_devis_sujet', e.target.value)} placeholder="Votre devis {{numero}} - {{societe}}" className={inputCls} readOnly={readOnly} />
+              </div>
+              <div>
+                <label className={labelCls}>Corps</label>
+                <textarea value={form.template_devis_corps} onChange={e => updateField('template_devis_corps', e.target.value)} placeholder="Bonjour,&#10;&#10;Veuillez trouver ci-joint votre devis..." rows={6} className={`${inputCls} resize-y`} readOnly={readOnly} />
+              </div>
+            </div>
+
+            {/* Signature commune */}
+            <div className="p-6 space-y-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-7 w-7 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
+                </div>
+                <h3 className="text-sm font-bold text-gray-800">Signature</h3>
+                <span className="text-xs text-gray-400 ml-1">— Ajoutée en bas de chaque email</span>
+              </div>
+              <textarea value={form.signature} onChange={e => updateField('signature', e.target.value)} placeholder="Cordialement,&#10;L'équipe comptable" rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
+            </div>
+
+            {/* Bouton enregistrer pour les templates */}
+            {isAdmin && (
+              <div className="px-6 py-4 bg-gray-50/80 flex items-center justify-end">
                 <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {showPassword ? (
-                    <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  {saving ? (
+                    <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
                   ) : (
-                    <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                    <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Enregistrer les modèles</>
                   )}
                 </button>
               </div>
-              <p className="mt-1.5 text-xs text-gray-400">Pour Gmail, utilisez un &quot;Mot de passe d&apos;application&quot;</p>
-            </div>
-          </div>
-
-          {isAdmin && (
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={handleVerify}
-                disabled={verifying || !form.smtp_host || !form.smtp_user}
-                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {verifying ? (
-                  <><div className="h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />Vérification...</>
-                ) : (
-                  <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>Vérifier la connexion</>
-                )}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Expéditeur */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Expéditeur</h2>
-              <p className="text-xs text-gray-400">Informations affichées comme expéditeur des emails</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div>
-              <label className={labelCls}>Nom de l&apos;expéditeur</label>
-              <input value={form.smtp_from_name} onChange={e => updateField('smtp_from_name', e.target.value)} placeholder="Ma Société" className={inputCls} readOnly={readOnly} />
-            </div>
-            <div>
-              <label className={labelCls}>Email expéditeur</label>
-              <input type="email" value={form.smtp_from_email} onChange={e => updateField('smtp_from_email', e.target.value)} placeholder="facturation@masociete.fr" className={inputCls} readOnly={readOnly} />
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>Email de réponse (Reply-To)</label>
-            <input type="email" value={form.reply_to_email} onChange={e => updateField('reply_to_email', e.target.value)} placeholder="contact@masociete.fr" className={inputCls} readOnly={readOnly} />
-            <p className="mt-1.5 text-xs text-gray-400">Si différent de l&apos;email expéditeur. Les réponses des clients iront à cette adresse.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Templates */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">Modèle d&apos;email facture</h2>
-              <p className="text-xs text-gray-400">Template utilisé lors de l&apos;envoi de factures par email</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-5">
-          <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
-            <p className="text-xs text-blue-700 font-medium">Variables disponibles : <code className="bg-blue-100 px-1 rounded">{'{{numero}}'}</code> <code className="bg-blue-100 px-1 rounded">{'{{societe}}'}</code> <code className="bg-blue-100 px-1 rounded">{'{{montant_ttc}}'}</code> <code className="bg-blue-100 px-1 rounded">{'{{montant_ht}}'}</code> <code className="bg-blue-100 px-1 rounded">{'{{date_echeance}}'}</code> <code className="bg-blue-100 px-1 rounded">{'{{client}}'}</code></p>
-          </div>
-          <div>
-            <label className={labelCls}>Objet de l&apos;email</label>
-            <input value={form.template_facture_sujet} onChange={e => updateField('template_facture_sujet', e.target.value)} placeholder="Votre facture {{numero}} - {{societe}}" className={inputCls} readOnly={readOnly} />
-          </div>
-          <div>
-            <label className={labelCls}>Corps de l&apos;email</label>
-            <textarea value={form.template_facture_corps} onChange={e => updateField('template_facture_corps', e.target.value)} placeholder="Bonjour,&#10;&#10;Veuillez trouver ci-joint votre facture..." rows={8} className={`${inputCls} resize-y`} readOnly={readOnly} />
-          </div>
-          <div>
-            <label className={labelCls}>Signature</label>
-            <textarea value={form.signature} onChange={e => updateField('signature', e.target.value)} placeholder="Cordialement,&#10;L'équipe comptable" rows={4} className={`${inputCls} resize-y`} readOnly={readOnly} />
-            <p className="mt-1.5 text-xs text-gray-400">Ajoutée automatiquement en bas de chaque email envoyé</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Test */}
-      {isAdmin && estConfigure && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-100">
-            <div className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Envoyer un email de test</h2>
-                <p className="text-xs text-gray-400">Vérifiez que tout fonctionne en envoyant un email de test</p>
-              </div>
-            </div>
-          </div>
-          <div className="p-6">
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className={labelCls}>Adresse email de test</label>
-                <input type="email" value={testEmail} onChange={e => setTestEmail(e.target.value)} placeholder="votre@email.com" className={inputCls} />
-              </div>
-              <button
-                onClick={handleTestEmail}
-                disabled={testSending || !testEmail}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
-              >
-                {testSending ? (
-                  <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Envoi...</>
-                ) : (
-                  <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>Envoyer le test</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Footer */}
-      {isAdmin && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-6 py-4 flex items-center justify-end">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {saving ? (
-              <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
-            ) : (
-              <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Enregistrer les modifications</>
             )}
-          </button>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

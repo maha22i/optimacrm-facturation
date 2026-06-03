@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { lignesAfficheesPourDevis, objetOuSyntheseImport } from '@/lib/devisImportView';
 import type {
   ApiResponse,
   PaginatedResponse,
@@ -20,6 +21,8 @@ import type {
   TypeChamp,
   StatutDevis,
 } from '@/lib/types';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 // ---------------------------------------------------------------------------
 // Types locaux
@@ -230,6 +233,7 @@ function champFromApi(c: DevisChamp): ChampForm {
 export default function ModifierDevisPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const devisId = params.id as string;
 
   // --- Chargement initial ---
@@ -245,6 +249,7 @@ export default function ModifierDevisPage() {
   const [referenceClient, setReferenceClient] = useState('');
   const [objet, setObjet] = useState('');
   const [clientId, setClientId] = useState<number | null>(null);
+  const [nomClientLibre, setNomClientLibre] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [lignes, setLignes] = useState<LigneForm[]>([]);
   const [champs, setChamps] = useState<ChampForm[]>([]);
@@ -274,6 +279,7 @@ export default function ModifierDevisPage() {
   const [newChampType, setNewChampType] = useState<TypeChamp>('TEXTE');
   const [newChampValeur, setNewChampValeur] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -316,9 +322,10 @@ export default function ModifierDevisPage() {
         setDateEmission(d.date_emission || d.date_creation?.slice(0, 10) || '');
         setDateValidite(d.date_validite?.slice(0, 10) || '');
         setReferenceClient(d.reference_client || '');
-        setObjet(d.objet || '');
+        setObjet(objetOuSyntheseImport(d));
         setClientId(d.client_id);
         setSelectedClient(d.client || null);
+        setNomClientLibre(d.client ? '' : (d.nom_client_libre || '').trim());
         setRemiseGlobaleType(d.remise_globale_type);
         setRemiseGlobaleValeur(d.remise_globale_valeur);
         setConditionsPaiement(d.conditions_paiement);
@@ -327,8 +334,8 @@ export default function ModifierDevisPage() {
         setConditionsGenerales(d.conditions_generales || '');
         setMessageClient(d.message_client || '');
 
-        const sortedLignes = [...(d.lignes || [])].sort((a, b) => a.ordre - b.ordre);
-        setLignes(sortedLignes.length > 0 ? sortedLignes.map(ligneFromApi) : [EMPTY_LIGNE()]);
+        const lignesSource = lignesAfficheesPourDevis(d);
+        setLignes(lignesSource.length > 0 ? lignesSource.map(ligneFromApi) : [EMPTY_LIGNE()]);
         setChamps((d.champs_personnalises || []).map(champFromApi));
         if (d.champs_personnalises && d.champs_personnalises.length > 0) setChampsOpen(true);
       } catch (err) {
@@ -432,6 +439,7 @@ export default function ModifierDevisPage() {
   const selectClient = useCallback((client: Client) => {
     setClientId(client.id);
     setSelectedClient(client);
+    setNomClientLibre('');
     setClientSearch('');
     setShowClientDropdown(false);
     setConditionsPaiement(client.delai_paiement);
@@ -445,6 +453,28 @@ export default function ModifierDevisPage() {
     setClientSearch('');
     markDirty();
   }, [markDirty]);
+
+  const goToCreateClient = useCallback(() => {
+    router.push(`/dashboard/clients/nouveau?returnTo=devis-modifier&devisId=${devisId}`);
+  }, [router, devisId]);
+
+  // --- Chargement client depuis URL (retour de création client) ---
+  useEffect(() => {
+    const newClientId = searchParams.get('clientId');
+    if (newClientId) {
+      const id = parseInt(newClientId, 10);
+      if (!isNaN(id)) {
+        api.get<ApiResponse<Client>>(`/clients/${id}`).then(res => {
+          setClientId(res.data.id);
+          setSelectedClient(res.data);
+          setConditionsPaiement(res.data.delai_paiement);
+          if (res.data.mode_paiement_prefere) setModePaiement(res.data.mode_paiement_prefere);
+          markDirty();
+        }).catch(() => {});
+      }
+      window.history.replaceState({}, '', `/dashboard/devis/${devisId}/modifier`);
+    }
+  }, [searchParams, devisId, markDirty]);
 
   // --- Catalogue modal ---
   const openCatalogue = useCallback(async () => {
@@ -608,6 +638,7 @@ export default function ModifierDevisPage() {
 
     return {
       client_id: clientId,
+      nom_client_libre: clientId ? null : (nomClientLibre.trim() || null),
       date_emission: dateEmission,
       date_validite: dateValidite,
       reference_client: referenceClient || null,
@@ -629,14 +660,14 @@ export default function ModifierDevisPage() {
       champs_personnalises: champsPayload,
     };
   }, [
-    clientId, dateEmission, dateValidite, referenceClient, objet,
+    clientId, nomClientLibre, dateEmission, dateValidite, referenceClient, objet,
     conditionsPaiement, modePaiement, remiseGlobaleType, remiseGlobaleValeur,
     notesInternes, conditionsGenerales, messageClient, lignes, champs, totals,
   ]);
 
   const handleSave = useCallback(async (silent = false) => {
-    if (!clientId) {
-      if (!silent) setToast({ message: 'Veuillez sélectionner un client', type: 'error' });
+    if (!clientId && !nomClientLibre.trim()) {
+      if (!silent) setToast({ message: 'Veuillez sélectionner un client ou saisir le nom client (import)', type: 'error' });
       return;
     }
     if (!objet.trim()) {
@@ -657,16 +688,28 @@ export default function ModifierDevisPage() {
     } finally {
       setSaving(false);
     }
-  }, [clientId, objet, buildPayload, devisId]);
+  }, [clientId, nomClientLibre, objet, buildPayload, devisId]);
 
   const handlePreview = useCallback(async () => {
     await handleSave(false);
-    const pdfUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/devis/${devisId}/pdf`;
-    window.open(pdfUrl, '_blank');
+    setPdfPreviewLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/devis/${devisId}/pdf`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Erreur génération PDF');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } catch {
+      setToast({ message: 'Erreur lors de la génération du PDF', type: 'error' });
+    } finally {
+      setPdfPreviewLoading(false);
+    }
   }, [handleSave, devisId]);
 
   const handleEnvoyer = useCallback(async () => {
-    if (!clientId || !objet.trim()) {
+    if ((!clientId && !nomClientLibre.trim()) || !objet.trim()) {
       setToast({ message: 'Veuillez remplir les champs obligatoires avant d\'envoyer', type: 'error' });
       return;
     }
@@ -685,19 +728,19 @@ export default function ModifierDevisPage() {
     } finally {
       setSending(false);
     }
-  }, [clientId, objet, buildPayload, devisId]);
+  }, [clientId, nomClientLibre, objet, buildPayload, devisId]);
 
   // --- Autosave toutes les 30s ---
   useEffect(() => {
     autoSaveRef.current = setInterval(() => {
-      if (dirtyRef.current && clientId && objet.trim()) {
+      if (dirtyRef.current && (clientId || nomClientLibre.trim()) && objet.trim()) {
         handleSave(true);
       }
     }, 30000);
     return () => {
       if (autoSaveRef.current) clearInterval(autoSaveRef.current);
     };
-  }, [clientId, objet, handleSave]);
+  }, [clientId, nomClientLibre, objet, handleSave]);
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -864,7 +907,18 @@ export default function ModifierDevisPage() {
 
           {/* --- Sélection client --- */}
           <div className={`${cardClass} p-6`}>
-            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Client</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Client</h3>
+              {!selectedClient && (
+                <button
+                  onClick={goToCreateClient}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition cursor-pointer"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" /></svg>
+                  Créer un nouveau client
+                </button>
+              )}
+            </div>
             {selectedClient ? (
               <div className="flex items-start justify-between p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                 <div>
@@ -880,7 +934,20 @@ export default function ModifierDevisPage() {
                 </button>
               </div>
             ) : (
-              <div ref={clientSearchRef} className="relative">
+              <div ref={clientSearchRef} className="relative space-y-4">
+                <div>
+                  <label className={labelClass}>Nom client (import ou saisie libre)</label>
+                  <input
+                    value={nomClientLibre}
+                    onChange={e => { setNomClientLibre(e.target.value); markDirty(); }}
+                    placeholder="Raison sociale / nom si pas de fiche client CRM"
+                    className="w-full rounded-xl bg-gray-50 border border-gray-200 py-2.5 px-4 text-sm placeholder-gray-400 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 outline-none transition"
+                  />
+                  <p className="text-xs text-amber-700 mt-1.5">Obligatoire si aucun client OptimaCRM n&apos;est sélectionné ci-dessous.</p>
+                </div>
+                <div>
+                  <label className={labelClass}>Lier une fiche client OptimaCRM (optionnel)</label>
+                  <div className="relative">
                 <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
                 <input
                   value={clientSearch}
@@ -907,9 +974,18 @@ export default function ModifierDevisPage() {
                 )}
                 {showClientDropdown && clientSearch.length >= 2 && clientResults.length === 0 && (
                   <div className="absolute z-20 mt-1 w-full bg-white rounded-xl border border-gray-200 shadow-xl p-4 text-center">
-                    <p className="text-sm text-gray-500">Aucun client trouvé</p>
+                    <p className="text-sm text-gray-500 mb-3">Aucun client trouvé</p>
+                    <button
+                      onClick={goToCreateClient}
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition cursor-pointer"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" /></svg>
+                      Créer un nouveau client
+                    </button>
                   </div>
                 )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -955,14 +1031,16 @@ export default function ModifierDevisPage() {
                     if (ligne.type === 'SAUT_DE_LIGNE') {
                       return (
                         <tr key={ligne._uid} className="group">
-                          <td colSpan={9} className="px-3 py-1">
-                            <div className="border-t-2 border-gray-200 border-dashed" />
+                          <td colSpan={9} className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 border-t-2 border-gray-200 border-dashed" />
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-2 py-1">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }
@@ -974,18 +1052,20 @@ export default function ModifierDevisPage() {
                             <span className="text-[10px] font-bold text-amber-600">COM</span>
                           </td>
                           <td colSpan={8} className="px-3 py-2">
-                            <input
-                              value={ligne.designation}
-                              onChange={e => updateLigne(idx, 'designation', e.target.value)}
-                              placeholder="Commentaire..."
-                              className="w-full bg-transparent border-0 py-1.5 text-sm text-gray-600 italic outline-none placeholder-gray-400"
-                            />
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={ligne.designation}
+                                onChange={e => updateLigne(idx, 'designation', e.target.value)}
+                                placeholder="Commentaire..."
+                                className="flex-1 bg-transparent border-0 py-1.5 text-sm text-gray-600 italic outline-none placeholder-gray-400"
+                              />
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-2 py-2">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }
@@ -995,17 +1075,17 @@ export default function ModifierDevisPage() {
                       return (
                         <tr key={ligne._uid} className="group bg-gray-50 font-semibold">
                           <td className="px-2 py-2" />
-                          <td colSpan={7} className="px-3 py-3 text-sm text-gray-700">
-                            Sous-total
+                          <td colSpan={8} className="px-3 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="flex-1 text-sm text-gray-700">Sous-total</span>
+                              <span className="text-sm text-gray-900 font-bold">{fmt(st)}</span>
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-3 py-3 text-right text-sm text-gray-900 font-bold">
-                            {fmt(st)}
-                          </td>
-                          <td className="px-2 py-2">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }
@@ -1420,10 +1500,14 @@ export default function ModifierDevisPage() {
               </button>
               <button
                 onClick={handlePreview}
-                disabled={saving}
+                disabled={saving || pdfPreviewLoading}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm disabled:opacity-50 transition cursor-pointer"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                {pdfPreviewLoading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                ) : (
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                )}
                 Prévisualiser PDF
               </button>
               {statut === 'BROUILLON' && (

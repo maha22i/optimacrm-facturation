@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { Client, PaginatedResponse, StatutClient } from '@/lib/types';
 
 const STATUTS: { label: string; value: StatutClient | ''; color: string; dot: string }[] = [
@@ -61,6 +62,7 @@ function customFieldsPreview(client: Client) {
 
 export default function ClientsPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [search, setSearch] = useState('');
@@ -69,10 +71,50 @@ export default function ClientsPage() {
   const [searchDebounce, setSearchDebounce] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('xlsx');
+  const [exportAdresses, setExportAdresses] = useState(true);
+  const [exportContacts, setExportContacts] = useState(true);
+  const [exportApplyFilters, setExportApplyFilters] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const isAdmin = user?.role === 'admin';
+  const DELETE_CONFIRM_PHRASE = 'SUPPRIMER TOUS LES CLIENTS';
+
+  const handleDeleteAll = async () => {
+    if (deleteConfirmText !== DELETE_CONFIRM_PHRASE) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.delete('/clients/all');
+      setDeleteStep(0);
+      setDeleteConfirmText('');
+      fetchClients(1);
+    } catch (err: unknown) {
+      setDeleteError(err instanceof Error ? err.message : 'Erreur lors de la suppression');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => setSearchDebounce(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const fetchClients = useCallback(async (page: number) => {
     setLoading(true);
@@ -96,6 +138,16 @@ export default function ClientsPage() {
     fetchClients(1);
   }, [fetchClients]);
 
+  const handleToggleStatut = async (clientId: number, newStatut: 'ACTIF' | 'INACTIF') => {
+    try {
+      await api.put(`/clients/${clientId}`, { statut: newStatut });
+      setToast({ message: newStatut === 'INACTIF' ? 'Client désactivé' : 'Client réactivé', type: 'success' });
+      fetchClients(pagination.page);
+    } catch {
+      setToast({ message: 'Erreur lors du changement de statut', type: 'error' });
+    }
+  };
+
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -112,21 +164,24 @@ export default function ClientsPage() {
     }
   };
 
-  const handleExportCSV = () => {
-    if (clients.length === 0) return;
-    const headers = ['Numéro', 'Raison sociale', 'Forme juridique', 'Email', 'Téléphone', 'Statut', 'SIRET', 'Ville'];
-    const rows = clients.map(c => [
-      c.numero_client, c.raison_sociale, c.forme_juridique,
-      c.email_principal, c.telephone_principal || '', c.statut, c.siret || '', '',
-    ]);
-    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `clients_export_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const params = new URLSearchParams({ format: exportFormat });
+      if (exportAdresses) params.set('adresses', '1');
+      if (exportContacts) params.set('contacts', '1');
+      if (exportApplyFilters) {
+        if (statutFilter) params.set('statut', statutFilter);
+        if (searchDebounce) params.set('search', searchDebounce);
+      }
+      await api.download(`/clients/export?${params}`);
+      setShowExportModal(false);
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : 'Erreur lors de l\'export');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const pageNumbers = () => {
@@ -146,6 +201,22 @@ export default function ClientsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50/50">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 rounded-2xl px-5 py-3.5 text-sm font-medium shadow-lg backdrop-blur ${
+          toast.type === 'success' ? 'bg-emerald-500/90 text-white' : 'bg-red-500/90 text-white'
+        }`}>
+          {toast.type === 'success' ? (
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+          ) : (
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+          )}
+          {toast.message}
+          <button onClick={() => setToast(null)} className="ml-1 hover:opacity-70 cursor-pointer">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      )}
+
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div className="flex items-start gap-4">
@@ -218,26 +289,14 @@ export default function ClientsPage() {
             ),
           },
           {
-            label: 'Prospects',
-            value: clients.filter(c => c.statut === 'PROSPECT').length,
-            borderColor: 'border-l-amber-500',
-            iconBg: 'bg-amber-100',
-            iconColor: 'text-amber-600',
+            label: 'Inactifs',
+            value: clients.filter(c => c.statut === 'INACTIF').length,
+            borderColor: 'border-l-gray-400',
+            iconBg: 'bg-gray-100',
+            iconColor: 'text-gray-500',
             icon: (
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-              </svg>
-            ),
-          },
-          {
-            label: 'Bloqués',
-            value: clients.filter(c => c.statut === 'BLOQUE').length,
-            borderColor: 'border-l-red-500',
-            iconBg: 'bg-red-100',
-            iconColor: 'text-red-600',
-            icon: (
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
               </svg>
             ),
           },
@@ -292,10 +351,21 @@ export default function ClientsPage() {
             </svg>
           </div>
 
-          {/* Export button */}
+          {/* Export + Delete All */}
           <div className="flex items-center gap-2 ml-auto">
+            {isAdmin && pagination.total > 0 && (
+              <button
+                onClick={() => setDeleteStep(1)}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+                Supprimer tout
+              </button>
+            )}
             <button
-              onClick={handleExportCSV}
+              onClick={() => setShowExportModal(true)}
               className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition cursor-pointer"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -494,15 +564,27 @@ export default function ClientsPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
                         </svg>
                       </button>
-                      <button
-                        onClick={e => e.stopPropagation()}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
-                        title="Supprimer"
-                      >
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                        </svg>
-                      </button>
+                      {client.statut !== 'INACTIF' ? (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggleStatut(client.id, 'INACTIF'); }}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
+                          title="Désactiver"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggleStatut(client.id, 'ACTIF'); }}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
+                          title="Réactiver"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -559,6 +641,288 @@ export default function ClientsPage() {
           </div>
         )}
       </div>
+
+      {/* Modal Export */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
+            <div className="bg-gradient-to-r from-violet-50 to-indigo-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Exporter les clients</h3>
+                <p className="text-sm text-gray-500 mt-0.5">Configurez votre export</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Format */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Format du fichier</label>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setExportFormat('xlsx')}
+                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'xlsx' ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                  >
+                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'xlsx' ? 'bg-violet-100' : 'bg-gray-100'}`}>
+                      <svg className={`h-5 w-5 ${exportFormat === 'xlsx' ? 'text-violet-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v.375" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className={`text-sm font-semibold ${exportFormat === 'xlsx' ? 'text-violet-700' : 'text-gray-700'}`}>Excel (.xlsx)</p>
+                      <p className="text-xs text-gray-400">Compatible Excel, Google Sheets</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setExportFormat('csv')}
+                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'csv' ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                  >
+                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'csv' ? 'bg-violet-100' : 'bg-gray-100'}`}>
+                      <svg className={`h-5 w-5 ${exportFormat === 'csv' ? 'text-violet-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className={`text-sm font-semibold ${exportFormat === 'csv' ? 'text-violet-700' : 'text-gray-700'}`}>CSV (.csv)</p>
+                      <p className="text-xs text-gray-400">Format texte universel</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Données à inclure */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Données à inclure</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                    <input type="checkbox" checked disabled className="h-4 w-4 rounded border-gray-300 text-violet-600" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Informations générales</p>
+                      <p className="text-xs text-gray-400">Raison sociale, SIRET, email, téléphone, statut...</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                    <input
+                      type="checkbox"
+                      checked={exportAdresses}
+                      onChange={e => setExportAdresses(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Adresses</p>
+                      <p className="text-xs text-gray-400">Adresse principale (facturation, livraison, siège)</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                    <input
+                      type="checkbox"
+                      checked={exportContacts}
+                      onChange={e => setExportContacts(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Contacts</p>
+                      <p className="text-xs text-gray-400">Contact principal (nom, prénom, fonction, email...)</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Filtres */}
+              {(statutFilter || searchDebounce) && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Périmètre</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                      <input
+                        type="radio"
+                        checked={!exportApplyFilters}
+                        onChange={() => setExportApplyFilters(false)}
+                        className="h-4 w-4 border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Tous les clients</p>
+                        <p className="text-xs text-gray-400">Exporter la totalité de la base clients</p>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                      <input
+                        type="radio"
+                        checked={exportApplyFilters}
+                        onChange={() => setExportApplyFilters(true)}
+                        className="h-4 w-4 border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
+                        <p className="text-xs text-gray-400">
+                          {statutFilter && searchDebounce
+                            ? `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label} + Recherche : "${searchDebounce}"`
+                            : statutFilter
+                              ? `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label}`
+                              : `Recherche : "${searchDebounce}"`
+                          }
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {exportError && (
+                <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{exportError}</p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4 bg-gray-50/50">
+              <p className="text-xs text-gray-400">
+                {pagination.total} client{pagination.total > 1 ? 's' : ''} au total
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setShowExportModal(false); setExportError(''); }}
+                  className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:from-violet-700 hover:to-indigo-700 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {exporting ? (
+                    <>
+                      <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                      Export en cours...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                      </svg>
+                      Télécharger
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Étape 1 : Première confirmation */}
+      {deleteStep === 1 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="bg-red-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-red-900">Attention — Zone dangereuse</h3>
+                <p className="text-sm text-red-700 mt-0.5">Cette action est irréversible</p>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-700">
+                Vous êtes sur le point de supprimer <strong className="text-red-600">définitivement</strong> la totalité des{' '}
+                <strong className="text-red-600">{pagination.total} client(s)</strong>, ainsi que toutes les données associées : adresses, contacts, documents, contrats, devis, factures et parc machines.
+              </p>
+              <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-3">
+                <div className="flex gap-2">
+                  <svg className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  <p className="text-xs text-amber-800">
+                    Cette opération supprimera toutes les données clients de manière permanente. Aucune récupération ne sera possible.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 pb-6">
+              <button
+                onClick={() => { setDeleteStep(0); setDeleteError(''); }}
+                className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => setDeleteStep(2)}
+                className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 shadow-sm transition cursor-pointer"
+              >
+                Oui, continuer la suppression
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Étape 2 : Confirmation finale avec saisie texte */}
+      {deleteStep === 2 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="bg-red-600 p-6">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Confirmation finale</h3>
+                  <p className="text-sm text-red-100">Étape 2 sur 2</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-700 mb-4">
+                Pour confirmer la suppression de <strong>{pagination.total} client(s)</strong>, tapez exactement :
+              </p>
+              <div className="rounded-lg bg-gray-100 px-3 py-2 text-center mb-4">
+                <code className="text-sm font-bold text-red-600 select-all">{DELETE_CONFIRM_PHRASE}</code>
+              </div>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder="Tapez la phrase de confirmation..."
+                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-red-400 focus:ring-2 focus:ring-red-500/20 outline-none transition"
+                autoFocus
+              />
+              {deleteError && (
+                <p className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{deleteError}</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 pb-6">
+              <button
+                onClick={() => { setDeleteStep(0); setDeleteConfirmText(''); setDeleteError(''); }}
+                className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleDeleteAll}
+                disabled={deleteConfirmText !== DELETE_CONFIRM_PHRASE || deleting}
+                className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 shadow-sm transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleting ? (
+                  <span className="flex items-center gap-2">
+                    <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                    Suppression...
+                  </span>
+                ) : (
+                  'Supprimer définitivement'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

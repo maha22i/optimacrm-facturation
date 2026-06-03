@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import * as contratService from './contrat.service.js';
 import * as factureService from '../factures/facture.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
@@ -107,6 +108,124 @@ export async function getContratsByClient(req, res, next) {
   try {
     const contrats = await contratService.listContratsByClient(parseInt(req.params.clientId));
     sendSuccess(res, contrats);
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+function fmtDate(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+export async function exportContrats(req, res, next) {
+  try {
+    const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
+    const includeLignes = req.query.lignes === '1';
+    const includeMachines = req.query.machines === '1';
+    const { type_contrat, statut, search } = req.query;
+
+    const { contrats, lignes, machines } = await contratService.getContratsForExport({
+      type_contrat, statut, search, includeLignes, includeMachines,
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    const contratRows = contrats.map(c => ({
+      'N° Contrat': c.numero_contrat,
+      'Type': c.type_contrat,
+      'Facturation': c.type_facturation,
+      'Client': c.client_raison_sociale,
+      'Code client': c.client_code || '',
+      'Email client': c.client_email || '',
+      'Statut': c.statut,
+      'Périodicité': c.periodicite,
+      'Date signature': fmtDate(c.date_signature),
+      'Date début': fmtDate(c.date_debut),
+      'Date échéance': fmtDate(c.date_echeance),
+      'Proch. facture': fmtDate(c.date_prochaine_facture),
+      'Durée (mois)': c.duree_contrat_mois,
+      'Loyer HT': c.loyer_ht,
+      'Montant HT': parseFloat(c.montant_ht) || 0,
+      'Location interne': c.location_interne ? 'Oui' : 'Non',
+      'N° dossier financement': c.numero_dossier_financement || '',
+      'Organisme crédit': c.organisme_credit || '',
+      'Montant financé': c.montant_finance || 0,
+      'FTC': c.ftc || 0,
+      'ECT': c.ect || 0,
+      'Machines': c.machines_resume || '',
+      'Notes': c.notes || '',
+      'Date création': fmtDate(c.created_at),
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(contratRows);
+    if (contratRows.length > 0) {
+      ws['!cols'] = Object.keys(contratRows[0]).map(key => ({
+        wch: Math.max(key.length, ...contratRows.map(r => String(r[key] || '').length).slice(0, 50)) + 2,
+      }));
+    }
+    XLSX.utils.book_append_sheet(wb, ws, 'Contrats');
+
+    if (includeLignes && lignes.length > 0) {
+      const contratMap = {};
+      for (const c of contrats) contratMap[c.id] = c.numero_contrat;
+
+      const ligneRows = lignes.map(l => ({
+        'N° Contrat': contratMap[l.contrat_id] || l.contrat_id,
+        'Ordre': l.ordre,
+        'Catégorie': l.categorie_ligne || '',
+        'Référence': l.reference || '',
+        'Désignation': l.designation,
+        'Complément': l.complement_info || '',
+        'Quantité': l.quantite,
+        'Prix unitaire HT': l.prix_unitaire_ht,
+        'Remise (%)': l.remise_pourcentage,
+        'TVA (%)': l.taux_tva,
+        'Actif': l.actif ? 'Oui' : 'Non',
+      }));
+      const wsLignes = XLSX.utils.json_to_sheet(ligneRows);
+      XLSX.utils.book_append_sheet(wb, wsLignes, 'Lignes');
+    }
+
+    if (includeMachines && machines.length > 0) {
+      const contratMap = {};
+      for (const c of contrats) contratMap[c.id] = c.numero_contrat;
+
+      const machineRows = machines.map(m => ({
+        'N° Contrat': contratMap[m.contrat_id] || m.contrat_id,
+        'N° Série': m.numero_serie,
+        'Modèle': m.modele || '',
+        'Marque': m.marque || '',
+        'Désignation': m.designation || '',
+        'Coût copie N&B': m.cout_copie_nb,
+        'Coût copie Couleur': m.cout_copie_couleur,
+        'Forfait N&B': m.volume_forfait_nb,
+        'Forfait Couleur': m.volume_forfait_couleur,
+        'Dernier compteur N&B': m.dernier_compteur_nb,
+        'Dernier compteur Couleur': m.dernier_compteur_couleur,
+        'Date dernier relevé': fmtDate(m.date_dernier_releve),
+        'Actif': m.actif ? 'Oui' : 'Non',
+      }));
+      const wsMachines = XLSX.utils.json_to_sheet(machineRows);
+      XLSX.utils.book_append_sheet(wb, wsMachines, 'Machines');
+    }
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `contrats_export_${timestamp}`;
+
+    if (format === 'xlsx') {
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
+      return res.send(Buffer.from(buf));
+    }
+
+    const csvContent = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+    return res.send('\ufeff' + csvContent);
   } catch (err) { next(err); }
 }
 

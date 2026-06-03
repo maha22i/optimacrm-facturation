@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import * as catalogueService from './catalogue.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
@@ -89,6 +90,30 @@ export async function deleteProduit(req, res, next) {
   } catch (err) { next(err); }
 }
 
+export async function deleteAllProduits(req, res, next) {
+  try {
+    if (req.user?.role !== 'admin') {
+      throw new Error('Seuls les administrateurs peuvent supprimer tout le catalogue');
+    }
+    const result = await catalogueService.deleteAllProduits();
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'catalogue_tout_supprime',
+        module: 'catalogue',
+        description: `Suppression de tout le catalogue (${result.deletedCount} produits)`,
+        entityType: 'produit',
+        entityId: null,
+        entityLabel: 'Tout le catalogue',
+        details: { deleted_count: result.deletedCount },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `${result.deletedCount} produit(s) supprimé(s) définitivement`);
+  } catch (err) { next(err); }
+}
+
 export async function duplicateProduit(req, res, next) {
   try {
     const produit = await catalogueService.duplicateProduit(parseInt(req.params.id));
@@ -150,5 +175,72 @@ export async function getAdjacentIds(req, res, next) {
   try {
     const result = await catalogueService.getAdjacentIds(parseInt(req.params.id));
     sendSuccess(res, result);
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+export async function exportProduits(req, res, next) {
+  try {
+    const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
+    const { categorie, search, actif } = req.query;
+
+    const produits = await catalogueService.getProduitsForExport({ categorie, search, actif });
+
+    const rows = produits.map(p => ({
+      'Référence': p.reference,
+      'Désignation': p.designation,
+      'Description': p.description || '',
+      'Catégorie': p.categorie || '',
+      'Type': p.type_document === 'MARCHANDISE' ? 'Marchandise' : 'Prestation',
+      'Unité': p.unite,
+      'Prix unitaire HT': p.prix_unitaire_ht,
+      'TVA (%)': p.taux_tva,
+      'Actif': p.actif ? 'Oui' : 'Non',
+      'Fournisseur': p.fournisseur_nom || '',
+      'Marque': p.marque_nom || '',
+      'Famille': p.famille_nom || '',
+      'Modèle': p.modele || '',
+      'Réf. fournisseur': p.reference_fournisseur || '',
+      'Code barre': p.code_barre || '',
+      'Contrib. environnement': p.contribution_environnement || 0,
+      'Frais divers': p.frais_divers || 0,
+      'Prix achat': p.prix_achat || '',
+      'Prix revient': p.prix_revient || '',
+      'Prix vendeur': p.prix_vendeur || '',
+      'Prix public': p.prix_public || '',
+      'Marge (%)': p.marge_pourcentage || '',
+      'Quantité stock': p.quantite_stock,
+      'Alerte stock mini': p.alerte_stock_mini,
+      'Hors catalogue': p.hors_catalogue ? 'Oui' : 'Non',
+      'Date création': p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '',
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    if (rows.length > 0) {
+      ws['!cols'] = Object.keys(rows[0]).map(key => ({
+        wch: Math.max(key.length, ...rows.map(r => String(r[key] || '').length).slice(0, 50)) + 2,
+      }));
+    }
+    XLSX.utils.book_append_sheet(wb, ws, 'Catalogue');
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `catalogue_export_${timestamp}`;
+
+    if (format === 'xlsx') {
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
+      return res.send(Buffer.from(buf));
+    }
+
+    const csvContent = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+    return res.send('\ufeff' + csvContent);
   } catch (err) { next(err); }
 }

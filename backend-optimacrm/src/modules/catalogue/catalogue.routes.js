@@ -9,6 +9,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 const router = Router();
 router.use(authenticate);
 
+router.get('/export', checkPermission('catalogue_read'), ctrl.exportProduits);
+
 router.get('/', checkPermission('catalogue_read'), ctrl.listProduits);
 router.get('/categories', checkPermission('catalogue_read'), ctrl.getCategories);
 router.get('/:id', checkPermission('catalogue_read'), ctrl.getProduit);
@@ -37,6 +39,7 @@ router.put(
   ctrl.updateProduit,
 );
 
+router.delete('/all', checkPermission('catalogue_write'), ctrl.deleteAllProduits);
 router.delete('/:id', checkPermission('catalogue_write'), ctrl.deleteProduit);
 
 router.post('/:id/duplicate', checkPermission('catalogue_write'), ctrl.duplicateProduit);

@@ -47,6 +47,20 @@ async function loadMigrations() {
   migrations.push(m24);
   const m25 = await import('./migrations/025_create_email_config.js');
   migrations.push(m25);
+  const m26 = await import('./migrations/026_alter_devis_import_columns.js');
+  migrations.push(m26);
+  const m27 = await import('./migrations/027_add_email_template_devis.js');
+  migrations.push(m27);
+  const m28 = await import('./migrations/028_add_client_numero_rcs.js');
+  migrations.push(m28);
+  const m29 = await import('./migrations/029_fix_couts_copie_precision.js');
+  migrations.push(m29);
+  const m30 = await import('./migrations/030_create_imports_releves.js');
+  migrations.push(m30);
+  const m31 = await import('./migrations/031_create_sepa_tables.js');
+  migrations.push(m31);
+  const m32 = await import('./migrations/032_create_avoirs.js');
+  migrations.push(m32);
 }
 
 async function ensureMigrationsTable(client) {

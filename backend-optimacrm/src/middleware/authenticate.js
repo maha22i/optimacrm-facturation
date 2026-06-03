@@ -5,12 +5,11 @@ import { ApiError } from '../utils/ApiError.js';
 export async function authenticate(req, _res, next) {
   try {
     const header = req.headers.authorization;
+    const token = req.cookies?.token || (header?.startsWith('Bearer ') ? header.split(' ')[1] : null);
 
-    if (!header?.startsWith('Bearer ')) {
+    if (!token) {
       throw ApiError.unauthorized('Access token required');
     }
-
-    const token = header.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const [userResult, permResult] = await Promise.all([

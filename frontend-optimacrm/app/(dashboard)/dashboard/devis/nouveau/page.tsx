@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import type {
   ApiResponse,
@@ -191,8 +191,11 @@ function computeSousTotal(lignes: LigneForm[], index: number): number {
 // Composant principal
 // ---------------------------------------------------------------------------
 
+const DEVIS_DRAFT_KEY = 'optimacrm_devis_nouveau_draft';
+
 export default function NouveauDevisPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // --- État du devis ---
   const [dateEmission, setDateEmission] = useState(today());
@@ -245,6 +248,41 @@ export default function NouveauDevisPage() {
 
   // --- Marquer dirty dès modification ---
   const markDirty = useCallback(() => setDirty(true), []);
+
+  // --- Chargement client depuis URL (retour de création client) ---
+  useEffect(() => {
+    const newClientId = searchParams.get('clientId');
+    if (newClientId) {
+      const id = parseInt(newClientId, 10);
+      if (!isNaN(id)) {
+        api.get<ApiResponse<Client>>(`/clients/${id}`).then(res => {
+          setClientId(res.data.id);
+          setSelectedClient(res.data);
+          setConditionsPaiement(res.data.delai_paiement);
+          if (res.data.mode_paiement_prefere) setModePaiement(res.data.mode_paiement_prefere);
+        }).catch(() => {});
+      }
+      // Restaurer le brouillon sauvegardé
+      try {
+        const draft = localStorage.getItem(DEVIS_DRAFT_KEY);
+        if (draft) {
+          const d = JSON.parse(draft);
+          if (d.objet) setObjet(d.objet);
+          if (d.dateEmission) setDateEmission(d.dateEmission);
+          if (d.dateValidite) setDateValidite(d.dateValidite);
+          if (d.referenceClient) setReferenceClient(d.referenceClient);
+          if (d.conditionsPaiement) setConditionsPaiement(d.conditionsPaiement);
+          if (d.modePaiement) setModePaiement(d.modePaiement);
+          if (d.messageClient) setMessageClient(d.messageClient);
+          if (d.conditionsGenerales) setConditionsGenerales(d.conditionsGenerales);
+          if (d.notesInternes) setNotesInternes(d.notesInternes);
+          localStorage.removeItem(DEVIS_DRAFT_KEY);
+        }
+      } catch { /* ignore */ }
+      // Nettoyer l'URL
+      window.history.replaceState({}, '', '/dashboard/devis/nouveau');
+    }
+  }, [searchParams]);
 
   // --- Recherche client (debounce 300ms) ---
   useEffect(() => {
@@ -349,6 +387,24 @@ export default function NouveauDevisPage() {
     setClientSearch('');
     markDirty();
   }, [markDirty]);
+
+  const goToCreateClient = useCallback(() => {
+    // Sauvegarder le brouillon du devis en cours
+    try {
+      localStorage.setItem(DEVIS_DRAFT_KEY, JSON.stringify({
+        objet,
+        dateEmission,
+        dateValidite,
+        referenceClient,
+        conditionsPaiement,
+        modePaiement,
+        messageClient,
+        conditionsGenerales,
+        notesInternes,
+      }));
+    } catch { /* ignore */ }
+    router.push('/dashboard/clients/nouveau?returnTo=devis-nouveau');
+  }, [objet, dateEmission, dateValidite, referenceClient, conditionsPaiement, modePaiement, messageClient, conditionsGenerales, notesInternes, router]);
 
   // --- Catalogue modal ---
   const openCatalogue = useCallback(async () => {
@@ -676,7 +732,18 @@ export default function NouveauDevisPage() {
 
           {/* --- Sélection client --- */}
           <div className={`${cardClass} p-6`}>
-            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Client</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Client</h3>
+              {!selectedClient && (
+                <button
+                  onClick={goToCreateClient}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition cursor-pointer"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" /></svg>
+                  Créer un nouveau client
+                </button>
+              )}
+            </div>
             {selectedClient ? (
               <div className="flex items-start justify-between p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                 <div>
@@ -719,7 +786,14 @@ export default function NouveauDevisPage() {
                 )}
                 {showClientDropdown && clientSearch.length >= 2 && clientResults.length === 0 && (
                   <div className="absolute z-20 mt-1 w-full bg-white rounded-xl border border-gray-200 shadow-xl p-4 text-center">
-                    <p className="text-sm text-gray-500">Aucun client trouvé</p>
+                    <p className="text-sm text-gray-500 mb-3">Aucun client trouvé</p>
+                    <button
+                      onClick={goToCreateClient}
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition cursor-pointer"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" /></svg>
+                      Créer un nouveau client
+                    </button>
                   </div>
                 )}
               </div>
@@ -767,14 +841,16 @@ export default function NouveauDevisPage() {
                     if (ligne.type === 'SAUT_DE_LIGNE') {
                       return (
                         <tr key={ligne._uid} className="group">
-                          <td colSpan={9} className="px-3 py-1">
-                            <div className="border-t-2 border-gray-200 border-dashed" />
+                          <td colSpan={9} className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 border-t-2 border-gray-200 border-dashed" />
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-2 py-1">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }
@@ -786,18 +862,20 @@ export default function NouveauDevisPage() {
                             <span className="text-[10px] font-bold text-amber-600">COM</span>
                           </td>
                           <td colSpan={8} className="px-3 py-2">
-                            <input
-                              value={ligne.designation}
-                              onChange={e => updateLigne(idx, 'designation', e.target.value)}
-                              placeholder="Commentaire..."
-                              className="w-full bg-transparent border-0 py-1.5 text-sm text-gray-600 italic outline-none placeholder-gray-400"
-                            />
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={ligne.designation}
+                                onChange={e => updateLigne(idx, 'designation', e.target.value)}
+                                placeholder="Commentaire..."
+                                className="flex-1 bg-transparent border-0 py-1.5 text-sm text-gray-600 italic outline-none placeholder-gray-400"
+                              />
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-2 py-2">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }
@@ -807,17 +885,17 @@ export default function NouveauDevisPage() {
                       return (
                         <tr key={ligne._uid} className="group bg-gray-50 font-semibold">
                           <td className="px-2 py-2" />
-                          <td colSpan={7} className="px-3 py-3 text-sm text-gray-700">
-                            Sous-total
+                          <td colSpan={8} className="px-3 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="flex-1 text-sm text-gray-700">Sous-total</span>
+                              <span className="text-sm text-gray-900 font-bold">{fmt(st)}</span>
+                              <button onClick={() => removeLigne(idx)} className="flex-shrink-0 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer whitespace-nowrap">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                Supprimer
+                              </button>
+                            </div>
                           </td>
-                          <td className="px-3 py-3 text-right text-sm text-gray-900 font-bold">
-                            {fmt(st)}
-                          </td>
-                          <td className="px-2 py-2">
-                            <button onClick={() => removeLigne(idx)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer">
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            </button>
-                          </td>
+                          <td className="px-2 py-2" />
                         </tr>
                       );
                     }

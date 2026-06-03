@@ -56,6 +56,14 @@ export default function ContratsPage() {
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('xlsx');
+  const [exportLignes, setExportLignes] = useState(true);
+  const [exportMachines, setExportMachines] = useState(true);
+  const [exportApplyFilters, setExportApplyFilters] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounce(search), 300);
     return () => clearTimeout(t);
@@ -113,6 +121,27 @@ export default function ContratsPage() {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const params = new URLSearchParams({ format: exportFormat });
+      if (exportLignes) params.set('lignes', '1');
+      if (exportMachines) params.set('machines', '1');
+      if (exportApplyFilters) {
+        if (filterType) params.set('type_contrat', filterType);
+        if (filterStatut) params.set('statut', filterStatut);
+        if (searchDebounce) params.set('search', searchDebounce);
+      }
+      await api.download(`/contrats/export?${params}`);
+      setShowExportModal(false);
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : 'Erreur lors de l\'export');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleDuplicate = async (id: number) => {
     try {
       const res = await api.post<ApiResponse<Contrat>>(`/contrats/${id}/duplicate`, {});
@@ -131,6 +160,15 @@ export default function ContratsPage() {
           <p className="mt-1 text-sm text-gray-500">{total} contrat{total > 1 ? 's' : ''} au total</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Exporter
+          </button>
           <button
             onClick={() => router.push('/dashboard/contrats/import')}
             className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
@@ -406,6 +444,117 @@ export default function ContratsPage() {
           </div>
         )}
       </div>
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Exporter les contrats</h3>
+                <p className="text-sm text-gray-500 mt-0.5">Configurez votre export</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Format du fichier</label>
+                <div className="flex gap-3">
+                  {(['xlsx', 'csv'] as const).map(fmt => (
+                    <button
+                      key={fmt}
+                      onClick={() => setExportFormat(fmt)}
+                      className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === fmt ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}
+                    >
+                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === fmt ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                        <svg className={`h-5 w-5 ${exportFormat === fmt ? 'text-blue-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className={`text-sm font-semibold ${exportFormat === fmt ? 'text-blue-700' : 'text-gray-700'}`}>{fmt === 'xlsx' ? 'Excel (.xlsx)' : 'CSV (.csv)'}</p>
+                        <p className="text-xs text-gray-400">{fmt === 'xlsx' ? 'Multi-onglets (contrats, lignes, machines)' : 'Format texte universel'}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Données à inclure</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                    <input type="checkbox" checked disabled className="h-4 w-4 rounded border-gray-300 text-blue-600" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Informations contrats</p>
+                      <p className="text-xs text-gray-400">N° contrat, type, client, dates, montants, statut...</p>
+                    </div>
+                  </label>
+                  {exportFormat === 'xlsx' && (
+                    <>
+                      <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                        <input type="checkbox" checked={exportLignes} onChange={e => setExportLignes(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Lignes de facturation</p>
+                          <p className="text-xs text-gray-400">Onglet séparé avec désignation, quantité, prix...</p>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                        <input type="checkbox" checked={exportMachines} onChange={e => setExportMachines(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Machines / Équipements</p>
+                          <p className="text-xs text-gray-400">Onglet séparé avec n° série, compteurs, coûts copie...</p>
+                        </div>
+                      </label>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {(filterType || filterStatut || searchDebounce || filterEcheance) && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Périmètre</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                      <input type="radio" checked={!exportApplyFilters} onChange={() => setExportApplyFilters(false)} className="h-4 w-4 border-gray-300 text-blue-600 cursor-pointer" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Tous les contrats</p>
+                        <p className="text-xs text-gray-400">Exporter la totalité</p>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
+                      <input type="radio" checked={exportApplyFilters} onChange={() => setExportApplyFilters(true)} className="h-4 w-4 border-gray-300 text-blue-600 cursor-pointer" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
+                        <p className="text-xs text-gray-400">
+                          {[filterType && `Type : ${filterType}`, filterStatut && `Statut : ${filterStatut}`, searchDebounce && `"${searchDebounce}"`].filter(Boolean).join(' + ')}
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {exportError && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{exportError}</p>}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4 bg-gray-50/50">
+              <p className="text-xs text-gray-400">{total} contrat{total > 1 ? 's' : ''} au total</p>
+              <div className="flex items-center gap-3">
+                <button onClick={() => { setShowExportModal(false); setExportError(''); }} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">Annuler</button>
+                <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+                  {exporting ? (<><span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />Export en cours...</>) : (<><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>Télécharger</>)}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation modal */}
       {deleteId && (

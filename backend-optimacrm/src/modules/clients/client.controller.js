@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import * as clientService from './client.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
@@ -88,10 +89,157 @@ export async function deleteClient(req, res, next) {
   } catch (err) { next(err); }
 }
 
+export async function deleteAllClients(req, res, next) {
+  try {
+    if (req.user?.role !== 'admin') {
+      throw new Error('Seuls les administrateurs peuvent supprimer tous les clients');
+    }
+    const result = await clientService.deleteAllClients();
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'clients_tous_supprimes',
+        module: 'clients',
+        description: `Suppression de tous les clients (${result.deletedCount} supprimés)`,
+        entityType: 'client',
+        entityId: null,
+        entityLabel: 'Tous les clients',
+        details: { deleted_count: result.deletedCount },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `${result.deletedCount} client(s) supprimé(s) définitivement`);
+  } catch (err) { next(err); }
+}
+
 export async function getClientStats(req, res, next) {
   try {
     const stats = await clientService.getClientStats(parseInt(req.params.id));
     sendSuccess(res, stats);
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+const STATUT_LABELS = { ACTIF: 'Actif', INACTIF: 'Inactif', BLOQUE: 'Bloqué', PROSPECT: 'Prospect' };
+const FORME_LABELS = { SARL: 'SARL', SAS: 'SAS', EURL: 'EURL', SA: 'SA', SCI: 'SCI', AUTO_ENTREPRENEUR: 'Auto-entrepreneur', ASSOCIATION: 'Association', AUTRE: 'Autre' };
+const DELAI_LABELS = { COMPTANT: 'Comptant', '15_JOURS': '15 jours', '30_JOURS': '30 jours', '45_JOURS_FIN_MOIS': '45 jours fin de mois', '60_JOURS': '60 jours' };
+const MODE_LABELS = { VIREMENT: 'Virement', PRELEVEMENT_SEPA: 'Prélèvement SEPA', CHEQUE: 'Chèque', CARTE: 'Carte', ESPECES: 'Espèces' };
+
+function formatDate(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+export async function exportClients(req, res, next) {
+  try {
+    const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
+    const includeAdresses = req.query.adresses === '1';
+    const includeContacts = req.query.contacts === '1';
+    const { statut, search } = req.query;
+
+    const { clients, adresses, contacts } = await clientService.getClientsForExport({
+      statut,
+      search,
+      includeAdresses,
+      includeContacts,
+    });
+
+    const adressesByClient = {};
+    for (const a of adresses) {
+      if (!adressesByClient[a.client_id]) adressesByClient[a.client_id] = [];
+      adressesByClient[a.client_id].push(a);
+    }
+
+    const contactsByClient = {};
+    for (const c of contacts) {
+      if (!contactsByClient[c.client_id]) contactsByClient[c.client_id] = [];
+      contactsByClient[c.client_id].push(c);
+    }
+
+    const rows = [];
+
+    for (const client of clients) {
+      const row = {
+        'Numéro client': client.numero_client,
+        'Raison sociale': client.raison_sociale,
+        'Forme juridique': FORME_LABELS[client.forme_juridique] || client.forme_juridique,
+        'Statut': STATUT_LABELS[client.statut] || client.statut,
+        'SIRET': client.siret || '',
+        'SIREN': client.siren || '',
+        'TVA intracommunautaire': client.tva_intracommunautaire || '',
+        'Code APE': client.code_ape || '',
+        'N° RCS': client.numero_rcs || '',
+        'Site web': client.site_web || '',
+        'Téléphone': client.telephone_principal || '',
+        'Email': client.email_principal,
+        'Email comptabilité': client.email_comptabilite || '',
+        'Délai paiement': DELAI_LABELS[client.delai_paiement] || client.delai_paiement,
+        'Mode paiement': MODE_LABELS[client.mode_paiement_prefere] || client.mode_paiement_prefere || '',
+        'Remise globale (%)': client.remise_globale,
+        'Taux TVA défaut (%)': client.taux_tva_defaut,
+        'Devise': client.devise,
+        'IBAN': client.iban || '',
+        'BIC': client.bic || '',
+        'Réf. mandat SEPA': client.reference_mandat_sepa || '',
+        'Date mandat SEPA': formatDate(client.date_mandat_sepa),
+        'Notes': client.notes || '',
+        'Date création': formatDate(client.created_at),
+      };
+
+      if (includeAdresses) {
+        const adr = adressesByClient[client.id] || [];
+        const defaut = adr.find(a => a.est_defaut) || adr[0];
+        row['Adresse - Type'] = defaut?.type || '';
+        row['Adresse - Ligne 1'] = defaut?.ligne1 || '';
+        row['Adresse - Ligne 2'] = defaut?.ligne2 || '';
+        row['Adresse - Code postal'] = defaut?.code_postal || '';
+        row['Adresse - Ville'] = defaut?.ville || '';
+        row['Adresse - Pays'] = defaut?.pays || '';
+      }
+
+      if (includeContacts) {
+        const ctcs = contactsByClient[client.id] || [];
+        const principal = ctcs.find(c => c.est_principal) || ctcs[0];
+        row['Contact - Nom'] = principal?.nom || '';
+        row['Contact - Prénom'] = principal?.prenom || '';
+        row['Contact - Fonction'] = principal?.fonction || '';
+        row['Contact - Téléphone'] = principal?.telephone || '';
+        row['Contact - Mobile'] = principal?.mobile || '';
+        row['Contact - Email'] = principal?.email || '';
+      }
+
+      rows.push(row);
+    }
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    const colWidths = Object.keys(rows[0] || {}).map(key => ({
+      wch: Math.max(key.length, ...rows.map(r => String(r[key] || '').length).slice(0, 50)) + 2,
+    }));
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Clients');
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `clients_export_${timestamp}`;
+
+    if (format === 'xlsx') {
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
+      return res.send(Buffer.from(buf));
+    }
+
+    const csvContent = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
+    const bom = '\ufeff';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+    return res.send(bom + csvContent);
   } catch (err) { next(err); }
 }
 
@@ -180,7 +328,14 @@ export async function listDocuments(req, res, next) {
 
 export async function createDocument(req, res, next) {
   try {
-    const doc = await clientService.createDocument(parseInt(req.params.id), req.body);
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Aucun fichier fourni' });
+    }
+    const doc = await clientService.createDocument(parseInt(req.params.id), {
+      nom: req.body.nom || req.file.originalname,
+      type: req.body.type || 'AUTRE',
+      file: req.file,
+    });
     sendSuccess(res, doc, 'Document ajouté', 201);
   } catch (err) { next(err); }
 }

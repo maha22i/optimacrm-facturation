@@ -21,7 +21,7 @@ async function generateNumeroBonCommande(client) {
 // Calcul montants
 // ---------------------------------------------------------------------------
 
-function calculerMontantsLigne(ligne) {
+export function calculerMontantsLigne(ligne) {
   if (['COMMENTAIRE', 'SAUT_DE_LIGNE', 'SOUS_TOTAL'].includes(ligne.type)) {
     return { montant_ht: 0, montant_tva: 0, montant_ttc: 0 };
   }
@@ -88,7 +88,7 @@ function calculerTotauxDevis(lignes, remiseGlobaleType, remiseGlobaleValeur) {
   };
 }
 
-async function recalculerDevis(dbClient, devisId) {
+export async function recalculerDevis(dbClient, devisId) {
   const lignesRes = await dbClient.query(
     'SELECT * FROM devis_lignes WHERE devis_id = $1 ORDER BY ordre',
     [devisId]
@@ -139,6 +139,11 @@ const DEVIS_FIELDS = `
   d.statut, d.date_creation, d.date_emission, d.date_validite,
   d.date_acceptation, d.date_transformation,
   d.objet, d.reference_client, d.commercial_id,
+  d.nom_client_libre, d.commercial,
+  d.date_relance, d.prevision_signature, d.probabilite_signature,
+  d.situation_affaire, d.date_validation, d.type_produit,
+  d.total_achat_ht, d.marge_realisee, d.taux_marge, d.taux_marque,
+  d.facture_liee, d.ordre_service, d.provenance,
   d.conditions_paiement, d.mode_paiement, d.devise,
   d.remise_globale_type, d.remise_globale_valeur,
   d.montant_ht, d.montant_remise, d.montant_ht_apres_remise,
@@ -199,6 +204,7 @@ export async function listDevis({ page = 1, limit = 10, statut, client_id, comme
       d.numero_devis ILIKE $${i} OR
       d.objet ILIKE $${i} OR
       d.reference_client ILIKE $${i} OR
+      d.nom_client_libre ILIKE $${i} OR
       c.raison_sociale ILIKE $${i}
     )`);
     params.push(`%${search}%`);
@@ -209,7 +215,10 @@ export async function listDevis({ page = 1, limit = 10, statut, client_id, comme
 
   const [devisRes, countRes] = await Promise.all([
     query(
-      `SELECT ${DEVIS_FIELDS}, c.raison_sociale AS client_nom, c.numero_client
+      `SELECT ${DEVIS_FIELDS},
+        c.raison_sociale AS client_raison_sociale_fiche,
+        c.numero_client,
+        COALESCE(NULLIF(TRIM(d.nom_client_libre), ''), c.raison_sociale) AS client_nom
        FROM devis d
        LEFT JOIN clients c ON c.id = d.client_id
        ${where}
@@ -382,6 +391,7 @@ export async function updateDevis(id, data, userId) {
   const allowedFields = [
     'client_id', 'contact_id', 'adresse_facturation_id', 'adresse_livraison_id',
     'date_emission', 'date_validite', 'objet', 'reference_client', 'commercial_id',
+    'nom_client_libre',
     'conditions_paiement', 'mode_paiement', 'devise',
     'remise_globale_type', 'remise_globale_valeur',
     'notes_internes', 'conditions_generales', 'message_client',

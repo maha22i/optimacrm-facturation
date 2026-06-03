@@ -1,14 +1,22 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as ctrl from './client.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
+
+const uploadDoc = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const router = Router();
 
 router.use(authenticate);
 
 // ── Clients ────────────────────────────────────────────────────────────────
+
+router.get('/export', checkPermission('clients_read'), ctrl.exportClients);
 
 router.get('/', checkPermission('clients_read'), ctrl.listClients);
 router.get('/:id', checkPermission('clients_read'), ctrl.getClient);
@@ -46,6 +54,7 @@ router.put(
   ctrl.updateClient,
 );
 
+router.delete('/all', checkPermission('clients_write'), ctrl.deleteAllClients);
 router.delete('/:id', checkPermission('clients_write'), ctrl.deleteClient);
 
 // ── Adresses ───────────────────────────────────────────────────────────────
@@ -119,11 +128,7 @@ router.get('/:id/documents', checkPermission('clients_read'), ctrl.listDocuments
 router.post(
   '/:id/documents',
   checkPermission('clients_write'),
-  validate({
-    nom: { required: true, minLength: 1, label: 'Nom du document' },
-    url: { required: true, minLength: 1, label: 'URL du document' },
-    type: { enum: ['CONTRAT','RIB','MANDAT_SEPA','BON_COMMANDE','AUTRE'] },
-  }),
+  uploadDoc.single('file'),
   ctrl.createDocument,
 );
 

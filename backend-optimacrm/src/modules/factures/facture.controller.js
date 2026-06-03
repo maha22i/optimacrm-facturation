@@ -1,3 +1,4 @@
+import { ZipArchive } from 'archiver';
 import * as factureService from './facture.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
@@ -279,10 +280,162 @@ export async function envoyerFactureEmail(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ---------------------------------------------------------------------------
+// Actions en masse
+// ---------------------------------------------------------------------------
+
+export async function validerLot(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Le champ ids est requis (tableau non vide)' });
+    }
+
+    const result = await factureService.validerLot(ids, req.user.id);
+
+    try {
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'factures_validees_lot', module: 'factures',
+        description: `Validation en lot : ${result.valides} validée(s), ${result.erreurs.length} erreur(s)`,
+        details: { nb_demandees: ids.length, nb_validees: result.valides, nb_erreurs: result.erreurs.length },
+        statut: result.erreurs.length ? 'partiel' : 'succes',
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+
+    sendSuccess(res, result, `${result.valides} facture(s) validée(s)`);
+  } catch (err) { next(err); }
+}
+
+export async function envoyerLot(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Le champ ids est requis (tableau non vide)' });
+    }
+
+    const { sujet, corps } = req.body;
+    const result = await factureService.envoyerLot(ids, req.user.id, { sujet, corps });
+
+    try {
+      const numeros = [];
+      for (const id of ids) {
+        try { const f = await factureService.getFactureById(id); numeros.push(f.numero_facture); } catch (_) { numeros.push(`#${id}`); }
+      }
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'factures_envoyees_lot', module: 'factures',
+        description: `Envoi groupé de factures : ${result.envoyees} envoyée(s), ${result.erreurs.length} erreur(s)`,
+        details: {
+          nb_demandees: ids.length,
+          nb_envoyees: result.envoyees,
+          nb_erreurs: result.erreurs.length,
+          numeros_factures: numeros,
+        },
+        statut: result.erreurs.length ? 'partiel' : 'succes',
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+
+    sendSuccess(res, result, `${result.envoyees} facture(s) envoyée(s) par email`);
+  } catch (err) { next(err); }
+}
+
+export async function telechargerLot(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Le champ ids est requis (tableau non vide)' });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `factures_${today}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    archive.on('error', (err) => { throw err; });
+    archive.pipe(res);
+
+    for (const id of ids) {
+      try {
+        const { pdf, facture } = await generateFacturePdf(id);
+        const clientName = (facture.client_raison_sociale || 'CLIENT')
+          .replace(/[^a-zA-Z0-9À-ÿ\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .toUpperCase();
+        const pdfName = `${facture.numero_facture}_${clientName}.pdf`;
+        archive.append(pdf, { name: pdfName });
+      } catch (err) {
+        console.error(`[TelechargerLot] Erreur PDF facture #${id}:`, err.message);
+      }
+    }
+
+    await archive.finalize();
+
+    try {
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'factures_telecharger_lot', module: 'factures',
+        description: `Téléchargement groupé de ${ids.length} facture(s) en ZIP`,
+        details: { nb_factures: ids.length },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+  } catch (err) { next(err); }
+}
+
 export async function detecterRetards(req, res, next) {
   try {
     const count = await factureService.detecterRetards();
     sendSuccess(res, { updated: count }, `${count} facture(s) mise(s) en retard`);
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// Gestion des lignes
+// ---------------------------------------------------------------------------
+
+export async function ajouterLigne(req, res, next) {
+  try {
+    const facture = await factureService.ajouterLigne(parseInt(req.params.id), req.body, req.user.id);
+    try {
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'facture_ligne_ajoutee', module: 'factures',
+        description: `Ligne ajoutée sur la facture ${facture.numero_facture || ''}`,
+        entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, facture, 'Ligne ajoutée', 201);
+  } catch (err) { next(err); }
+}
+
+export async function modifierLigne(req, res, next) {
+  try {
+    const facture = await factureService.modifierLigne(
+      parseInt(req.params.id), parseInt(req.params.lid), req.body, req.user.id
+    );
+    sendSuccess(res, facture, 'Ligne modifiée');
+  } catch (err) { next(err); }
+}
+
+export async function supprimerLigne(req, res, next) {
+  try {
+    const facture = await factureService.supprimerLigne(
+      parseInt(req.params.id), parseInt(req.params.lid), req.user.id
+    );
+    sendSuccess(res, facture, 'Ligne supprimée');
+  } catch (err) { next(err); }
+}
+
+export async function recalculerTotaux(req, res, next) {
+  try {
+    const facture = await factureService.recalculerTotaux(parseInt(req.params.id));
+    sendSuccess(res, facture, 'Totaux recalculés');
   } catch (err) { next(err); }
 }
 

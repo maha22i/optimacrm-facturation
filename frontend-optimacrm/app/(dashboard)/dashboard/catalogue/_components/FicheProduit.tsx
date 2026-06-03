@@ -103,7 +103,7 @@ export default function FicheProduit({ produitId }: Props) {
   const [adjacentIds, setAdjacentIds] = useState<{ prev_id: number | null; next_id: number | null }>({ prev_id: null, next_id: null });
 
   const [infoTab, setInfoTab] = useState<'information' | 'details'>('information');
-  const [rightTab, setRightTab] = useState<'tarifs' | 'comptabilite' | 'avenir'>('tarifs');
+  const [rightTab, setRightTab] = useState<'tarifs' | 'comptabilite'>('tarifs');
 
   const [tarifForm, setTarifForm] = useState({ client_id: '', prix_vente: '', taux_tva: 20, notes: '' });
   const [editingTarifId, setEditingTarifId] = useState<number | null>(null);
@@ -596,7 +596,6 @@ export default function FicheProduit({ produitId }: Props) {
               {([
                 { key: 'tarifs' as const, label: 'Tarifs', icon: <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" /></svg> },
                 { key: 'comptabilite' as const, label: 'Comptabilité', icon: <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 15.75V18m-7.5-6.75h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V13.5Zm0 2.25h.008v.008H8.25v-.008Zm0 2.25h.008v.008H8.25V18Zm2.498-6.75h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V13.5Zm0 2.25h.007v.008h-.007v-.008Zm0 2.25h.007v.008h-.007V18Zm2.504-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5Zm0 2.25h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V18Zm2.498-6.75h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V13.5ZM8.25 6h7.5v2.25h-7.5V6ZM12 2.25c-1.892 0-3.758.11-5.593.322C5.307 2.7 4.5 3.65 4.5 4.757V19.5a2.25 2.25 0 0 0 2.25 2.25h10.5a2.25 2.25 0 0 0 2.25-2.25V4.757c0-1.108-.806-2.057-1.907-2.185A48.507 48.507 0 0 0 12 2.25Z" /></svg> },
-                { key: 'avenir' as const, label: 'À venir', icon: <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg> },
               ]).map(tab => (
                 <button key={tab.key} onClick={() => setRightTab(tab.key)}
                   className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-3.5 text-[11px] font-bold uppercase tracking-wider transition cursor-pointer border-b-2 ${rightTab === tab.key ? 'text-blue-600 border-blue-600 bg-blue-50/30' : 'text-gray-400 border-transparent hover:text-gray-600'}`}>
@@ -687,15 +686,7 @@ export default function FicheProduit({ produitId }: Props) {
                     {renderField('Centre de coût', <input value={comptabilite.centre_cout || ''} onChange={e => updateCompta('centre_cout', e.target.value)} className={ic} />)}
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-10 text-gray-400">
-                  <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center mb-3">
-                    <svg className="h-7 w-7 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                  </div>
-                  <p className="text-sm font-semibold text-gray-500">Bientôt disponible</p>
-                  <p className="text-xs text-gray-400 mt-1 text-center max-w-[200px]">Commande fournisseur et Bons de livraison dans une prochaine version</p>
-                </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>

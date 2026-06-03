@@ -78,6 +78,10 @@ const NAV_ITEMS: NavItem[] = [
         <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 15.75h-4.5m0 0V12m0 3.75L12 13.5" />
       </svg>
     ),
+    children: [
+      { label: 'Avoirs', href: '/dashboard/factures/avoirs', requiredPermission: 'factures_read' },
+      { label: 'Prélèvements SEPA', href: '/dashboard/factures/prelevements-sepa', requiredPermission: 'factures_write' },
+    ],
   },
   {
     label: 'Contrats',
@@ -104,6 +108,7 @@ const NAV_ITEMS: NavItem[] = [
     ),
     children: [
       { label: 'Importer relevés', href: '/dashboard/parc-machines/import-releves', requiredPermission: 'parc_import' },
+      { label: 'Historique imports', href: '/dashboard/parc-machines/imports', requiredPermission: 'parc_read' },
     ],
   },
   {

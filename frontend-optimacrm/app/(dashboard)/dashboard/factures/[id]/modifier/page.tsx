@@ -66,7 +66,7 @@ export default function ModifierFacturePage() {
     try {
       const res = await api.get<ApiResponse<FactureDetail>>(`/factures/${factureId}`);
       const f = res.data;
-      if (f.statut !== 'Brouillon') {
+      if (!['Brouillon', 'Annulée'].includes(f.statut)) {
         router.push(`/dashboard/factures/${factureId}`);
         return;
       }

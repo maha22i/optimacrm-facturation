@@ -40,6 +40,7 @@ function levenshtein(a, b) {
 
 function parseDecimal(val) {
   if (val == null || val === '') return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
   let s = String(val).trim().replace(/€/g, '').trim();
   if (s.includes(',')) {
     s = s.replace(/\s/g, '').replace(',', '.');
@@ -47,11 +48,12 @@ function parseDecimal(val) {
     s = s.replace(/\s/g, '');
   }
   const n = parseFloat(s);
-  return isNaN(n) ? null : Math.round(n * 100) / 100;
+  return isNaN(n) ? null : n;
 }
 
 function parseDecimal6(val) {
   if (val == null || val === '') return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
   let s = String(val).trim().replace(/€/g, '').trim();
   if (s.includes(',')) {
     s = s.replace(/\s/g, '').replace(',', '.');
@@ -59,7 +61,7 @@ function parseDecimal6(val) {
     s = s.replace(/\s/g, '');
   }
   const n = parseFloat(s);
-  return isNaN(n) ? null : Math.round(n * 1000000) / 1000000;
+  return isNaN(n) ? null : n;
 }
 
 function parseInteger(val) {
@@ -70,6 +72,9 @@ function parseInteger(val) {
 
 function parseDate(val) {
   if (val == null || val === '') return null;
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val.toISOString().split('T')[0];
+  }
   const s = String(val).trim();
   const dmySlash = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
   if (dmySlash) return `${dmySlash[3]}-${dmySlash[2].padStart(2, '0')}-${dmySlash[1].padStart(2, '0')}`;
@@ -307,10 +312,10 @@ export async function parseFile(file) {
     rows = parseCSV(file.buffer.toString('utf-8'));
   } else {
     const XLSX = await import('xlsx');
-    const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+    const workbook = XLSX.read(file.buffer, { type: 'buffer', cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
-    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
   }
 
   if (!rows || rows.length < 2) {
@@ -320,7 +325,7 @@ export async function parseFile(file) {
   // Normalize headers (may contain \n)
   const headers = rows[0].map(h => String(h ?? '').replace(/\r?\n/g, ' ').trim());
   const dataRows = rows.slice(1).filter(row =>
-    row.some(cell => cell != null && String(cell).trim() !== '')
+    row.some(cell => cell != null && cell !== '' && String(cell).trim() !== '')
   );
 
   const fileId = `temp_contrats_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -329,7 +334,7 @@ export async function parseFile(file) {
 
   const preview = dataRows.slice(0, 5).map(row => {
     const obj = {};
-    headers.forEach((h, i) => { obj[h] = row[i] ?? ''; });
+    headers.forEach((h, i) => { obj[h] = row[i] ?? null; });
     return obj;
   });
 

@@ -1,13 +1,16 @@
+import path from 'path';
+import fs from 'fs/promises';
 import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { bucket, isFirebaseReady } from '../../config/firebase.js';
 
 const CLIENT_FIELDS = `
   id, numero_client, raison_sociale, forme_juridique, siret, siren,
-  tva_intracommunautaire, code_ape, site_web, telephone_principal,
+  tva_intracommunautaire, code_ape, numero_rcs, site_web, telephone_principal,
   email_principal, email_comptabilite, statut, blocage_raison,
   remise_globale, taux_tva_defaut, devise, plafond_encours,
   delai_paiement, mode_paiement_prefere, iban, bic,
-  reference_mandat_sepa, date_mandat_sepa, notes, champs_personnalises, created_at, updated_at
+  reference_mandat_sepa, date_mandat_sepa, sequence_mandat, notes, champs_personnalises, created_at, updated_at
 `;
 
 // ---------------------------------------------------------------------------
@@ -130,19 +133,22 @@ export async function createClient(data) {
   const emailDup = await query('SELECT id FROM clients WHERE email_principal = $1', [data.email_principal.toLowerCase()]);
   if (emailDup.rows.length > 0) throw ApiError.conflict('Un client avec cet email existe déjà');
 
+  if (data.iban) data.iban = data.iban.replace(/\s/g, '').toUpperCase();
+  if (data.bic) data.bic = data.bic.replace(/\s/g, '').toUpperCase().slice(0, 11);
+
   const numero_client = await generateNumeroClient();
   const siren = extractSiren(data.siret);
 
   const result = await query(
     `INSERT INTO clients (
       numero_client, raison_sociale, forme_juridique, siret, siren,
-      tva_intracommunautaire, code_ape, site_web, telephone_principal,
+      tva_intracommunautaire, code_ape, numero_rcs, site_web, telephone_principal,
       email_principal, email_comptabilite, statut, blocage_raison,
       remise_globale, taux_tva_defaut, devise, plafond_encours,
       delai_paiement, mode_paiement_prefere, iban, bic,
-      reference_mandat_sepa, date_mandat_sepa, notes, champs_personnalises
+      reference_mandat_sepa, date_mandat_sepa, sequence_mandat, notes, champs_personnalises
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
     ) RETURNING ${CLIENT_FIELDS}`,
     [
       numero_client,
@@ -152,6 +158,7 @@ export async function createClient(data) {
       siren,
       data.tva_intracommunautaire || null,
       data.code_ape || null,
+      data.numero_rcs || null,
       data.site_web || null,
       data.telephone_principal || null,
       data.email_principal.toLowerCase(),
@@ -168,6 +175,7 @@ export async function createClient(data) {
       data.bic || null,
       data.reference_mandat_sepa || null,
       data.date_mandat_sepa || null,
+      data.sequence_mandat || 'RCUR',
       data.notes || null,
       JSON.stringify(normalizeChampsPersonnalises(data.champs_personnalises)),
     ],
@@ -196,12 +204,19 @@ export async function updateClient(id, data) {
 
   const allowedFields = [
     'raison_sociale', 'forme_juridique', 'siret', 'siren',
-    'tva_intracommunautaire', 'code_ape', 'site_web', 'telephone_principal',
+    'tva_intracommunautaire', 'code_ape', 'numero_rcs', 'site_web', 'telephone_principal',
     'email_principal', 'email_comptabilite', 'statut', 'blocage_raison',
     'remise_globale', 'taux_tva_defaut', 'devise', 'plafond_encours',
     'delai_paiement', 'mode_paiement_prefere', 'iban', 'bic',
-    'reference_mandat_sepa', 'date_mandat_sepa', 'notes', 'champs_personnalises',
+    'reference_mandat_sepa', 'date_mandat_sepa', 'sequence_mandat', 'notes', 'champs_personnalises',
   ];
+
+  if (data.iban !== undefined && data.iban) {
+    data.iban = data.iban.replace(/\s/g, '').toUpperCase();
+  }
+  if (data.bic !== undefined && data.bic) {
+    data.bic = data.bic.replace(/\s/g, '').toUpperCase().slice(0, 11);
+  }
 
   if (data.champs_personnalises !== undefined) {
     data.champs_personnalises = JSON.stringify(normalizeChampsPersonnalises(data.champs_personnalises));
@@ -231,17 +246,72 @@ export async function deleteClient(id) {
   return result.rows[0];
 }
 
+export async function deleteAllClients() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Factures et sous-tables (CASCADE gère facture_lignes, facture_echeances, facture_paiements)
+    await client.query('DELETE FROM factures');
+    // Contrats et sous-tables (CASCADE gère contrat_lignes, contrat_compteurs)
+    await client.query('DELETE FROM contrats');
+    // Devis et sous-tables (CASCADE gère devis_lignes, devis_couts_copie, devis_options)
+    await client.query('DELETE FROM bons_commande');
+    await client.query('DELETE FROM devis');
+    // Parc machines et sous-tables (CASCADE gère releves_compteurs)
+    await client.query('DELETE FROM parc_machines');
+    // Tarifs spécifiques clients
+    await client.query('DELETE FROM produit_tarifs_clients');
+    // Sous-tables clients (CASCADE les supprimerait, mais on est explicite)
+    await client.query('DELETE FROM client_documents');
+    await client.query('DELETE FROM client_contacts');
+    await client.query('DELETE FROM client_adresses');
+    // Clients
+    const result = await client.query('DELETE FROM clients RETURNING id');
+    await client.query("ALTER SEQUENCE client_numero_seq RESTART WITH 1");
+
+    await client.query('COMMIT');
+    return { deletedCount: result.rowCount };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getClientStats(id) {
   const clientCheck = await query('SELECT id FROM clients WHERE id = $1', [id]);
   if (clientCheck.rows.length === 0) throw ApiError.notFound('Client non trouvé');
 
+  const [facturesRes, contratsRes] = await Promise.all([
+    query(
+      `SELECT
+         COUNT(*)::int AS nb_factures,
+         COALESCE(SUM(total_ttc), 0) AS ca_total,
+         COUNT(*) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0)::int AS factures_en_attente,
+         COALESCE(SUM(net_a_payer) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0), 0) AS montant_en_attente,
+         COALESCE(SUM(net_a_payer) FILTER (WHERE statut NOT IN ('Annulée') AND net_a_payer > 0), 0) AS solde_du
+       FROM factures WHERE client_id = $1 AND statut != 'Annulée'`,
+      [id],
+    ),
+    query(
+      `SELECT COUNT(*)::int AS nb_contrats_actifs
+       FROM contrats WHERE client_id = $1 AND statut = 'Actif'`,
+      [id],
+    ),
+  ]);
+
+  const f = facturesRes.rows[0];
+  const c = contratsRes.rows[0];
+
   return {
-    ca_total: 0,
-    nb_factures: 0,
-    factures_en_attente: 0,
-    montant_en_attente: 0,
-    solde_du: 0,
-    nb_contrats_actifs: 0,
+    ca_total: parseFloat(f.ca_total) || 0,
+    nb_factures: f.nb_factures,
+    factures_en_attente: f.factures_en_attente,
+    montant_en_attente: parseFloat(f.montant_en_attente) || 0,
+    solde_du: parseFloat(f.solde_du) || 0,
+    nb_contrats_actifs: c.nb_contrats_actifs,
   };
 }
 
@@ -405,24 +475,120 @@ export async function listDocuments(clientId) {
   return result.rows;
 }
 
-export async function createDocument(clientId, data) {
+export async function createDocument(clientId, { nom, type, file }) {
   await ensureClientExists(clientId);
+
+  const ext = path.extname(file.originalname).toLowerCase();
+  const safeName = `client_${clientId}_${Date.now()}${ext}`;
+  let url;
+
+  if (isFirebaseReady()) {
+    const firebasePath = `documents-clients/${safeName}`;
+    const firebaseFile = bucket.file(firebasePath);
+    await firebaseFile.save(file.buffer, {
+      metadata: { contentType: file.mimetype || 'application/octet-stream' },
+      public: true,
+    });
+    url = `https://storage.googleapis.com/${bucket.name}/${firebasePath}`;
+  } else {
+    const localDir = path.resolve('uploads/documents-clients');
+    await fs.mkdir(localDir, { recursive: true });
+    await fs.writeFile(path.join(localDir, safeName), file.buffer);
+    url = `/uploads/documents-clients/${safeName}`;
+  }
 
   const result = await query(
     `INSERT INTO client_documents (client_id, nom, type, url)
      VALUES ($1,$2,$3,$4) RETURNING *`,
-    [clientId, data.nom, data.type || 'AUTRE', data.url],
+    [clientId, nom || file.originalname, type || 'AUTRE', url],
   );
 
   return result.rows[0];
 }
 
+function extractFirebasePath(publicUrl) {
+  const match = publicUrl.match(/storage\.googleapis\.com\/[^/]+\/(.+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function deleteDocument(clientId, documentId) {
-  const result = await query(
-    'DELETE FROM client_documents WHERE id = $1 AND client_id = $2 RETURNING id',
+  const docRes = await query(
+    'SELECT * FROM client_documents WHERE id = $1 AND client_id = $2',
     [documentId, clientId],
   );
-  if (result.rows.length === 0) throw ApiError.notFound('Document non trouvé');
+  if (docRes.rows.length === 0) throw ApiError.notFound('Document non trouvé');
+
+  const doc = docRes.rows[0];
+
+  if (doc.url.startsWith('http') && isFirebaseReady()) {
+    const fbPath = extractFirebasePath(doc.url);
+    if (fbPath) await bucket.file(fbPath).delete().catch(() => {});
+  } else if (doc.url.startsWith('/uploads/')) {
+    const localPath = path.resolve('uploads', doc.url.replace(/^\/uploads\//, ''));
+    await fs.unlink(localPath).catch(() => {});
+  }
+
+  await query('DELETE FROM client_documents WHERE id = $1 AND client_id = $2', [documentId, clientId]);
+}
+
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+
+export async function getClientsForExport({ statut, search, includeAdresses, includeContacts }) {
+  const conditions = [];
+  const params = [];
+  let i = 1;
+
+  if (statut) {
+    conditions.push(`c.statut = $${i++}`);
+    params.push(statut);
+  }
+
+  if (search) {
+    conditions.push(`(
+      c.raison_sociale ILIKE $${i} OR
+      c.numero_client ILIKE $${i} OR
+      c.email_principal ILIKE $${i} OR
+      c.siret ILIKE $${i}
+    )`);
+    params.push(`%${search}%`);
+    i++;
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const clientsRes = await query(
+    `SELECT ${CLIENT_FIELDS} FROM clients c ${where} ORDER BY c.numero_client ASC`,
+    params,
+  );
+
+  const clients = clientsRes.rows;
+
+  if (clients.length === 0) return { clients: [], adresses: [], contacts: [] };
+
+  const clientIds = clients.map(c => c.id);
+
+  let adresses = [];
+  let contacts = [];
+
+  if (includeAdresses) {
+    const adressesRes = await query(
+      `SELECT * FROM client_adresses WHERE client_id = ANY($1) ORDER BY client_id, est_defaut DESC, type`,
+      [clientIds],
+    );
+    adresses = adressesRes.rows;
+  }
+
+  if (includeContacts) {
+    const contactsRes = await query(
+      `SELECT * FROM client_contacts WHERE client_id = ANY($1) ORDER BY client_id, est_principal DESC, nom`,
+      [clientIds],
+    );
+    contacts = contactsRes.rows;
+  }
+
+  return { clients, adresses, contacts };
 }
 
 // ---------------------------------------------------------------------------

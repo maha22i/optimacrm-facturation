@@ -14,6 +14,9 @@ router.get('/stats', checkPermission('contrats_read'), ctrl.getStats);
 // ── Contrats par client ───────────────────────────────────────────────────
 router.get('/client/:clientId', checkPermission('contrats_read'), ctrl.getContratsByClient);
 
+// ── Export ─────────────────────────────────────────────────────────────────
+router.get('/export', checkPermission('contrats_read'), ctrl.exportContrats);
+
 // ── Contrats CRUD ─────────────────────────────────────────────────────────
 
 router.get('/', checkPermission('contrats_read'), ctrl.listContrats);

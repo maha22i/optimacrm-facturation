@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 import type {
   ContratDetail, ContratLigne, ContratMachine, Client,
   TypeContrat, Periodicite, StatutContrat, CategorieLigne,
   ApiResponse, PaginatedResponse, FactureDetail, ReleveCompteur,
+  CatalogueProduit,
 } from '@/lib/types';
+import { formatCout, toNumber } from '@/lib/utils/formatNumber';
 
 // ---------------------------------------------------------------------------
 // Types locaux
@@ -53,10 +55,10 @@ interface MachineLocal extends Omit<ContratMachine, 'id' | 'contrat_id'> {
 // ---------------------------------------------------------------------------
 
 const CATEGORIES_PAR_TYPE: Record<TypeContrat, CategorieLigne[]> = {
-  Copieur: ['Forfait Copie N&B', 'Forfait Copie Couleur', 'Service Connectic', 'PLC', 'Hors Forfait'],
-  Telephonie: ['Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel', 'Services', 'Autre', 'Hors Forfait'],
-  Informatique: ['Location Matériel', 'Services', 'Autre'],
-  Securite: ['Location Matériel', 'Services', 'Autre'],
+  Copieur: ['Forfait Copie N&B', 'Forfait Copie Couleur', 'Service Connectic', 'PLC', 'Hors Forfait', 'Personnalisé'],
+  Telephonie: ['Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel', 'Services', 'Autre', 'Hors Forfait', 'Personnalisé'],
+  Informatique: ['Location Matériel', 'Services', 'Autre', 'Personnalisé'],
+  Securite: ['Location Matériel', 'Services', 'Autre', 'Personnalisé'],
 };
 
 const PERIODICITE_MOIS: Record<Periodicite, number> = {
@@ -119,6 +121,9 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
   // Machine modal
   const [machineModal, setMachineModal] = useState<MachineLocal | null>(null);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
+  const [produitSearch, setProduitSearch] = useState('');
+  const [produitResults, setProduitResults] = useState<CatalogueProduit[]>([]);
+  const [produitDropdownOpen, setProduitDropdownOpen] = useState(false);
 
   // Facture generation modal
   const [factureModalOpen, setFactureModalOpen] = useState(false);
@@ -130,6 +135,23 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
   const [selectedReleveNb, setSelectedReleveNb] = useState<number | ''>('');
   const [selectedReleveCoul, setSelectedReleveCoul] = useState<number | ''>('');
   const [relevesLoading, setRelevesLoading] = useState(false);
+
+  const clientDropdownRef = useRef<HTMLDivElement>(null);
+  const produitDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fermer les dropdowns au clic extérieur
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (clientDropdownRef.current && !clientDropdownRef.current.contains(e.target as Node)) {
+        setClientDropdownOpen(false);
+      }
+      if (produitDropdownRef.current && !produitDropdownRef.current.contains(e.target as Node)) {
+        setProduitDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Chargement données existantes
@@ -165,8 +187,29 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
           notes: c.notes || '',
           devis_id: c.devis_id || '',
         });
-        setLignes(c.lignes.map(l => ({ ...l, _key: uid() })));
-        setMachines(c.machines.map(m => ({ ...m, _key: uid() })));
+        setLignes(c.lignes.map(l => ({
+          ...l,
+          _key: uid(),
+          quantite: toNumber(l.quantite) ?? 0,
+          prix_unitaire_ht: toNumber(l.prix_unitaire_ht) ?? 0,
+          remise_pourcentage: toNumber(l.remise_pourcentage) ?? 0,
+          taux_tva: toNumber(l.taux_tva) ?? 20,
+        })));
+        setMachines(c.machines.map(m => ({
+          ...m,
+          _key: uid(),
+          cout_copie_nb: toNumber(m.cout_copie_nb) ?? 0,
+          cout_copie_couleur: toNumber(m.cout_copie_couleur) ?? 0,
+          cout_copie_t1: toNumber(m.cout_copie_t1) ?? 0,
+          cout_copie_t2: toNumber(m.cout_copie_t2) ?? 0,
+          cout_copie_t3: toNumber(m.cout_copie_t3) ?? 0,
+          service_connectic: toNumber(m.service_connectic) ?? 0,
+          service_collecteur: toNumber(m.service_collecteur) ?? 0,
+          service_divers: toNumber(m.service_divers) ?? 0,
+          service_autre: toNumber(m.service_autre) ?? 0,
+          volume_forfait_nb: toNumber(m.volume_forfait_nb) ?? 0,
+          volume_forfait_couleur: toNumber(m.volume_forfait_couleur) ?? 0,
+        })));
         if (c.client_raison_sociale) {
           setSelectedClient({ id: c.client_id, raison_sociale: c.client_raison_sociale, numero_client: c.client_code || '' } as Client);
           setClientSearch(c.client_raison_sociale);
@@ -206,6 +249,37 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
     setForm(prev => ({ ...prev, client_id: c.id }));
     setClientDropdownOpen(false);
     setErrors(prev => { const e = { ...prev }; delete e.client_id; return e; });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Recherche produit catalogue (machine modal)
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!produitSearch || produitSearch.length < 2) {
+      setProduitResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.get<PaginatedResponse<CatalogueProduit>>(`/catalogue?search=${encodeURIComponent(produitSearch)}&limit=8`);
+        setProduitResults(res.data);
+      } catch { /* */ }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [produitSearch]);
+
+  const selectProduit = (p: CatalogueProduit) => {
+    if (!machineModal) return;
+    setMachineModal({
+      ...machineModal,
+      modele: p.modele || p.designation || '',
+      marque: p.marque_nom || '',
+      designation: p.designation || '',
+      catalogue_produit_id: p.id,
+    });
+    setProduitSearch(p.designation + (p.marque_nom ? ` (${p.marque_nom})` : ''));
+    setProduitDropdownOpen(false);
   };
 
   // ---------------------------------------------------------------------------
@@ -298,6 +372,9 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
       actif: true,
       catalogue_produit_id: null,
     });
+    setProduitSearch(m ? (m.designation || '') : '');
+    setProduitResults([]);
+    setProduitDropdownOpen(false);
     setMachineModalOpen(true);
   };
 
@@ -509,7 +586,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
             </div>
 
             {/* Client search */}
-            <div className="relative">
+            <div className="relative" ref={clientDropdownRef}>
               <label className="block text-sm font-medium text-gray-700 mb-1">Client *</label>
               <input
                 type="text"
@@ -672,8 +749,8 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                           <td className="px-4 py-2 font-medium text-gray-900">{m.numero_serie}</td>
                           <td className="px-4 py-2 text-gray-600">{m.modele || '—'}</td>
                           <td className="px-4 py-2 text-gray-600">{m.marque || '—'}</td>
-                          <td className="px-4 py-2 text-right text-gray-600">{Number(m.cout_copie_nb).toFixed(4)}</td>
-                          <td className="px-4 py-2 text-right text-gray-600">{Number(m.cout_copie_couleur).toFixed(4)}</td>
+                          <td className="px-4 py-2 text-right text-gray-600">{formatCout(m.cout_copie_nb, { formatFR: true })}</td>
+                          <td className="px-4 py-2 text-right text-gray-600">{formatCout(m.cout_copie_couleur, { formatFR: true })}</td>
                           <td className="px-4 py-2 text-right text-gray-600">{Number(m.volume_forfait_nb).toLocaleString('fr-FR')}</td>
                           <td className="px-4 py-2 text-right text-gray-600">{Number(m.volume_forfait_couleur).toLocaleString('fr-FR')}</td>
                           <td className="px-4 py-2 text-right">
@@ -750,7 +827,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                               className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right focus:border-blue-300 outline-none" />
                           </td>
                           <td className="px-3 py-1.5">
-                            <input type="number" step="0.0001" value={l.prix_unitaire_ht} onChange={e => updateLigne(l._key, 'prix_unitaire_ht', parseFloat(e.target.value) || 0)}
+                            <input type="number" step="0.0000000001" value={l.prix_unitaire_ht} onChange={e => updateLigne(l._key, 'prix_unitaire_ht', toNumber(e.target.value) ?? 0)}
                               className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right focus:border-blue-300 outline-none" />
                           </td>
                           <td className="px-3 py-1.5">
@@ -1091,6 +1168,46 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               </button>
             </div>
             <div className="p-6 space-y-5">
+              {/* Recherche produit catalogue */}
+              <div className="relative" ref={produitDropdownRef}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Rechercher dans le catalogue
+                  <span className="text-xs text-gray-400 font-normal ml-1">(optionnel)</span>
+                </label>
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={produitSearch}
+                    onChange={e => { setProduitSearch(e.target.value); setProduitDropdownOpen(true); }}
+                    onFocus={() => produitResults.length > 0 && setProduitDropdownOpen(true)}
+                    placeholder="Rechercher par désignation, référence, marque..."
+                    className="w-full rounded-lg border border-gray-200 pl-9 pr-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                  />
+                </div>
+                {produitDropdownOpen && produitResults.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                    {produitResults.map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => selectProduit(p)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition-colors cursor-pointer flex items-center justify-between"
+                      >
+                        <div>
+                          <span className="font-medium text-gray-900">{p.designation}</span>
+                          {p.marque_nom && <span className="text-gray-500 ml-2">— {p.marque_nom}</span>}
+                          {p.modele && <span className="text-gray-400 ml-1">({p.modele})</span>}
+                        </div>
+                        <span className="text-xs text-gray-400">{p.reference}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">N° Série *</label>
@@ -1120,27 +1237,27 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">N&B</label>
-                    <input type="number" step="0.000001" value={machineModal.cout_copie_nb} onChange={e => setMachineModal({ ...machineModal, cout_copie_nb: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.cout_copie_nb ?? ''} onChange={e => setMachineModal({ ...machineModal, cout_copie_nb: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Couleur</label>
-                    <input type="number" step="0.000001" value={machineModal.cout_copie_couleur} onChange={e => setMachineModal({ ...machineModal, cout_copie_couleur: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.cout_copie_couleur ?? ''} onChange={e => setMachineModal({ ...machineModal, cout_copie_couleur: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">T1</label>
-                    <input type="number" step="0.000001" value={machineModal.cout_copie_t1} onChange={e => setMachineModal({ ...machineModal, cout_copie_t1: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.cout_copie_t1 ?? ''} onChange={e => setMachineModal({ ...machineModal, cout_copie_t1: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">T2</label>
-                    <input type="number" step="0.000001" value={machineModal.cout_copie_t2} onChange={e => setMachineModal({ ...machineModal, cout_copie_t2: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.cout_copie_t2 ?? ''} onChange={e => setMachineModal({ ...machineModal, cout_copie_t2: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">T3</label>
-                    <input type="number" step="0.000001" value={machineModal.cout_copie_t3} onChange={e => setMachineModal({ ...machineModal, cout_copie_t3: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.cout_copie_t3 ?? ''} onChange={e => setMachineModal({ ...machineModal, cout_copie_t3: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                 </div>
@@ -1177,22 +1294,22 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Connectic</label>
-                    <input type="number" step="0.01" value={machineModal.service_connectic} onChange={e => setMachineModal({ ...machineModal, service_connectic: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.service_connectic ?? ''} onChange={e => setMachineModal({ ...machineModal, service_connectic: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Collecteur</label>
-                    <input type="number" step="0.01" value={machineModal.service_collecteur} onChange={e => setMachineModal({ ...machineModal, service_collecteur: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.service_collecteur ?? ''} onChange={e => setMachineModal({ ...machineModal, service_collecteur: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Divers</label>
-                    <input type="number" step="0.01" value={machineModal.service_divers} onChange={e => setMachineModal({ ...machineModal, service_divers: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.service_divers ?? ''} onChange={e => setMachineModal({ ...machineModal, service_divers: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Autre</label>
-                    <input type="number" step="0.01" value={machineModal.service_autre} onChange={e => setMachineModal({ ...machineModal, service_autre: parseFloat(e.target.value) || 0 })}
+                    <input type="number" step="0.0000000001" value={machineModal.service_autre ?? ''} onChange={e => setMachineModal({ ...machineModal, service_autre: toNumber(e.target.value) ?? 0 })}
                       className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right focus:border-blue-300 outline-none" />
                   </div>
                 </div>
