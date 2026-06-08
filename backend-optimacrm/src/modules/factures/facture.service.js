@@ -96,17 +96,23 @@ async function getClientSnapshot(dbClient, clientId) {
 // Liste factures
 // ---------------------------------------------------------------------------
 
-export async function listFactures({ page, limit, statut, client_id, date_debut, date_fin, type_origine, search }) {
+export async function listFactures({ page, limit, statut, client_id, date_debut, date_fin, type_origine, type_contrat, search }) {
   const offset = (page - 1) * limit;
   const conditions = [];
   const params = [];
   let idx = 1;
+  let joinContrats = false;
 
   if (statut) { conditions.push(`f.statut = $${idx++}`); params.push(statut); }
   if (client_id) { conditions.push(`f.client_id = $${idx++}`); params.push(client_id); }
   if (date_debut) { conditions.push(`f.date_creation >= $${idx++}`); params.push(date_debut); }
   if (date_fin) { conditions.push(`f.date_creation <= $${idx++}`); params.push(date_fin); }
   if (type_origine) { conditions.push(`f.type_origine = $${idx++}`); params.push(type_origine); }
+  if (type_contrat) {
+    joinContrats = true;
+    conditions.push(`ct.type_contrat = $${idx++}`);
+    params.push(type_contrat);
+  }
   if (search) {
     conditions.push(`(f.numero_facture ILIKE $${idx} OR f.client_raison_sociale ILIKE $${idx} OR f.code_client ILIKE $${idx})`);
     params.push(`%${search}%`);
@@ -114,14 +120,16 @@ export async function listFactures({ page, limit, statut, client_id, date_debut,
   }
 
   const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+  const joinCt = joinContrats ? 'JOIN contrats ct ON ct.id = f.contrat_id' : '';
 
-  const countRes = await query(`SELECT COUNT(*) FROM factures f ${where}`, params);
+  const countRes = await query(`SELECT COUNT(*) FROM factures f ${joinCt} ${where}`, params);
   const total = parseInt(countRes.rows[0].count);
 
   const dataRes = await query(
     `SELECT f.*, c.raison_sociale AS client_nom
      FROM factures f
      LEFT JOIN clients c ON c.id = f.client_id
+     ${joinCt}
      ${where}
      ORDER BY f.date_creation DESC, f.id DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
@@ -132,6 +140,34 @@ export async function listFactures({ page, limit, statut, client_id, date_debut,
     factures: dataRes.rows,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
+}
+
+export async function getAllFactureIds({ statut, client_id, date_debut, date_fin, type_origine, type_contrat, search }) {
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+  let joinContrats = false;
+
+  if (statut) { conditions.push(`f.statut = $${idx++}`); params.push(statut); }
+  if (client_id) { conditions.push(`f.client_id = $${idx++}`); params.push(client_id); }
+  if (date_debut) { conditions.push(`f.date_creation >= $${idx++}`); params.push(date_debut); }
+  if (date_fin) { conditions.push(`f.date_creation <= $${idx++}`); params.push(date_fin); }
+  if (type_origine) { conditions.push(`f.type_origine = $${idx++}`); params.push(type_origine); }
+  if (type_contrat) {
+    joinContrats = true;
+    conditions.push(`ct.type_contrat = $${idx++}`);
+    params.push(type_contrat);
+  }
+  if (search) {
+    conditions.push(`(f.numero_facture ILIKE $${idx} OR f.client_raison_sociale ILIKE $${idx} OR f.code_client ILIKE $${idx})`);
+    params.push(`%${search}%`);
+    idx++;
+  }
+
+  const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+  const joinCt = joinContrats ? 'JOIN contrats ct ON ct.id = f.contrat_id' : '';
+  const { rows } = await query(`SELECT f.id FROM factures f ${joinCt} ${where} ORDER BY f.date_creation DESC, f.id DESC`, params);
+  return rows.map(r => r.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -433,10 +469,45 @@ export async function updateFacture(id, data, userId) {
 // ---------------------------------------------------------------------------
 
 export async function deleteFacture(id, userId) {
-  const { rows: [f] } = await query('SELECT statut FROM factures WHERE id = $1', [id]);
+  const { rows: [f] } = await query('SELECT * FROM factures WHERE id = $1', [id]);
   if (!f) throw new ApiError(404, 'Facture introuvable');
   if (!['Brouillon', 'Annulée'].includes(f.statut)) throw new ApiError(400, 'Seules les factures en brouillon ou annulées peuvent être supprimées');
+
+  if (f.contrat_id && f.type_origine === 'Contrat') {
+    await rollbackContratFacturation(f.contrat_id, f.id);
+  }
+
   await query('DELETE FROM factures WHERE id = $1', [id]);
+}
+
+export async function supprimerLot(ids, userId) {
+  const supprimees = [];
+  const erreurs = [];
+
+  for (const id of ids) {
+    try {
+      const { rows: [f] } = await query('SELECT id, numero_facture, statut, contrat_id, type_origine FROM factures WHERE id = $1', [id]);
+      if (!f) {
+        erreurs.push({ id, message: 'Facture introuvable' });
+        continue;
+      }
+      if (!['Brouillon', 'Annulée'].includes(f.statut)) {
+        erreurs.push({ id, numero: f.numero_facture, message: `Statut "${f.statut}" non supprimable` });
+        continue;
+      }
+
+      if (f.contrat_id && f.type_origine === 'Contrat') {
+        await rollbackContratFacturation(f.contrat_id, f.id);
+      }
+
+      await query('DELETE FROM factures WHERE id = $1', [id]);
+      supprimees.push({ id, numero_facture: f.numero_facture });
+    } catch (err) {
+      erreurs.push({ id, message: err.message });
+    }
+  }
+
+  return { supprimees: supprimees.length, erreurs, details: supprimees };
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +591,11 @@ export async function annulerFacture(id, userId) {
     await dbClient.query('BEGIN');
     await dbClient.query(`UPDATE factures SET statut = 'Annulée', updated_at = NOW() WHERE id = $1`, [id]);
     await ajouterHistorique(dbClient, id, 'Annulation', 'Facture annulée', userId);
+
+    if (f.contrat_id && f.type_origine === 'Contrat') {
+      await rollbackContratFacturationTx(dbClient, f.contrat_id, f.id);
+    }
+
     await dbClient.query('COMMIT');
   } catch (err) { await dbClient.query('ROLLBACK'); throw err; }
   finally { dbClient.release(); }
@@ -968,14 +1044,123 @@ export async function executerGenerationLot(contratIds, periodeDebut, periodeFin
         total_ttc: facture.total_ttc,
       });
     } catch (err) {
+      const detail = await getErreurDetailContrat(contratId, periodeDebut, periodeFin);
       resultats.erreurs.push({
         contrat_id: contratId,
         message: err.message,
+        ...detail,
       });
     }
   }
 
   return resultats;
+}
+
+async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
+  try {
+    const { rows: [contrat] } = await query(
+      `SELECT c.id, c.numero_contrat, c.type_contrat, c.periodicite,
+              c.date_debut, c.date_echeance, c.date_prochaine_facture,
+              c.derniere_facture_date, c.statut,
+              cl.raison_sociale AS client_raison_sociale
+       FROM contrats c
+       JOIN clients cl ON cl.id = c.client_id
+       WHERE c.id = $1`,
+      [contratId]
+    );
+    if (!contrat) return {};
+
+    const { rows: machines } = await query(
+      `SELECT cm.numero_serie, cm.modele, cm.marque, cm.actif,
+              cm.cout_copie_nb, cm.cout_copie_couleur,
+              cm.volume_forfait_nb, cm.volume_forfait_couleur
+       FROM contrat_machines cm WHERE cm.contrat_id = $1`,
+      [contratId]
+    );
+
+    const { rows: lignesContrat } = await query(
+      `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE actif = true)::int AS actives
+       FROM contrat_lignes WHERE contrat_id = $1`,
+      [contratId]
+    );
+
+    let releves_disponibles = [];
+    let raison = 'inconnu';
+
+    if (contrat.type_contrat === 'Copieur') {
+      const activeMachines = machines.filter(m => m.actif);
+      const hasForfait = activeMachines.some(m =>
+        Number(m.volume_forfait_nb) > 0 || Number(m.volume_forfait_couleur) > 0
+      );
+      const hasCoutCopie = activeMachines.some(m =>
+        Number(m.cout_copie_nb) > 0 || Number(m.cout_copie_couleur) > 0
+      );
+      const hasServices = activeMachines.length > 0;
+
+      if (activeMachines.length === 0) {
+        raison = 'aucune_machine_active';
+      } else if (!hasForfait && !hasCoutCopie) {
+        raison = 'pas_de_tarification';
+      } else if (!hasForfait) {
+        raison = 'releves_manquants';
+      } else {
+        raison = 'releves_manquants';
+      }
+
+      for (const m of activeMachines) {
+        const { rows: rels } = await query(
+          `SELECT rc.id, rc.date_releve, rc.date_debut_periode, rc.date_fin_periode,
+                  rc.compteur_nb, rc.compteur_couleur, rc.statut, rc.est_facture,
+                  pm.numero_serie
+           FROM releves_compteurs rc
+           JOIN parc_machines pm ON pm.id = rc.machine_id
+           WHERE pm.numero_serie = $1
+           ORDER BY rc.date_releve DESC
+           LIMIT 5`,
+          [m.numero_serie]
+        );
+        if (rels.length > 0) {
+          releves_disponibles.push({
+            numero_serie: m.numero_serie,
+            modele: `${m.marque || ''} ${m.modele || ''}`.trim(),
+            releves: rels.map(r => ({
+              id: r.id,
+              date_releve: r.date_releve,
+              periode_debut: r.date_debut_periode,
+              periode_fin: r.date_fin_periode,
+              compteur_nb: r.compteur_nb,
+              compteur_couleur: r.compteur_couleur,
+              statut: r.statut,
+              est_facture: r.est_facture,
+            })),
+          });
+        }
+      }
+    } else {
+      const actives = lignesContrat[0]?.actives || 0;
+      raison = actives === 0 ? 'aucune_ligne_active' : 'inconnu';
+    }
+
+    return {
+      numero_contrat: contrat.numero_contrat,
+      client: contrat.client_raison_sociale,
+      type_contrat: contrat.type_contrat,
+      periodicite: contrat.periodicite,
+      statut: contrat.statut,
+      date_debut: contrat.date_debut,
+      date_echeance: contrat.date_echeance,
+      date_prochaine_facture: contrat.date_prochaine_facture,
+      derniere_facture_date: contrat.derniere_facture_date,
+      nb_machines: machines.length,
+      nb_machines_actives: machines.filter(m => m.actif).length,
+      nb_lignes_actives: lignesContrat[0]?.actives || 0,
+      raison,
+      releves_disponibles,
+      periode_demandee: { debut: periodeDebut, fin: periodeFin },
+    };
+  } catch {
+    return {};
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,6 +1594,68 @@ function formatDateFR(d) {
   if (!d) return '';
   const date = new Date(d);
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// ---------------------------------------------------------------------------
+// Rollback prochaine_facturation (suppression/annulation facture contrat)
+// ---------------------------------------------------------------------------
+
+async function rollbackContratFacturation(contratId, factureId) {
+  const { rows: [contrat] } = await query('SELECT * FROM contrats WHERE id = $1', [contratId]);
+  if (!contrat) return;
+
+  const { rows: otherFactures } = await query(
+    `SELECT id FROM factures WHERE contrat_id = $1 AND id != $2 AND statut != 'Annulée' ORDER BY date_creation DESC LIMIT 1`,
+    [contratId, factureId]
+  );
+
+  if (otherFactures.length === 0) return;
+
+  const periodiciteMap = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
+  const mois = periodiciteMap[contrat.periodicite] || 1;
+  const currentNext = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+  if (!currentNext) return;
+
+  const prevDate = new Date(currentNext);
+  prevDate.setMonth(prevDate.getMonth() - mois);
+  const prevDateStr = prevDate.toISOString().slice(0, 10);
+
+  await query(
+    `UPDATE contrats SET
+      date_prochaine_facture = $1,
+      prochaine_date_facturation = $1,
+      updated_at = NOW()
+    WHERE id = $2`,
+    [prevDateStr, contratId]
+  );
+}
+
+async function rollbackContratFacturationTx(dbClient, contratId, factureId) {
+  const { rows: [contrat] } = await dbClient.query('SELECT * FROM contrats WHERE id = $1', [contratId]);
+  if (!contrat) return;
+
+  const { rows: otherFactures } = await dbClient.query(
+    `SELECT id FROM factures WHERE contrat_id = $1 AND id != $2 AND statut NOT IN ('Annulée') ORDER BY date_creation DESC LIMIT 1`,
+    [contratId, factureId]
+  );
+
+  const periodiciteMap = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
+  const mois = periodiciteMap[contrat.periodicite] || 1;
+  const currentNext = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+  if (!currentNext) return;
+
+  const prevDate = new Date(currentNext);
+  prevDate.setMonth(prevDate.getMonth() - mois);
+  const prevDateStr = prevDate.toISOString().slice(0, 10);
+
+  await dbClient.query(
+    `UPDATE contrats SET
+      date_prochaine_facture = $1,
+      prochaine_date_facturation = $1,
+      updated_at = NOW()
+    WHERE id = $2`,
+    [prevDateStr, contratId]
+  );
 }
 
 async function insertFactureFromContrat(dbClient, { numero, contrat, snapshot, periodeDebut, periodeFin, dateEcheance, lignes, numero_serie, modele_machine }) {

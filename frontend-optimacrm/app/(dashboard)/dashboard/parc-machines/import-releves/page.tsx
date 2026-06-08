@@ -122,6 +122,7 @@ export default function ImportRelevesPage() {
         compteur_nb: suggested.compteur_nb || '',
         compteur_couleur: suggested.compteur_couleur || '',
         date_releve: suggested.date_releve || '',
+        numero_contrat: suggested.numero_contrat || '',
       });
 
       // Check for duplicate file
@@ -155,6 +156,7 @@ export default function ImportRelevesPage() {
     { key: 'compteur_nb', label: 'Compteur N/B', required: true },
     { key: 'compteur_couleur', label: 'Compteur Couleur', required: true },
     { key: 'date_releve', label: 'Date du relevé', required: false },
+    { key: 'numero_contrat', label: 'Numéro de contrat', required: false },
   ];
 
   const mappingComplete = mapping.numero_serie && mapping.compteur_nb && mapping.compteur_couleur;
@@ -166,6 +168,7 @@ export default function ImportRelevesPage() {
       compteur_nb: mapping.compteur_nb ? row[mapping.compteur_nb] || '' : '',
       compteur_couleur: mapping.compteur_couleur ? row[mapping.compteur_couleur] || '' : '',
       date_releve: mapping.date_releve ? row[mapping.date_releve] || '' : (periodeFin || 'Date du jour'),
+      numero_contrat: mapping.numero_contrat ? row[mapping.numero_contrat] || '' : '',
     }));
   }, [parseResult, mapping, periodeFin]);
 
@@ -419,6 +422,7 @@ export default function ImportRelevesPage() {
                         <th className="text-right px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase">Compteur N/B</th>
                         <th className="text-right px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase">Compteur Couleur</th>
                         <th className="text-left px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase">Date</th>
+                        {mapping.numero_contrat && <th className="text-left px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase">Contrat</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
@@ -428,6 +432,7 @@ export default function ImportRelevesPage() {
                           <td className="px-4 py-2 text-right text-gray-700">{row.compteur_nb}</td>
                           <td className="px-4 py-2 text-right text-gray-700">{row.compteur_couleur}</td>
                           <td className="px-4 py-2 text-gray-500">{row.date_releve}</td>
+                          {mapping.numero_contrat && <td className="px-4 py-2 font-mono text-gray-600">{row.numero_contrat}</td>}
                         </tr>
                       ))}
                     </tbody>

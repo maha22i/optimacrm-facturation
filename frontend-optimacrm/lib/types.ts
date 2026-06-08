@@ -613,7 +613,16 @@ export type CategorieLigne =
   | 'Service Connectic'
   | 'PLC'
   | 'Hors Forfait'
-  | 'Personnalisé';
+  | 'Personnalisé'
+  | 'Vidéosurveillance'
+  | 'Contrôle d\'accès'
+  | 'Téléassistance'
+  | 'Générateur de brouillard'
+  | 'Maintenance serveur'
+  | 'Maintenance informatique'
+  | 'Cloud'
+  | 'Office 365'
+  | 'Logiciel / Licence';
 
 export interface ContratLigne {
   id?: number;
@@ -629,6 +638,7 @@ export interface ContratLigne {
   taux_tva: number;
   catalogue_produit_id: number | null;
   actif: boolean;
+  inclus_abonnement?: boolean;
 }
 
 export interface ContratMachine {
@@ -849,6 +859,12 @@ export interface ImportClientValidationResult {
   rows: ImportClientValidationRow[];
 }
 
+export interface ImportClientErrorDetail {
+  row_number: number;
+  error: string;
+  data?: Record<string, unknown>;
+}
+
 export interface ImportClientExecuteResult {
   total: number;
   imported: number;
@@ -857,7 +873,23 @@ export interface ImportClientExecuteResult {
   skipped: number;
   adresses_created: number;
   contacts_created: number;
-  error_details: { row_number: number; error: string }[];
+  error_details: ImportClientErrorDetail[];
+}
+
+export interface ImportRetryRowResult {
+  row_number: number;
+  success: boolean;
+  error?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface ImportRetryResult {
+  total: number;
+  success: number;
+  errors: number;
+  adresses_created: number;
+  contacts_created: number;
+  results: ImportRetryRowResult[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -993,6 +1025,7 @@ export interface ImportRelevesParseResult {
     compteur_nb?: string;
     compteur_couleur?: string;
     date_releve?: string;
+    numero_contrat?: string;
   };
   file_hash: string;
   file_size: number;
@@ -1324,6 +1357,43 @@ export interface ReleveCompteur {
   client_raison_sociale: string | null;
 }
 
+export interface GenerationLotReleveInfo {
+  id: number;
+  date_releve: string | null;
+  periode_debut: string | null;
+  periode_fin: string | null;
+  compteur_nb: number;
+  compteur_couleur: number;
+  statut: string;
+  est_facture: boolean;
+}
+
+export interface GenerationLotMachineReleves {
+  numero_serie: string;
+  modele: string;
+  releves: GenerationLotReleveInfo[];
+}
+
+export interface GenerationLotErreur {
+  contrat_id: number;
+  message: string;
+  numero_contrat?: string;
+  client?: string;
+  type_contrat?: string;
+  periodicite?: string;
+  statut?: string;
+  date_debut?: string | null;
+  date_echeance?: string | null;
+  date_prochaine_facture?: string | null;
+  derniere_facture_date?: string | null;
+  nb_machines?: number;
+  nb_machines_actives?: number;
+  nb_lignes_actives?: number;
+  raison?: 'aucune_machine_active' | 'pas_de_tarification' | 'releves_manquants' | 'aucune_ligne_active' | 'inconnu';
+  releves_disponibles?: GenerationLotMachineReleves[];
+  periode_demandee?: { debut: string; fin: string };
+}
+
 export interface GenerationLotResult {
   generees: {
     contrat_id: number;
@@ -1333,7 +1403,7 @@ export interface GenerationLotResult {
     client: string;
     total_ttc: number;
   }[];
-  erreurs: { contrat_id: number; message: string }[];
+  erreurs: GenerationLotErreur[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -1,12 +1,26 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as ctrl from './contrat.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
+import { ALL_CATEGORIES } from '../../config/contratCategories.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const uploadMulti = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'logiciels', maxCount: 1 },
+]);
 
 router.use(authenticate);
+
+// ── Catégories de lignes par type ─────────────────────────────────────────
+router.get('/categories', ctrl.getCategories);
+
+// ── Import contrats générique (paramétré par :type) ───────────────────────
+router.post('/import/:type/preview', checkPermission('contrats_write'), upload.single('file'), ctrl.previewImportContrats);
+router.post('/import/:type/execute', checkPermission('contrats_write'), uploadMulti, ctrl.importContratsExecute);
 
 // ── Stats ─────────────────────────────────────────────────────────────────
 router.get('/stats', checkPermission('contrats_read'), ctrl.getStats);
@@ -18,6 +32,10 @@ router.get('/client/:clientId', checkPermission('contrats_read'), ctrl.getContra
 router.get('/export', checkPermission('contrats_read'), ctrl.exportContrats);
 
 // ── Contrats CRUD ─────────────────────────────────────────────────────────
+
+router.delete('/all', checkPermission('contrats_write'), ctrl.deleteAllContrats);
+router.post('/bulk-delete', checkPermission('contrats_write'), ctrl.bulkDeleteContrats);
+router.post('/bulk-status', checkPermission('contrats_write'), ctrl.bulkUpdateStatut);
 
 router.get('/', checkPermission('contrats_read'), ctrl.listContrats);
 router.get('/:id', checkPermission('contrats_read'), ctrl.getContrat);
@@ -31,7 +49,7 @@ router.post(
     date_debut:      { required: true, label: 'Date de début' },
     type_facturation: { enum: ['Unique', 'Periodique'] },
     periodicite:     { enum: ['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] },
-    statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé'] },
+    statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé', 'Inactif'] },
   }),
   ctrl.createContrat,
 );
@@ -43,7 +61,7 @@ router.put(
     type_contrat:    { enum: ['Copieur', 'Telephonie', 'Informatique', 'Securite'], label: 'Type de contrat' },
     type_facturation: { enum: ['Unique', 'Periodique'] },
     periodicite:     { enum: ['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] },
-    statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé'] },
+    statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé', 'Inactif'] },
   }),
   ctrl.updateContrat,
 );
@@ -59,11 +77,7 @@ router.post(
   checkPermission('contrats_write'),
   validate({
     designation: { required: true, minLength: 1, label: 'Désignation' },
-    categorie_ligne: { enum: [
-      'Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel',
-      'Services', 'Autre', 'Forfait Copie N&B', 'Forfait Copie Couleur',
-      'Service Connectic', 'PLC', 'Hors Forfait',
-    ]},
+    categorie_ligne: { enum: ALL_CATEGORIES },
   }),
   ctrl.addLigne,
 );
@@ -72,11 +86,7 @@ router.put(
   '/:id/lignes/:ligneId',
   checkPermission('contrats_write'),
   validate({
-    categorie_ligne: { enum: [
-      'Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel',
-      'Services', 'Autre', 'Forfait Copie N&B', 'Forfait Copie Couleur',
-      'Service Connectic', 'PLC', 'Hors Forfait',
-    ]},
+    categorie_ligne: { enum: ALL_CATEGORIES },
   }),
   ctrl.updateLigne,
 );

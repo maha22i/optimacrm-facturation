@@ -91,9 +91,30 @@ async function fetchLogoAsBase64(logoUrl) {
   }
 }
 
+// ─── Détection facture abonnement (téléphonie, informatique, etc.) ────────────
+
+function isFactureAbonnement(facture, lignes) {
+  if (facture.type_origine === 'Contrat' && facture.numero_contrat) {
+    const hasAbonnement = lignes.some(l => ['ABONNEMENT', 'LOCATION', 'SERVICE'].includes(l.type_ligne) && l.ligne_periode_debut);
+    const hasNoCompteur = !lignes.some(l => l.type_ligne?.startsWith('REGULARISATION') || l.type_ligne?.startsWith('FORFAIT_'));
+    if (hasAbonnement && hasNoCompteur) return true;
+  }
+  return false;
+}
+
+async function getContratTypeLabel(contratId) {
+  if (!contratId) return 'ABONNEMENT';
+  try {
+    const { rows } = await query('SELECT type_contrat FROM contrats WHERE id = $1', [contratId]);
+    const type = rows[0]?.type_contrat;
+    const labels = { Telephonie: 'TÉLÉPHONIE', Informatique: 'INFORMATIQUE' };
+    return labels[type] || type?.toUpperCase() || 'ABONNEMENT';
+  } catch { return 'ABONNEMENT'; }
+}
+
 // ─── Template HTML — Facture professionnelle Groupe Innov ────────────────────
 
-function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
+async function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
   const f = facture;
   const s = societe || {};
   const titre = f.est_avoir ? 'AVOIR' : 'FACTURE';
@@ -150,6 +171,58 @@ function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
     return html;
   };
 
+  // ── BLOC 5b — Lignes téléphonie (groupées par rubrique) ──
+
+  const buildLignesAbonnementSectionHtml = (lignesArr, contratLabel) => {
+    const typeLabels = {
+      ABONNEMENT: 'Abonnement', LOCATION: 'Location Matériel', SERVICE: 'Services', PRODUIT: 'Autre',
+    };
+
+    const grouped = {};
+    for (const l of lignesArr) {
+      if (['COMMENTAIRE', 'SOUS_TOTAL', 'SAUT_DE_LIGNE'].includes(l.type_ligne)) continue;
+      const key = l.type_ligne || 'PRODUIT';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(l);
+    }
+
+    let html = `<div style="margin-bottom:5mm;">`;
+    html += `<div style="background:#f5f3ff;border-left:3px solid #6B46C1;padding:6px 10px;margin-bottom:4mm;font-size:9px;color:#6B46C1;border-radius:0 4px 4px 0;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">CONTRAT ${escapeHtml(contratLabel)}</div>`;
+
+    for (const [type, groupLignes] of Object.entries(grouped)) {
+      if (type === 'SERVICE' && groupLignes.length === 1 && groupLignes[0].reference === 'FTC') continue;
+
+      const label = typeLabels[type] || type;
+      const periode = groupLignes[0]?.description?.match(/Période du (.+)/)?.[1] || '';
+
+      html += `<div style="margin-bottom:4mm;">`;
+      html += `<div style="font-weight:700;font-size:10px;color:#6B46C1;margin-bottom:2px;padding:3px 0;border-bottom:1px solid #ede9fe;">${escapeHtml(label)}</div>`;
+      if (periode) {
+        html += `<div style="font-size:9px;color:#6b7280;font-style:italic;margin-bottom:3px;padding-left:2px;">Période du ${escapeHtml(periode)}</div>`;
+      }
+
+      html += `<table style="width:100%;border-collapse:collapse;">`;
+      for (const l of groupLignes) {
+        const remPct = parseFloat(l.remise_pourcentage) || 0;
+        let remStr = '';
+        if (remPct > 0) remStr = `<span style="color:#dc2626;font-size:9px;">-${remPct}%</span>`;
+
+        html += `<tr>
+          <td style="padding:4px 8px;font-size:9px;color:#4b5563;width:10%;vertical-align:top;">${escapeHtml(l.reference) || ''}</td>
+          <td style="padding:4px 8px;font-size:10px;color:#1a1a2e;font-weight:500;width:45%;">${escapeHtml(l.designation)}</td>
+          <td style="padding:4px 8px;text-align:center;font-size:10px;color:#1a1a2e;width:10%;">${formatQte(l.quantite)}</td>
+          <td style="padding:4px 8px;text-align:right;font-size:10px;color:#1a1a2e;width:15%;">${formatPU(l.prix_unitaire)}</td>
+          <td style="padding:4px 8px;text-align:center;width:5%;">${remStr}</td>
+          <td style="padding:4px 8px;text-align:right;font-weight:600;font-size:10px;color:#1a1a2e;width:15%;">${formatMontant(l.total_ht)}</td>
+        </tr>`;
+      }
+      html += `</table></div>`;
+    }
+
+    html += `</div>`;
+    return html;
+  };
+
   // ── BLOC 7 — Règlements ──
 
   const buildReglementsHtml = () => {
@@ -182,12 +255,14 @@ function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
 
   // ── BLOC 4 — Info contrat ──
 
+  const isAbonnement = isFactureAbonnement(f, lignes);
+  const contratLabel = isAbonnement ? await getContratTypeLabel(f.contrat_id) : '';
   const contratInfoHtml = (f.type_origine === 'Contrat' && f.numero_contrat)
     ? `<div style="background:#f5f3ff;border-left:3px solid #6B46C1;padding:6px 10px;margin-bottom:6mm;font-size:9px;color:#6B46C1;border-radius:0 4px 4px 0;">
         Concerne votre contrat n° : <strong>${escapeHtml(f.numero_contrat)}</strong>
-        ${f.type_contrat ? `<br>Type : ${escapeHtml(f.type_contrat)}` : ''}
-        ${f.numero_serie ? `<br>Matricule machine : ${escapeHtml(f.numero_serie)}` : ''}
-        ${f.modele_machine ? `<br>Modèle : ${escapeHtml(f.modele_machine)}` : ''}
+        ${isAbonnement ? `<br>CONTRAT ${escapeHtml(contratLabel)}` : ''}
+        ${!isAbonnement && f.numero_serie ? `<br>Matricule machine : ${escapeHtml(f.numero_serie)}` : ''}
+        ${!isAbonnement && f.modele_machine ? `<br>Modèle : ${escapeHtml(f.modele_machine)}` : ''}
       </div>`
     : '';
 
@@ -322,7 +397,7 @@ function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
   ${contratInfoHtml}
 
   <!-- ═══ BLOC 5 — TABLEAU DES LIGNES ═══ -->
-  <table style="width:100%;border-collapse:collapse;margin-bottom:5mm;">
+  ${isAbonnement ? buildLignesAbonnementSectionHtml(lignes, contratLabel) : `<table style="width:100%;border-collapse:collapse;margin-bottom:5mm;">
     <thead>
       <tr style="background:linear-gradient(135deg,#6B46C1,#7C3AED);">
         <th style="padding:8px 10px;text-align:left;color:#ffffff;font-size:9px;font-weight:600;width:8%;border-radius:4px 0 0 0;text-transform:uppercase;letter-spacing:0.3px;">Réf.</th>
@@ -336,7 +411,7 @@ function generateFactureHTML(facture, lignes, reglements, societe, logoBase64) {
     <tbody>
       ${buildLignesHtml()}
     </tbody>
-  </table>
+  </table>`}
 
   <!-- ═══ BLOC 6 — PIED DE TABLEAU (Totaux + Domiciliation) ═══ -->
   <table style="width:100%;margin-bottom:4mm;">
@@ -419,7 +494,7 @@ export async function generateFacturePdf(factureId) {
     logoBase64 = await fetchLogoAsBase64(societe.logo_url);
   }
 
-  const html = generateFactureHTML(
+  const html = await generateFactureHTML(
     factureData,
     factureData.lignes || [],
     factureData.reglements || [],

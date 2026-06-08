@@ -397,7 +397,7 @@ export async function validateData({ file_id, mappings, options = {} }) {
     });
 
     // Detect intermediate header rows
-    if (isHeaderRow(data, headers, headerToField, row)) {
+    if (isHeaderRow(data)) {
       validatedRows.push({
         row_number: rowNumber,
         status: 'skipped',
@@ -553,9 +553,14 @@ export async function validateData({ file_id, mappings, options = {} }) {
 
 function parseFieldValue(field, rawVal, customFieldsFlat) {
   const val = rawVal;
+
+  if (field === 'prix_unitaire_ht' || field === 'prix_achat') {
+    if (val == null || String(val).trim() === '') return 0;
+    return parsePrice(val);
+  }
+
   if (val == null || String(val).trim() === '') return null;
 
-  if (field === 'prix_unitaire_ht' || field === 'prix_achat') return parsePrice(val);
   if (field === 'taux_tva') return parseTva(val);
   if (field === 'stock_actuel' || field === 'stock_minimum') return parseInteger(val);
 
@@ -573,30 +578,32 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
   return cleanText(val);
 }
 
-function isHeaderRow(data, headers, headerToField, rawRow) {
-  const knownLabels = [
-    'reference', 'designation', 'categorie', 'description', 'modele', 'marque',
-    'prix', 'fournisseur', 'famille', 'code', 'ref', 'libelle', 'type',
-    'code mercury', 'ref produit', 'model configurateur',
+function isHeaderRow(data) {
+  const KNOWN_HEADER_LABELS = [
+    'REFERENCE', 'REF PRODUIT', 'CODE MERCURY / REF PRODUIT',
+    'DESIGNATION', 'LIBELLE', 'LIBELLE DU PRODUIT', 'CODE', 'TYPE PRODUIT',
   ];
 
-  let matchCount = 0;
-  const vals = Object.values(data).map(v => String(v ?? '').toLowerCase().trim()).filter(Boolean);
-
-  for (const val of vals) {
-    const normalized = normalize(val);
-    if (knownLabels.some(l => normalized.includes(l) || l.includes(normalized))) {
-      matchCount++;
-    }
+  function normalizeHeader(str) {
+    return String(str).trim().toUpperCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   }
 
-  if (matchCount >= 3) return true;
+  const normalizedLabels = KNOWN_HEADER_LABELS.map(normalizeHeader);
 
-  const upperCount = rawRow.filter(cell => {
-    const s = String(cell ?? '').trim();
-    return s.length > 2 && s === s.toUpperCase() && /[A-Z]/.test(s);
-  }).length;
-  if (upperCount >= Math.floor(rawRow.length * 0.6)) return true;
+  // Condition 1: prix_unitaire_ht contains non-numeric, non-empty text (e.g. "Prix de vente")
+  const priceRaw = data.prix_unitaire_ht;
+  if (priceRaw != null && String(priceRaw).trim() !== '') {
+    if (parsePrice(priceRaw) === null) return true;
+  }
+
+  // Condition 2: reference or reference_fournisseur matches a known header label
+  for (const refField of ['reference', 'reference_fournisseur']) {
+    const refVal = data[refField];
+    if (refVal != null && String(refVal).trim() !== '') {
+      if (normalizedLabels.includes(normalizeHeader(refVal))) return true;
+    }
+  }
 
   return false;
 }

@@ -13,7 +13,7 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
   }, [onClose]);
 
   return (
-    <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-medium shadow-xl ${
+    <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-medium shadow-xl ${
       type === 'success'
         ? 'bg-emerald-600 text-white shadow-emerald-500/20'
         : 'bg-red-600 text-white shadow-red-500/20'
@@ -182,7 +182,7 @@ export default function CataloguePage() {
 
   const catBadge = (cat: string | null) => {
     if (!cat) return <span className="text-xs text-gray-300">&mdash;</span>;
-    const colors = CATEGORIE_COLORS[cat] || 'bg-violet-50 text-violet-700';
+    const colors = CATEGORIE_COLORS[cat] || 'bg-blue-50 text-blue-700';
     return (
       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${colors}`}>
         <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />
@@ -196,14 +196,14 @@ export default function CataloguePage() {
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-            <span className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
-              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
-            </span>
-            Catalogue
-          </h1>
-          <p className="mt-1 text-sm text-gray-500 ml-[52px]">Gérez vos produits et services</p>
+        <div className="flex items-start gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
+            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Catalogue</h1>
+            <p className="mt-0.5 text-sm text-gray-500">Gérez vos produits et services · {pagination.total} produit{pagination.total > 1 ? 's' : ''} au total</p>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
           {isAdmin && pagination.total > 0 && (
@@ -324,9 +324,9 @@ export default function CataloguePage() {
               </span>
             )}
             {categorieFilter && (
-              <span className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                 {categorieFilter}
-                <button onClick={() => setCategorieFilter('')} className="hover:text-violet-900 cursor-pointer">&times;</button>
+                <button onClick={() => setCategorieFilter('')} className="hover:text-blue-900 cursor-pointer">&times;</button>
               </span>
             )}
             {fournisseurFilter && (
@@ -520,9 +520,9 @@ export default function CataloguePage() {
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
-            <div className="bg-gradient-to-r from-violet-50 to-purple-50 p-6 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
-                <svg className="h-6 w-6 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
                 </svg>
               </div>
@@ -540,15 +540,15 @@ export default function CataloguePage() {
                     <button
                       key={fmt}
                       onClick={() => setExportFormat(fmt)}
-                      className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === fmt ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                      className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === fmt ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}
                     >
-                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === fmt ? 'bg-violet-100' : 'bg-gray-100'}`}>
-                        <svg className={`h-5 w-5 ${exportFormat === fmt ? 'text-violet-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === fmt ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                        <svg className={`h-5 w-5 ${exportFormat === fmt ? 'text-blue-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                         </svg>
                       </div>
                       <div>
-                        <p className={`text-sm font-semibold ${exportFormat === fmt ? 'text-violet-700' : 'text-gray-700'}`}>{fmt === 'xlsx' ? 'Excel (.xlsx)' : 'CSV (.csv)'}</p>
+                        <p className={`text-sm font-semibold ${exportFormat === fmt ? 'text-blue-700' : 'text-gray-700'}`}>{fmt === 'xlsx' ? 'Excel (.xlsx)' : 'CSV (.csv)'}</p>
                         <p className="text-xs text-gray-400">{fmt === 'xlsx' ? 'Compatible Excel, Google Sheets' : 'Format texte universel'}</p>
                       </div>
                     </button>
@@ -568,14 +568,14 @@ export default function CataloguePage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Périmètre</label>
                   <div className="space-y-2">
                     <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
-                      <input type="radio" checked={!exportApplyFilters} onChange={() => setExportApplyFilters(false)} className="h-4 w-4 border-gray-300 text-violet-600 cursor-pointer" />
+                      <input type="radio" checked={!exportApplyFilters} onChange={() => setExportApplyFilters(false)} className="h-4 w-4 border-gray-300 text-blue-600 cursor-pointer" />
                       <div>
                         <p className="text-sm font-medium text-gray-700">Tout le catalogue</p>
                         <p className="text-xs text-gray-400">Exporter la totalité des produits/services</p>
                       </div>
                     </label>
                     <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
-                      <input type="radio" checked={exportApplyFilters} onChange={() => setExportApplyFilters(true)} className="h-4 w-4 border-gray-300 text-violet-600 cursor-pointer" />
+                      <input type="radio" checked={exportApplyFilters} onChange={() => setExportApplyFilters(true)} className="h-4 w-4 border-gray-300 text-blue-600 cursor-pointer" />
                       <div>
                         <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
                         <p className="text-xs text-gray-400">
@@ -594,7 +594,7 @@ export default function CataloguePage() {
               <p className="text-xs text-gray-400">{pagination.total} produit{pagination.total > 1 ? 's' : ''}/service{pagination.total > 1 ? 's' : ''} au total</p>
               <div className="flex items-center gap-3">
                 <button onClick={() => { setShowExportModal(false); setExportError(''); }} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">Annuler</button>
-                <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+                <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
                   {exporting ? (<><span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />Export en cours...</>) : (<><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>Télécharger</>)}
                 </button>
               </div>

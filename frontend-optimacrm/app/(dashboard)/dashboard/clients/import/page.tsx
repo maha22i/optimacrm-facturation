@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import type {
   ApiResponse, ImportParseResult, ImportClientValidationResult, ImportClientExecuteResult,
   ImportMapping, ImportFieldGroup, ImportSavedMapping, ChampConfig, SectionInfo,
-  ImportClientMapping,
+  ImportClientMapping, ImportClientErrorDetail, ImportRetryResult,
 } from '@/lib/types';
 import MappingSelect from '@/components/import/MappingSelect';
 import CreateFieldModal from '@/components/import/CreateFieldModal';
@@ -95,6 +95,14 @@ export default function ImportClientsPage() {
   // Step 4 — Résultat
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<ImportClientExecuteResult | null>(null);
+
+  // Error management
+  const [errorRows, setErrorRows] = useState<ImportClientErrorDetail[]>([]);
+  const [editingRow, setEditingRow] = useState<number | null>(null);
+  const [editedData, setEditedData] = useState<Record<string, unknown>>({});
+  const [ignoredRows, setIgnoredRows] = useState<Set<number>>(new Set());
+  const [retrying, setRetrying] = useState(false);
+  const [retryingRow, setRetryingRow] = useState<number | null>(null);
 
   // Load saved mappings + sections
   useEffect(() => {
@@ -289,6 +297,9 @@ export default function ImportClientsPage() {
         options,
       });
       setExecuteResult(res.data);
+      setErrorRows(res.data.error_details || []);
+      setIgnoredRows(new Set());
+      setEditingRow(null);
       setStep(3);
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : "Erreur lors de l'import", type: 'error' });
@@ -296,6 +307,136 @@ export default function ImportClientsPage() {
       setExecuting(false);
     }
   }, [parseResult, userMappings, options]);
+
+  // ─── ERROR MANAGEMENT ───────────────────────────────────────────────────
+
+  const startEditing = useCallback((rowNum: number, data: Record<string, unknown>) => {
+    setEditingRow(rowNum);
+    setEditedData({ ...data });
+  }, []);
+
+  const cancelEditing = useCallback(() => {
+    setEditingRow(null);
+    setEditedData({});
+  }, []);
+
+  const saveEditing = useCallback((rowNum: number) => {
+    setErrorRows(prev => prev.map(r =>
+      r.row_number === rowNum ? { ...r, data: { ...editedData } } : r
+    ));
+    setEditingRow(null);
+    setEditedData({});
+    setToast({ message: `Ligne ${rowNum} modifiée`, type: 'success' });
+  }, [editedData]);
+
+  const ignoreRow = useCallback((rowNum: number) => {
+    setIgnoredRows(prev => new Set([...prev, rowNum]));
+  }, []);
+
+  const unignoreRow = useCallback((rowNum: number) => {
+    setIgnoredRows(prev => {
+      const next = new Set(prev);
+      next.delete(rowNum);
+      return next;
+    });
+  }, []);
+
+  const removeRow = useCallback((rowNum: number) => {
+    setErrorRows(prev => prev.filter(r => r.row_number !== rowNum));
+    setIgnoredRows(prev => {
+      const next = new Set(prev);
+      next.delete(rowNum);
+      return next;
+    });
+  }, []);
+
+  const retrySingleRow = useCallback(async (row: ImportClientErrorDetail) => {
+    if (!row.data) return;
+    setRetryingRow(row.row_number);
+    try {
+      const res = await api.post<ApiResponse<ImportRetryResult>>('/import/clients/retry-rows', {
+        rows: [{ row_number: row.row_number, data: row.data }],
+        update_existing: options.update_existing,
+      });
+      const result = res.data.results[0];
+      if (result.success) {
+        setErrorRows(prev => prev.filter(r => r.row_number !== row.row_number));
+        if (executeResult) {
+          setExecuteResult({
+            ...executeResult,
+            imported: executeResult.imported + 1,
+            errors: executeResult.errors - 1,
+            adresses_created: executeResult.adresses_created + (res.data.adresses_created || 0),
+            contacts_created: executeResult.contacts_created + (res.data.contacts_created || 0),
+          });
+        }
+        setToast({ message: `Ligne ${row.row_number} importée avec succès`, type: 'success' });
+      } else {
+        setErrorRows(prev => prev.map(r =>
+          r.row_number === row.row_number ? { ...r, error: result.error || r.error } : r
+        ));
+        setToast({ message: `Ligne ${row.row_number} : ${result.error}`, type: 'error' });
+      }
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erreur lors du retry', type: 'error' });
+    } finally {
+      setRetryingRow(null);
+    }
+  }, [options.update_existing, executeResult]);
+
+  const retryAllCorrected = useCallback(async () => {
+    const toRetry = errorRows.filter(r => !ignoredRows.has(r.row_number) && r.data);
+    if (toRetry.length === 0) return;
+    setRetrying(true);
+    try {
+      const res = await api.post<ApiResponse<ImportRetryResult>>('/import/clients/retry-rows', {
+        rows: toRetry.map(r => ({ row_number: r.row_number, data: r.data })),
+        update_existing: options.update_existing,
+      });
+      const successRows = res.data.results.filter(r => r.success).map(r => r.row_number);
+      const failedResults = res.data.results.filter(r => !r.success);
+
+      setErrorRows(prev => {
+        const remaining = prev.filter(r => !successRows.includes(r.row_number));
+        return remaining.map(r => {
+          const failed = failedResults.find(f => f.row_number === r.row_number);
+          return failed ? { ...r, error: failed.error || r.error, data: failed.data || r.data } : r;
+        });
+      });
+
+      if (executeResult) {
+        setExecuteResult({
+          ...executeResult,
+          imported: executeResult.imported + res.data.success,
+          errors: executeResult.errors - res.data.success,
+          adresses_created: executeResult.adresses_created + (res.data.adresses_created || 0),
+          contacts_created: executeResult.contacts_created + (res.data.contacts_created || 0),
+        });
+      }
+
+      if (res.data.success > 0) {
+        setToast({
+          message: `${res.data.success} ligne${res.data.success > 1 ? 's' : ''} importée${res.data.success > 1 ? 's' : ''} avec succès${res.data.errors > 0 ? `, ${res.data.errors} erreur${res.data.errors > 1 ? 's' : ''} restante${res.data.errors > 1 ? 's' : ''}` : ''}`,
+          type: res.data.errors > 0 ? 'error' : 'success',
+        });
+      } else {
+        setToast({ message: 'Aucune ligne importée, vérifiez les corrections', type: 'error' });
+      }
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Erreur lors du retry', type: 'error' });
+    } finally {
+      setRetrying(false);
+    }
+  }, [errorRows, ignoredRows, options.update_existing, executeResult]);
+
+  const ignoreAll = useCallback(() => {
+    setIgnoredRows(new Set(errorRows.map(r => r.row_number)));
+  }, [errorRows]);
+
+  const removeAll = useCallback(() => {
+    setErrorRows([]);
+    setIgnoredRows(new Set());
+  }, []);
 
   // ─── RENDER HELPERS ───────────────────────────────────────────────────────
 
@@ -723,29 +864,190 @@ export default function ImportClientsPage() {
             </div>
           </div>
 
-          {/* Error details */}
-          {executeResult.error_details.length > 0 && (
+          {/* Error management panel */}
+          {errorRows.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100">
-                <h3 className="text-sm font-bold text-gray-800">Détail des erreurs ({executeResult.error_details.length})</h3>
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center">
+                    <svg className="h-4 w-4 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-800">
+                      Gestion des erreurs ({errorRows.length - ignoredRows.size} active{errorRows.length - ignoredRows.size > 1 ? 's' : ''}{ignoredRows.size > 0 ? `, ${ignoredRows.size} ignorée${ignoredRows.size > 1 ? 's' : ''}` : ''})
+                    </h3>
+                    <p className="text-[11px] text-gray-400 mt-0.5">Corrigez les valeurs, puis réimportez les lignes</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={retryAllCorrected}
+                    disabled={retrying || errorRows.filter(r => !ignoredRows.has(r.row_number)).length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40 transition cursor-pointer"
+                  >
+                    {retrying ? (
+                      <><div className="h-3 w-3 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Réimport...</>
+                    ) : (
+                      <><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg> Réimporter tout</>
+                    )}
+                  </button>
+                  <button
+                    onClick={ignoreAll}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 transition cursor-pointer"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                    Ignorer tout
+                  </button>
+                  <button
+                    onClick={removeAll}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition cursor-pointer"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                    Supprimer tout
+                  </button>
+                </div>
               </div>
-              <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase w-20">Ligne</th>
-                      <th className="px-4 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Erreur</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {executeResult.error_details.map((err, i) => (
-                      <tr key={i}>
-                        <td className="px-4 py-2 text-xs font-mono text-gray-500">{err.row_number}</td>
-                        <td className="px-4 py-2 text-xs text-red-600">{err.error}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+              <div className="max-h-[500px] overflow-y-auto divide-y divide-gray-50">
+                {errorRows.map(errRow => {
+                  const isIgnored = ignoredRows.has(errRow.row_number);
+                  const isEditing = editingRow === errRow.row_number;
+                  const isRetryingThis = retryingRow === errRow.row_number;
+                  const dataEntries = errRow.data ? Object.entries(errRow.data).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '') : [];
+
+                  return (
+                    <div key={errRow.row_number} className={`transition-all ${isIgnored ? 'opacity-40 bg-gray-50/50' : ''}`}>
+                      {/* Error row header */}
+                      <div className="px-4 py-3 flex items-center gap-3">
+                        <span className="inline-flex items-center justify-center h-6 w-10 rounded bg-gray-100 text-[11px] font-mono font-bold text-gray-500">
+                          L.{errRow.row_number}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="space-y-0.5">
+                            {errRow.error.split(' | ').map((errMsg, i) => (
+                              <p key={i} className="text-xs text-red-600 font-medium flex items-start gap-1.5">
+                                <svg className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                                <span>{errMsg.trim()}</span>
+                              </p>
+                            ))}
+                          </div>
+                          {!!errRow.data?.raison_sociale && (
+                            <p className="text-[11px] text-gray-400 mt-1 truncate">
+                              {String(errRow.data.code_client || '')} — {String(errRow.data.raison_sociale || '')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {!isIgnored && (
+                            <>
+                              {!isEditing ? (
+                                <button
+                                  onClick={() => errRow.data && startEditing(errRow.row_number, errRow.data)}
+                                  disabled={!errRow.data}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-40 transition cursor-pointer"
+                                  title="Corriger les valeurs"
+                                >
+                                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
+                                  Corriger
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => saveEditing(errRow.row_number)}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition cursor-pointer"
+                                  >
+                                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                                    Valider
+                                  </button>
+                                  <button
+                                    onClick={cancelEditing}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 hover:bg-gray-200 transition cursor-pointer"
+                                  >
+                                    Annuler
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                onClick={() => retrySingleRow(errRow)}
+                                disabled={isRetryingThis || !errRow.data}
+                                className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition cursor-pointer"
+                                title="Réimporter cette ligne"
+                              >
+                                {isRetryingThis ? (
+                                  <div className="h-3 w-3 border-[1.5px] border-blue-300 border-t-blue-700 rounded-full animate-spin" />
+                                ) : (
+                                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
+                                )}
+                                Retry
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => isIgnored ? unignoreRow(errRow.row_number) : ignoreRow(errRow.row_number)}
+                            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition cursor-pointer ${
+                              isIgnored
+                                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                            }`}
+                            title={isIgnored ? 'Restaurer' : 'Ignorer'}
+                          >
+                            {isIgnored ? (
+                              <><svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg> Restaurer</>
+                            ) : (
+                              <><svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg> Ignorer</>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => removeRow(errRow.row_number)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition cursor-pointer"
+                            title="Supprimer de la liste"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Inline editing panel */}
+                      {isEditing && errRow.data && (
+                        <div className="px-4 pb-3">
+                          <div className="bg-violet-50/50 rounded-xl border border-violet-100 p-3">
+                            <p className="text-[11px] font-semibold text-violet-600 uppercase tracking-wide mb-2">Modifier les valeurs</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                              {dataEntries.map(([key, val]) => (
+                                <div key={key}>
+                                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">{key.replace(/_/g, ' ')}</label>
+                                  <input
+                                    type="text"
+                                    value={String(editedData[key] ?? val ?? '')}
+                                    onChange={e => setEditedData(prev => ({ ...prev, [key]: e.target.value }))}
+                                    className="w-full rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs text-gray-800 focus:border-violet-400 focus:ring-2 focus:ring-violet-500/10 outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Data preview (collapsed, when not editing) */}
+                      {!isEditing && !isIgnored && dataEntries.length > 0 && (
+                        <div className="px-4 pb-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {dataEntries.slice(0, 6).map(([key, val]) => (
+                              <span key={key} className="inline-flex items-center gap-1 rounded bg-gray-50 px-2 py-0.5 text-[10px]">
+                                <span className="font-medium text-gray-400">{key.replace(/_/g, ' ')}:</span>
+                                <span className="text-gray-600 max-w-[120px] truncate">{String(val)}</span>
+                              </span>
+                            ))}
+                            {dataEntries.length > 6 && (
+                              <span className="inline-flex items-center rounded bg-gray-50 px-2 py-0.5 text-[10px] text-gray-400">+{dataEntries.length - 6}</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -760,7 +1062,7 @@ export default function ImportClientsPage() {
               Voir les clients
             </button>
             <button
-              onClick={() => { setStep(0); setParseResult(null); setValidationResult(null); setExecuteResult(null); setFileName(''); setAutoIgnoredHeaders(new Set()); }}
+              onClick={() => { setStep(0); setParseResult(null); setValidationResult(null); setExecuteResult(null); setErrorRows([]); setIgnoredRows(new Set()); setFileName(''); setAutoIgnoredHeaders(new Set()); }}
               className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 shadow-sm transition cursor-pointer"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>

@@ -251,21 +251,38 @@ export async function deleteAllClients() {
   try {
     await client.query('BEGIN');
 
-    // Factures et sous-tables (CASCADE gère facture_lignes, facture_echeances, facture_paiements)
+    // SEPA (dépend de factures)
+    await client.query('DELETE FROM sepa_remise_lignes');
+    await client.query('DELETE FROM sepa_remises');
+    // Avoirs (dépend de factures)
+    await client.query('DELETE FROM avoir_lignes');
+    await client.query('DELETE FROM avoirs');
+    // Factures et sous-tables
+    await client.query('DELETE FROM facture_reglements');
+    await client.query('DELETE FROM facture_historique');
+    await client.query('DELETE FROM facture_lignes');
     await client.query('DELETE FROM factures');
-    // Contrats et sous-tables (CASCADE gère contrat_lignes, contrat_compteurs)
+    // Contrats et sous-tables
+    await client.query('DELETE FROM contrat_machines');
+    await client.query('DELETE FROM contrat_lignes');
     await client.query('DELETE FROM contrats');
-    // Devis et sous-tables (CASCADE gère devis_lignes, devis_couts_copie, devis_options)
+    // Devis et sous-tables
     await client.query('DELETE FROM bons_commande');
+    await client.query('DELETE FROM devis_champs_personnalises');
+    await client.query('DELETE FROM devis_historique');
+    await client.query('DELETE FROM devis_lignes');
     await client.query('DELETE FROM devis');
-    // Parc machines et sous-tables (CASCADE gère releves_compteurs)
+    // Parc machines et sous-tables
+    await client.query('DELETE FROM releves_compteurs');
     await client.query('DELETE FROM parc_machines');
     // Tarifs spécifiques clients
     await client.query('DELETE FROM produit_tarifs_clients');
-    // Sous-tables clients (CASCADE les supprimerait, mais on est explicite)
+    // Sous-tables clients
     await client.query('DELETE FROM client_documents');
     await client.query('DELETE FROM client_contacts');
     await client.query('DELETE FROM client_adresses');
+    // Champs personnalisés valeurs
+    await client.query('DELETE FROM champs_personnalises_valeurs');
     // Clients
     const result = await client.query('DELETE FROM clients RETURNING id');
     await client.query("ALTER SEQUENCE client_numero_seq RESTART WITH 1");

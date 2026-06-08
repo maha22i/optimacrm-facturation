@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 
@@ -79,6 +79,9 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
     children: [
+      { label: 'Fact. copieur', href: '/dashboard/factures/copieur', requiredPermission: 'factures_read' },
+      { label: 'Fact. téléphonie', href: '/dashboard/factures/facturation-telephonie', requiredPermission: 'factures_read' },
+      { label: 'Fact. informatique', href: '/dashboard/factures/facturation-informatique', requiredPermission: 'factures_read' },
       { label: 'Avoirs', href: '/dashboard/factures/avoirs', requiredPermission: 'factures_read' },
       { label: 'Prélèvements SEPA', href: '/dashboard/factures/prelevements-sepa', requiredPermission: 'factures_write' },
     ],
@@ -94,7 +97,9 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
     children: [
-      { label: 'Importer', href: '/dashboard/contrats/import', requiredPermission: 'contrats_import' },
+      { label: 'Importer (Capasoft)', href: '/dashboard/contrats/import', requiredPermission: 'contrats_import' },
+      { label: 'Import Téléphonie', href: '/dashboard/contrats/import-telephonie', requiredPermission: 'contrats_write' },
+      { label: 'Import Informatique', href: '/dashboard/contrats/import-informatique', requiredPermission: 'contrats_write' },
     ],
   },
   {
@@ -169,6 +174,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, isLoading, logout, hasPermission } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -230,14 +236,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       ),
     }));
 
+  const hrefPath = (href: string) => href.split('?')[0];
+
   const isActive = (href: string) => {
-    if (href === '/dashboard') return pathname === '/dashboard';
-    return pathname.startsWith(href);
+    const p = hrefPath(href);
+    if (p === '/dashboard') return pathname === '/dashboard';
+    return pathname.startsWith(p);
   };
 
   const isParentActive = (item: NavItem) => {
     if (isActive(item.href)) return true;
-    return item.children?.some(child => pathname.startsWith(child.href)) ?? false;
+    return item.children?.some(child => pathname.startsWith(hrefPath(child.href))) ?? false;
   };
 
   const sidebarContent = (
@@ -302,7 +311,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {childrenOpen && !sidebarCollapsed && (
                   <div className="mt-0.5 ml-[18px] pl-3 border-l border-white/[0.06] space-y-0.5">
                     {item.children!.map(child => {
-                      const childActive = pathname.startsWith(child.href);
+                      const childPath = hrefPath(child.href);
+                      const childQuery = child.href.includes('?') ? new URLSearchParams(child.href.split('?')[1]) : null;
+                      const childActive = pathname.startsWith(childPath) && (
+                        !childQuery || [...childQuery.entries()].every(([k, v]) => searchParams.get(k) === v)
+                      );
                       return (
                         <Link
                           key={child.href}

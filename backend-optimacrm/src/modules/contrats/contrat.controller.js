@@ -3,6 +3,7 @@ import * as contratService from './contrat.service.js';
 import * as factureService from '../factures/facture.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { CONTRAT_CATEGORIES, getCategoriesForType } from '../../config/contratCategories.js';
 
 // ---------------------------------------------------------------------------
 // CONTRATS
@@ -87,6 +88,64 @@ export async function deleteContrat(req, res, next) {
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
     sendSuccess(res, contrat, 'Contrat supprimé');
+  } catch (err) { next(err); }
+}
+
+export async function bulkDeleteContrats(req, res, next) {
+  try {
+    const { ids } = req.body;
+    const result = await contratService.bulkDeleteContrats(ids);
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'contrats_supprimes_en_masse',
+        module: 'contrats',
+        description: `Suppression de ${result.deletedCount} contrat(s) sélectionné(s)`,
+        entityType: 'contrat',
+        details: { ids, numeros: result.deleted.map(c => c.numero_contrat) },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `${result.deletedCount} contrat(s) supprimé(s)`);
+  } catch (err) { next(err); }
+}
+
+export async function bulkUpdateStatut(req, res, next) {
+  try {
+    const { ids, statut } = req.body;
+    const result = await contratService.bulkUpdateStatut(ids, statut);
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'contrats_statut_modifie_en_masse',
+        module: 'contrats',
+        description: `Passage de ${result.updatedCount} contrat(s) en statut "${statut}"`,
+        entityType: 'contrat',
+        details: { ids, statut, numeros: result.updated.map(c => c.numero_contrat) },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `${result.updatedCount} contrat(s) mis à jour`);
+  } catch (err) { next(err); }
+}
+
+export async function deleteAllContrats(req, res, next) {
+  try {
+    const result = await contratService.deleteAllContrats();
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'contrats_tous_supprimes',
+        module: 'contrats',
+        description: `Suppression de tous les contrats (${result.deletedCount})`,
+        entityType: 'contrat',
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, result, `${result.deletedCount} contrat(s) supprimé(s)`);
   } catch (err) { next(err); }
 }
 
@@ -259,6 +318,60 @@ export async function genererFacture(req, res, next) {
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
     sendSuccess(res, facture, 'Facture générée avec succès', 201);
   } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// IMPORT CONTRATS (GÉNÉRIQUE — paramétré par type_contrat)
+// ---------------------------------------------------------------------------
+
+export async function getCategories(req, res, next) {
+  try {
+    const typeContrat = req.query.type_contrat;
+    if (typeContrat) {
+      sendSuccess(res, { type_contrat: typeContrat, categories: getCategoriesForType(typeContrat) });
+    } else {
+      sendSuccess(res, CONTRAT_CATEGORIES);
+    }
+  } catch (err) { next(err); }
+}
+
+export async function previewImportContrats(req, res, next) {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'Aucun fichier fourni' });
+    const typeContrat = req.params.type || req.body.type_contrat || 'Telephonie';
+    const preview = await contratService.previewImportContrats(req.file.buffer, typeContrat);
+    sendSuccess(res, preview);
+  } catch (err) { next(err); }
+}
+
+export async function importContratsExecute(req, res, next) {
+  try {
+    if (!req.file && !req.files?.file) return res.status(400).json({ success: false, message: 'Aucun fichier fourni' });
+    const typeContrat = req.params.type || req.body.type_contrat || 'Telephonie';
+    const mainFile = req.file || (req.files?.file && req.files.file[0]);
+    const logicielsFile = req.files?.logiciels && req.files.logiciels[0];
+
+    const result = await contratService.importContrats(
+      mainFile.buffer,
+      typeContrat,
+      req.user?.id,
+      activityLog.getUserName(req.user),
+      activityLog.getClientIp(req),
+      logicielsFile?.buffer || null,
+    );
+    sendSuccess(res, result, `${result.contrats_crees} contrats ${typeContrat} importés`);
+  } catch (err) { next(err); }
+}
+
+// Rétro-compatibilité
+export async function previewImportTelephonie(req, res, next) {
+  req.params.type = 'Telephonie';
+  return previewImportContrats(req, res, next);
+}
+
+export async function importContratsTelephonie(req, res, next) {
+  req.params.type = 'Telephonie';
+  return importContratsExecute(req, res, next);
 }
 
 // ---------------------------------------------------------------------------

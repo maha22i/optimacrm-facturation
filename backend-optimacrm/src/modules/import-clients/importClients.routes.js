@@ -16,6 +16,7 @@ router.use(checkPermission('clients_import'));
 router.post('/parse', upload.single('file'), ctrl.parse);
 router.post('/validate', ctrl.validate);
 router.post('/execute', ctrl.execute);
+router.post('/retry-rows', ctrl.retryRows);
 
 router.get('/mappings', ctrl.listMappings);
 router.post('/mappings', ctrl.saveMapping);

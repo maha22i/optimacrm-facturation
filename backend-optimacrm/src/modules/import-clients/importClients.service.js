@@ -548,6 +548,121 @@ function parseClientFieldValue(field, rawVal, customFieldsFlat) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FIELD LENGTH CONSTRAINTS — Pré-validation avant INSERT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FIELD_LIMITS = {
+  // clients table
+  numero_client:          { max: 10,  label: 'Code client' },
+  raison_sociale:         { max: 255, label: 'Raison sociale' },
+  siret:                  { max: 14,  label: 'SIRET' },
+  siren:                  { max: 9,   label: 'SIREN' },
+  tva_intracommunautaire: { max: 20,  label: 'TVA intracommunautaire' },
+  code_ape:               { max: 10,  label: 'Code APE' },
+  site_web:               { max: 255, label: 'Site web' },
+  telephone:              { max: 20,  label: 'Téléphone' },
+  email_principal:        { max: 255, label: 'Email principal' },
+  email_comptabilite:     { max: 255, label: 'Email comptabilité' },
+  iban:                   { max: 34,  label: 'IBAN' },
+  bic:                    { max: 20,  label: 'BIC' },
+  reference_mandat_sepa:  { max: 35,  label: 'Référence mandat SEPA' },
+  numero_rcs:             { max: 50,  label: 'Numéro RCS' },
+  // client_adresses table
+  adresse_code_postal:    { max: 10,  label: 'Code postal' },
+  adresse_ville:          { max: 100, label: 'Ville' },
+  // client_contacts table
+  contact_nom:            { max: 100, label: 'Nom du contact' },
+  contact_mobile:         { max: 20,  label: 'Mobile du contact' },
+  contact_ligne_directe:  { max: 20,  label: 'Téléphone du contact' },
+  contact2_nom:           { max: 100, label: 'Nom du contact secondaire' },
+};
+
+function validateFieldLengths(data) {
+  const errors = [];
+  for (const [field, config] of Object.entries(FIELD_LIMITS)) {
+    const val = data[field];
+    if (val != null && String(val).trim() !== '') {
+      const strVal = String(val).trim();
+      if (strVal.length > config.max) {
+        errors.push(
+          `Le champ « ${config.label} » dépasse la limite autorisée : "${strVal.substring(0, 30)}${strVal.length > 30 ? '…' : ''}" fait ${strVal.length} caractères (max. ${config.max})`
+        );
+      }
+    }
+  }
+
+  // Adresse ligne1 combinée (numéro + voie + rue)
+  const adresseLigne1 = buildAdresse(
+    cleanText(data.adresse_numero),
+    cleanText(data.adresse_voie),
+    cleanText(data.adresse_rue)
+  );
+  if (adresseLigne1 && adresseLigne1.length > 255) {
+    errors.push(
+      `L'adresse complète est trop longue : "${adresseLigne1.substring(0, 40)}…" fait ${adresseLigne1.length} caractères (max. 255)`
+    );
+  }
+
+  return errors;
+}
+
+function humanizeDbError(err) {
+  const msg = err.message || '';
+
+  // PostgreSQL: value too long for type character varying(N)
+  const varcharMatch = msg.match(/value too long for type character varying\((\d+)\)/);
+  if (varcharMatch) {
+    const limit = varcharMatch[1];
+    const knownLimits = {
+      '10': 'Code client',
+      '14': 'SIRET',
+      '9': 'SIREN',
+      '20': 'BIC, Téléphone, Mode de paiement ou TVA',
+      '34': 'IBAN',
+      '35': 'Référence mandat SEPA',
+      '100': 'Nom du contact ou Ville',
+      '255': 'Raison sociale, Email ou Adresse',
+    };
+    const fieldHint = knownLimits[limit] || 'Un champ';
+    return `${fieldHint} : la valeur dépasse la limite de ${limit} caractères`;
+  }
+
+  // PostgreSQL: unique constraint violation
+  if (err.code === '23505') {
+    if (msg.includes('numero_client')) return 'Code client déjà utilisé par un autre client';
+    if (msg.includes('siret')) return 'SIRET déjà utilisé par un autre client';
+    if (msg.includes('email_principal')) return 'Email déjà utilisé par un autre client';
+    return 'Valeur en doublon avec un enregistrement existant';
+  }
+
+  // PostgreSQL: not-null violation
+  if (err.code === '23502') {
+    const colMatch = msg.match(/column "(\w+)"/);
+    if (colMatch) {
+      const colLabels = {
+        raison_sociale: 'Raison sociale',
+        email_principal: 'Email principal',
+        numero_client: 'Code client',
+        ligne1: 'Adresse ligne 1',
+        code_postal: 'Code postal',
+        ville: 'Ville',
+        nom: 'Nom',
+        prenom: 'Prénom',
+      };
+      return `Le champ « ${colLabels[colMatch[1]] || colMatch[1]} » est obligatoire et ne peut pas être vide`;
+    }
+    return 'Un champ obligatoire est vide';
+  }
+
+  // PostgreSQL: check constraint violation
+  if (err.code === '23514') {
+    return 'Valeur non autorisée pour un champ à choix restreint (statut, forme juridique, etc.)';
+  }
+
+  return msg;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EXECUTE — Exécution de l'import en BDD
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -591,6 +706,12 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
     for (const row of validRows) {
       const savepointName = `sp_row_${row.row_number}`;
       try {
+        const lengthErrors = validateFieldLengths(row.data);
+        if (lengthErrors.length > 0) {
+          importErrors.push({ row_number: row.row_number, error: lengthErrors.join(' | '), data: row.data });
+          continue;
+        }
+
         await client.query(`SAVEPOINT ${savepointName}`);
 
         const d = row.data;
@@ -778,7 +899,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
         successCount++;
       } catch (err) {
         await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-        importErrors.push({ row_number: row.row_number, error: err.message });
+        importErrors.push({ row_number: row.row_number, error: humanizeDbError(err), data: row.data });
       }
     }
 
@@ -818,6 +939,221 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
     throw err;
   } finally {
     client.release();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RETRY — Réimporter les lignes corrigées
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function insertSingleClientRow(dbClient, d, update_existing, seenSirets, customConfigMap) {
+  const lengthErrors = validateFieldLengths(d);
+  if (lengthErrors.length > 0) {
+    throw new Error(lengthErrors.join(' | '));
+  }
+
+  const codeClient = cleanText(d.code_client);
+  const raisonSociale = cleanText(d.raison_sociale) || codeClient;
+
+  let siret = d.siret ? String(d.siret).replace(/\s/g, '').trim() : null;
+  if (siret === '') siret = null;
+  if (siret && (siret.length !== 14 || seenSirets.has(siret))) siret = null;
+  if (siret) seenSirets.add(siret);
+
+  const telephone = cleanText(d.telephone) || null;
+  const email = cleanText(d.email_principal) || null;
+  const iban = d.iban ? String(d.iban).trim().replace(/\s/g, '') : null;
+  const bic = cleanText(d.bic) || null;
+  const dateMandat = d.date_mandat_sepa || null;
+
+  const modeReglement = mapModeReglement(cleanText(d.mode_reglement));
+  const conditionsPaiement = mapConditionsPaiement(cleanText(d.conditions_paiement));
+
+  const numeroClient = codeClient ? codeClient.substring(0, 10) : codeClient;
+
+  const existing = await dbClient.query(
+    'SELECT id FROM clients WHERE numero_client = $1',
+    [numeroClient]
+  );
+
+  let clientId;
+  let isUpdate = false;
+  let adresseCreated = false;
+  let contactsCount = 0;
+
+  if (existing.rows.length > 0 && update_existing) {
+    clientId = existing.rows[0].id;
+    await dbClient.query(
+      `UPDATE clients SET
+        raison_sociale = COALESCE($2, raison_sociale),
+        siret = COALESCE($3, siret),
+        telephone_principal = COALESCE($4, telephone_principal),
+        email_principal = COALESCE($5, email_principal),
+        mode_paiement_prefere = COALESCE($6, mode_paiement_prefere),
+        delai_paiement = COALESCE($7, delai_paiement),
+        iban = COALESCE($8, iban),
+        bic = COALESCE($9, bic),
+        date_mandat_sepa = COALESCE($10, date_mandat_sepa),
+        updated_at = NOW()
+      WHERE id = $1`,
+      [clientId, raisonSociale, siret, telephone, email,
+       modeReglement, conditionsPaiement, iban, bic, dateMandat]
+    );
+    isUpdate = true;
+  } else if (existing.rows.length > 0) {
+    throw new Error(`Code client "${numeroClient}" déjà existant`);
+  } else {
+    const insertRes = await dbClient.query(
+      `INSERT INTO clients (
+        numero_client, raison_sociale, siret,
+        telephone_principal, email_principal,
+        mode_paiement_prefere, delai_paiement,
+        iban, bic, date_mandat_sepa,
+        forme_juridique, statut
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [numeroClient, raisonSociale, siret,
+       telephone, email || `import_${numeroClient}@placeholder.fr`,
+       modeReglement, conditionsPaiement || '30_JOURS',
+       iban, bic, dateMandat, 'SAS', 'ACTIF']
+    );
+    clientId = insertRes.rows[0].id;
+  }
+
+  const adresseLigne1 = buildAdresse(
+    cleanText(d.adresse_numero), cleanText(d.adresse_voie), cleanText(d.adresse_rue)
+  );
+  const codePostal = d.adresse_code_postal ? cleanCP(String(d.adresse_code_postal)) : null;
+  const ville = cleanText(d.adresse_ville);
+
+  if (adresseLigne1 || codePostal || ville) {
+    if (update_existing && existing.rows.length > 0) {
+      await dbClient.query('DELETE FROM client_adresses WHERE client_id = $1', [clientId]);
+    }
+    await dbClient.query(
+      `INSERT INTO client_adresses (client_id, type, est_defaut, ligne1, code_postal, ville)
+       VALUES ($1, 'FACTURATION', true, $2, $3, $4)`,
+      [clientId, adresseLigne1 || '-', codePostal || '00000', ville || '-']
+    );
+    adresseCreated = true;
+  }
+
+  const contactNom = cleanText(d.contact_nom);
+  if (contactNom) {
+    const contactParsed = parseContact(contactNom);
+    const civilite = cleanText(d.contact_civilite) || null;
+    const ligneDirect = cleanText(d.contact_ligne_directe) || null;
+    const mobile = cleanText(d.contact_mobile) || null;
+
+    if (update_existing && existing.rows.length > 0) {
+      await dbClient.query('DELETE FROM client_contacts WHERE client_id = $1', [clientId]);
+    }
+    await dbClient.query(
+      `INSERT INTO client_contacts (client_id, role, nom, prenom, fonction, telephone, mobile, est_principal)
+       VALUES ($1, 'PRINCIPAL', $2, $3, $4, $5, $6, true)`,
+      [clientId, contactParsed.nom || '-', contactParsed.prenom || '-',
+       civilite, ligneDirect, mobile]
+    );
+    contactsCount++;
+  }
+
+  const contact2Nom = cleanText(d.contact2_nom);
+  if (contact2Nom) {
+    const contact2Parsed = parseContact(contact2Nom);
+    const civilite2 = cleanText(d.contact2_civilite) || null;
+    await dbClient.query(
+      `INSERT INTO client_contacts (client_id, role, nom, prenom, fonction, est_principal)
+       VALUES ($1, 'AUTRE', $2, $3, $4, false)`,
+      [clientId, contact2Parsed.nom || '-', contact2Parsed.prenom || '-', civilite2]
+    );
+    contactsCount++;
+  }
+
+  const customFieldsData = [];
+  for (const [key, val] of Object.entries(d)) {
+    if (key.startsWith('custom_') && val !== null && val !== undefined) {
+      const cle = key.replace('custom_', '');
+      const configId = customConfigMap.get(cle);
+      if (configId) customFieldsData.push({ config_id: configId, cle, valeur: String(val) });
+    }
+  }
+
+  if (customFieldsData.length > 0) {
+    for (const cf of customFieldsData) {
+      await dbClient.query(
+        `INSERT INTO champs_personnalises_valeurs (config_id, entite_id, valeur)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (config_id, entite_id) DO UPDATE SET valeur = $3, updated_at = NOW()`,
+        [cf.config_id, clientId, cf.valeur]
+      );
+    }
+  }
+
+  const extraFields = buildExtraFieldsJson(d);
+  if (extraFields.length > 0) {
+    await dbClient.query(
+      'UPDATE clients SET champs_personnalises = $2 WHERE id = $1',
+      [clientId, JSON.stringify(extraFields)]
+    );
+  }
+
+  return { clientId, isUpdate, adresseCreated, contactsCount };
+}
+
+export async function retryImportRows({ rows, update_existing = false }) {
+  if (!rows || rows.length === 0) {
+    throw ApiError.badRequest('Aucune ligne à réimporter');
+  }
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const customConfigRes = await dbClient.query(
+      "SELECT id, cle FROM champs_personnalises_config WHERE entite = 'CLIENT' AND actif = true"
+    );
+    const customConfigMap = new Map(customConfigRes.rows.map(r => [r.cle, r.id]));
+
+    const seenSirets = new Set();
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+    let adressesCreated = 0;
+    let contactsCreated = 0;
+
+    for (const row of rows) {
+      const sp = `sp_retry_${row.row_number}`;
+      try {
+        await dbClient.query(`SAVEPOINT ${sp}`);
+        const res = insertSingleClientRow(dbClient, row.data, update_existing, seenSirets, customConfigMap);
+        const result = await res;
+        await dbClient.query(`RELEASE SAVEPOINT ${sp}`);
+
+        successCount++;
+        if (result.adresseCreated) adressesCreated++;
+        contactsCreated += result.contactsCount;
+        results.push({ row_number: row.row_number, success: true });
+      } catch (err) {
+        await dbClient.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+        errorCount++;
+        results.push({ row_number: row.row_number, success: false, error: humanizeDbError(err), data: row.data });
+      }
+    }
+
+    await dbClient.query('COMMIT');
+
+    return {
+      total: rows.length,
+      success: successCount,
+      errors: errorCount,
+      adresses_created: adressesCreated,
+      contacts_created: contactsCreated,
+      results,
+    };
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
   }
 }
 

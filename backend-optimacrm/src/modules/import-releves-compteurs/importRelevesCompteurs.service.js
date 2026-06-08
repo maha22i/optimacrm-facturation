@@ -66,7 +66,7 @@ function isTotalLine(row) {
   return TOTAL_LINE_KEYWORDS.some(kw => norm.includes(normalize(kw)));
 }
 
-// Auto-mapping synonymes pour les 4 champs
+// Auto-mapping synonymes pour les 5 champs
 const FIELD_SYNONYMS = {
   numero_serie: [
     'numéro de série', 'numero de serie', 'n° série', 'n° serie',
@@ -86,6 +86,12 @@ const FIELD_SYNONYMS = {
     'date de fin', 'dernière collecte', 'derniere collecte', 'date relevé',
     'date releve', 'date', 'date fin', 'date du relevé', 'date du releve',
     'date de fin période', 'date fin période', 'date fin periode',
+  ],
+  numero_contrat: [
+    'numéro contrat', 'numero contrat', 'n° contrat', 'no contrat',
+    'num contrat', 'contrat', 'référence contrat', 'reference contrat',
+    'ref contrat', 'réf contrat', 'code contrat', 'numero de contrat',
+    'numéro de contrat', 'n° de contrat',
   ],
 };
 
@@ -193,7 +199,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
   catch { throw ApiError.badRequest('Fichier expiré ou introuvable. Veuillez re-uploader.'); }
 
   const { rows } = fileData;
-  const { numero_serie: colSerie, compteur_nb: colNb, compteur_couleur: colCouleur, date_releve: colDate } = mapping;
+  const { numero_serie: colSerie, compteur_nb: colNb, compteur_couleur: colCouleur, date_releve: colDate, numero_contrat: colContrat } = mapping;
 
   if (!colSerie) throw ApiError.badRequest('Le mapping "Numéro de série" est obligatoire');
   if (!colNb) throw ApiError.badRequest('Le mapping "Compteur N/B" est obligatoire');
@@ -229,10 +235,16 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     WHERE cm.actif = true
   `);
   const contratMachineMap = new Map();
+  const contratByNumeroMap = new Map();
   for (const cm of contratMachinesResult.rows) {
     const key = cm.numero_serie?.toUpperCase();
     if (!contratMachineMap.has(key)) contratMachineMap.set(key, []);
     contratMachineMap.get(key).push(cm);
+    // Index par (numero_serie + numero_contrat) pour matching précis depuis le fichier
+    if (cm.numero_contrat) {
+      const contratKey = `${key}::${cm.numero_contrat.trim().toUpperCase()}`;
+      contratByNumeroMap.set(contratKey, cm);
+    }
   }
 
   // Batch-load last relevés per machine
@@ -273,6 +285,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     const dateReleve = (colDate ? parseDate(raw[colDate]) : null)
       || (periode.date_fin ? periode.date_fin : null)
       || new Date().toISOString().split('T')[0];
+    const fileContratNumero = colContrat ? (raw[colContrat] || '').trim() : '';
 
     // Ligne de récap Excel ("TOTAL MACHINE …") → ignorée silencieusement
     if (!ns && isTotalLine(raw)) {
@@ -280,7 +293,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
       continue;
     }
 
-    parsedRows.push({ row_number: i + 1, raw, ns, nouveauNb, nouveauCouleur, dateReleve });
+    parsedRows.push({ row_number: i + 1, raw, ns, nouveauNb, nouveauCouleur, dateReleve, fileContratNumero });
   }
 
   // ─── Étape B — Tri par (numéro de série, date croissante) pour chaîner les compteurs ─
@@ -304,7 +317,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
   }
 
   for (const parsed of parsedRows) {
-    const { row_number, ns, nouveauNb, nouveauCouleur, dateReleve } = parsed;
+    const { row_number, ns, nouveauNb, nouveauCouleur, dateReleve, fileContratNumero } = parsed;
 
     if (!ns) {
       lignes.push({
@@ -348,22 +361,39 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
     summary.machines_trouvees++;
 
-    // Find contract info via contrat_machines first, fallback to parc_machines
+    // Find contract info: priorité au numéro de contrat du fichier si mappé
     const contratEntries = contratMachineMap.get(ns.toUpperCase()) || [];
-    const activeContrat = contratEntries.find(c => c.contrat_statut === 'Actif') || contratEntries[0];
+    let matchedContrat = null;
+
+    if (fileContratNumero) {
+      // Chercher par clé exacte (numero_serie + numero_contrat du fichier)
+      const contratKey = `${ns.toUpperCase()}::${fileContratNumero.toUpperCase()}`;
+      matchedContrat = contratByNumeroMap.get(contratKey) || null;
+      // Fallback : chercher parmi les contrats de cette machine par numéro partiel
+      if (!matchedContrat) {
+        matchedContrat = contratEntries.find(c =>
+          c.numero_contrat && c.numero_contrat.trim().toUpperCase() === fileContratNumero.toUpperCase()
+        ) || null;
+      }
+    }
+
+    // Si pas trouvé via fichier, fallback au comportement existant
+    if (!matchedContrat) {
+      matchedContrat = contratEntries.find(c => c.contrat_statut === 'Actif') || contratEntries[0] || null;
+    }
 
     let forfaitNb = 0, forfaitCouleur = 0, coutCopieNb = 0, coutCopieCouleur = 0;
     let contratNumero = null, contratId = null;
     let hasContrat = false;
 
-    if (activeContrat) {
+    if (matchedContrat) {
       hasContrat = true;
-      contratNumero = activeContrat.numero_contrat;
-      contratId = activeContrat.contrat_id;
-      forfaitNb = activeContrat.volume_forfait_nb || 0;
-      forfaitCouleur = activeContrat.volume_forfait_couleur || 0;
-      coutCopieNb = parseFloat(activeContrat.cout_copie_nb) || 0;
-      coutCopieCouleur = parseFloat(activeContrat.cout_copie_couleur) || 0;
+      contratNumero = matchedContrat.numero_contrat;
+      contratId = matchedContrat.contrat_id;
+      forfaitNb = matchedContrat.volume_forfait_nb || 0;
+      forfaitCouleur = matchedContrat.volume_forfait_couleur || 0;
+      coutCopieNb = parseFloat(matchedContrat.cout_copie_nb) || 0;
+      coutCopieCouleur = parseFloat(matchedContrat.cout_copie_couleur) || 0;
     } else if (machine.numero_contrat) {
       contratNumero = machine.numero_contrat;
       contratId = machine.contrat_id;

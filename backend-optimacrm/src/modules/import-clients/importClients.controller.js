@@ -50,6 +50,17 @@ export async function execute(req, res, next) {
   } catch (err) { next(err); }
 }
 
+export async function retryRows(req, res, next) {
+  try {
+    const { rows, update_existing } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'rows requis (tableau non vide)' });
+    }
+    const result = await service.retryImportRows({ rows, update_existing });
+    sendSuccess(res, result, 'Réimportation terminée');
+  } catch (err) { next(err); }
+}
+
 export async function listMappings(req, res, next) {
   try {
     const mappings = await service.listSavedMappings();

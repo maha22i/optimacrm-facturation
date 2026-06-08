@@ -57,8 +57,8 @@ interface MachineLocal extends Omit<ContratMachine, 'id' | 'contrat_id'> {
 const CATEGORIES_PAR_TYPE: Record<TypeContrat, CategorieLigne[]> = {
   Copieur: ['Forfait Copie N&B', 'Forfait Copie Couleur', 'Service Connectic', 'PLC', 'Hors Forfait', 'Personnalisé'],
   Telephonie: ['Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel', 'Services', 'Autre', 'Hors Forfait', 'Personnalisé'],
-  Informatique: ['Location Matériel', 'Services', 'Autre', 'Personnalisé'],
-  Securite: ['Location Matériel', 'Services', 'Autre', 'Personnalisé'],
+  Informatique: ['Vidéosurveillance', 'Contrôle d\'accès', 'Téléassistance', 'Générateur de brouillard', 'Maintenance serveur', 'Maintenance informatique', 'Cloud', 'Office 365', 'Logiciel / Licence', 'Autre', 'Personnalisé'],
+  Securite: ['Vidéosurveillance', 'Contrôle d\'accès', 'Téléassistance', 'Générateur de brouillard', 'Autre', 'Personnalisé'],
 };
 
 const PERIODICITE_MOIS: Record<Periodicite, number> = {

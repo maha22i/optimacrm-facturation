@@ -12,7 +12,7 @@ const STATUT_CONFIG: Record<string, { label: string; bg: string; text: string; d
   'Brouillon': { label: 'Brouillon', bg: 'bg-gray-100', text: 'text-gray-600', dot: 'bg-gray-400' },
   'Validé': { label: 'Validé', bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
   'Remboursé': { label: 'Remboursé', bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
-  'Imputé': { label: 'Imputé', bg: 'bg-purple-50', text: 'text-purple-700', dot: 'bg-purple-500' },
+  'Imputé': { label: 'Imputé', bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-500' },
   'Annulé': { label: 'Annulé', bg: 'bg-gray-100', text: 'text-gray-400 line-through', dot: 'bg-gray-300' },
 };
 
@@ -26,7 +26,7 @@ function StatusBadge({ statut }: { statut: string }) {
   );
 }
 
-function formatDate(d: string | null) {
+function formatDate(d: string | null | undefined) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
@@ -158,7 +158,7 @@ export default function AvoirDetailPage() {
                 {pdfLoading && <span className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />}PDF
               </button>
               <button onClick={handleRembourser} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition cursor-pointer">Rembourser</button>
-              <button onClick={openImputModal} className="px-4 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 transition cursor-pointer">Imputer sur facture</button>
+              <button onClick={openImputModal} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition cursor-pointer">Imputer sur facture</button>
               <button onClick={handleAnnuler} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Annuler</button>
             </>
           )}
@@ -238,7 +238,7 @@ export default function AvoirDetailPage() {
               <div className="flex justify-between"><span className="text-gray-500">Date avoir</span><span className="text-gray-900">{formatDate(avoir.date_avoir)}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Client</span><span className="text-gray-900">{avoir.client_nom || avoir.facture_client_raison_sociale}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Facture liée</span>
-                <Link href={`/dashboard/factures/${avoir.facture_id}`} className="text-violet-600 font-semibold hover:underline">{avoir.numero_facture}</Link>
+                <Link href={`/dashboard/factures/${avoir.facture_id}`} className="text-blue-600 font-semibold hover:underline">{avoir.numero_facture}</Link>
               </div>
               <div className="flex justify-between"><span className="text-gray-500">TTC facture</span><span className="text-gray-900">{fmt(avoir.facture_total_ttc || 0)} €</span></div>
               {avoir.mode_utilisation && (
@@ -246,7 +246,7 @@ export default function AvoirDetailPage() {
               )}
               {avoir.facture_imputee_numero && (
                 <div className="flex justify-between"><span className="text-gray-500">Imputé sur</span>
-                  <Link href={`/dashboard/factures/${avoir.facture_imputee_id}`} className="text-violet-600 font-semibold hover:underline">{avoir.facture_imputee_numero}</Link>
+                  <Link href={`/dashboard/factures/${avoir.facture_imputee_id}`} className="text-blue-600 font-semibold hover:underline">{avoir.facture_imputee_numero}</Link>
                 </div>
               )}
             </div>
@@ -279,8 +279,8 @@ export default function AvoirDetailPage() {
               ) : (
                 <div className="space-y-2">
                   {facturesCibles.map(f => (
-                    <label key={f.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${selectedFactureCible === f.id ? 'border-purple-400 bg-purple-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                      <input type="radio" name="facture_cible" checked={selectedFactureCible === f.id} onChange={() => setSelectedFactureCible(f.id)} className="text-purple-600" />
+                    <label key={f.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${selectedFactureCible === f.id ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                      <input type="radio" name="facture_cible" checked={selectedFactureCible === f.id} onChange={() => setSelectedFactureCible(f.id)} className="text-indigo-600" />
                       <div className="flex-1">
                         <span className="text-sm font-mono font-semibold text-gray-900">{f.numero_facture}</span>
                         <span className="text-sm text-gray-500 ml-2">{f.client_raison_sociale}</span>
@@ -295,7 +295,7 @@ export default function AvoirDetailPage() {
             <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/50">
               <button onClick={() => setShowImputModal(false)} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">Annuler</button>
               <button onClick={handleImputer} disabled={!selectedFactureCible || imputLoading}
-                className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition cursor-pointer">
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer">
                 {imputLoading ? <div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : null}
                 {imputLoading ? 'Imputation...' : 'Imputer'}
               </button>

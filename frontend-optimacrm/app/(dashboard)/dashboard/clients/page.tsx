@@ -202,8 +202,8 @@ export default function ClientsPage() {
   return (
     <div className="min-h-screen bg-gray-50/50">
       {toast && (
-        <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 rounded-2xl px-5 py-3.5 text-sm font-medium shadow-lg backdrop-blur ${
-          toast.type === 'success' ? 'bg-emerald-500/90 text-white' : 'bg-red-500/90 text-white'
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl px-5 py-3.5 text-sm font-semibold shadow-xl transition-all ${
+          toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
         }`}>
           {toast.type === 'success' ? (
             <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
@@ -220,7 +220,7 @@ export default function ClientsPage() {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div className="flex items-start gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/25 shrink-0">
+          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
             <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
             </svg>
@@ -242,7 +242,7 @@ export default function ClientsPage() {
           </button>
           <button
             onClick={() => router.push('/dashboard/clients/import')}
-            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-300 shadow-sm transition-all cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-blue-100 hover:border-blue-300 shadow-sm transition-all cursor-pointer"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
@@ -251,7 +251,7 @@ export default function ClientsPage() {
           </button>
           <button
             onClick={() => router.push('/dashboard/clients/nouveau')}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:from-violet-700 hover:to-indigo-700 transition-all cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:from-blue-700 hover:to-indigo-700 transition-all cursor-pointer"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -267,11 +267,9 @@ export default function ClientsPage() {
           {
             label: 'Total clients',
             value: pagination.total,
-            borderColor: 'border-l-blue-500',
-            iconBg: 'bg-blue-100',
-            iconColor: 'text-blue-600',
+            gradient: 'from-blue-500 to-indigo-500',
             icon: (
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
               </svg>
             ),
@@ -279,23 +277,29 @@ export default function ClientsPage() {
           {
             label: 'Actifs',
             value: clients.filter(c => c.statut === 'ACTIF').length,
-            borderColor: 'border-l-emerald-500',
-            iconBg: 'bg-emerald-100',
-            iconColor: 'text-emerald-600',
+            gradient: 'from-emerald-500 to-teal-500',
             icon: (
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            ),
+          },
+          {
+            label: 'Prospects',
+            value: clients.filter(c => c.statut === 'PROSPECT').length,
+            gradient: 'from-indigo-500 to-blue-600',
+            icon: (
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
               </svg>
             ),
           },
           {
             label: 'Inactifs',
             value: clients.filter(c => c.statut === 'INACTIF').length,
-            borderColor: 'border-l-gray-400',
-            iconBg: 'bg-gray-100',
-            iconColor: 'text-gray-500',
+            gradient: 'from-gray-400 to-gray-500',
             icon: (
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
               </svg>
             ),
@@ -303,14 +307,14 @@ export default function ClientsPage() {
         ].map(stat => (
           <div
             key={stat.label}
-            className={`bg-white/80 backdrop-blur-sm rounded-2xl border border-white/20 border-l-4 ${stat.borderColor} p-5 shadow-sm hover:shadow-md transition-shadow`}
+            className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow"
           >
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{stat.label}</p>
-                <p className="mt-1.5 text-2xl font-bold text-gray-900">{stat.value}</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{stat.value}</p>
               </div>
-              <div className={`h-10 w-10 rounded-full ${stat.iconBg} ${stat.iconColor} flex items-center justify-center`}>
+              <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${stat.gradient} flex items-center justify-center shadow-sm`}>
                 {stat.icon}
               </div>
             </div>
@@ -331,7 +335,7 @@ export default function ClientsPage() {
               placeholder="Rechercher (nom, raison sociale, email, tél, SIRET...)"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-10 pr-4 text-sm placeholder-gray-400 focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 outline-none transition"
+              className="w-full rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-10 pr-4 text-sm placeholder-gray-400 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
             />
           </div>
 
@@ -340,7 +344,7 @@ export default function ClientsPage() {
             <select
               value={statutFilter}
               onChange={e => setStatutFilter(e.target.value as StatutClient | '')}
-              className="appearance-none rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-4 pr-10 text-sm font-medium text-gray-700 focus:bg-white focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 outline-none transition cursor-pointer"
+              className="appearance-none rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-4 pr-10 text-sm font-medium text-gray-700 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 outline-none transition cursor-pointer"
             >
               {STATUTS.map(s => (
                 <option key={s.value} value={s.value}>{s.label === 'Tous' ? 'Tous les statuts' : s.label}</option>
@@ -381,9 +385,9 @@ export default function ClientsPage() {
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
             <span className="text-xs text-gray-400 font-medium">Filtres actifs :</span>
             {search && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                 &quot;{search}&quot;
-                <button onClick={() => setSearch('')} className="hover:text-violet-900 cursor-pointer">
+                <button onClick={() => setSearch('')} className="hover:text-blue-900 cursor-pointer">
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                   </svg>
@@ -391,9 +395,9 @@ export default function ClientsPage() {
               </span>
             )}
             {statutFilter && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                 {STATUTS.find(s => s.value === statutFilter)?.label}
-                <button onClick={() => setStatutFilter('')} className="hover:text-violet-900 cursor-pointer">
+                <button onClick={() => setStatutFilter('')} className="hover:text-blue-900 cursor-pointer">
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                   </svg>
@@ -413,7 +417,7 @@ export default function ClientsPage() {
           <span className="font-semibold text-gray-700">{pagination.total}</span> client{pagination.total > 1 ? 's' : ''} trouvé{pagination.total > 1 ? 's' : ''}
         </p>
         {selectedIds.size > 0 && (
-          <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
             {selectedIds.size} sélectionné{selectedIds.size > 1 ? 's' : ''}
           </span>
         )}
@@ -430,7 +434,7 @@ export default function ClientsPage() {
                     type="checkbox"
                     checked={clients.length > 0 && selectedIds.size === clients.length}
                     onChange={toggleAll}
-                    className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                 </th>
                 <th className="px-4 py-3.5 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">ID</th>
@@ -448,7 +452,7 @@ export default function ClientsPage() {
                 <tr>
                   <td colSpan={9} className="py-20 text-center">
                     <div className="flex flex-col items-center gap-3">
-                      <div className="animate-spin h-8 w-8 border-[3px] border-violet-600 border-t-transparent rounded-full" />
+                      <div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" />
                       <p className="text-sm text-gray-400">Chargement des clients...</p>
                     </div>
                   </td>
@@ -457,8 +461,8 @@ export default function ClientsPage() {
                 <tr>
                   <td colSpan={9} className="py-20 text-center">
                     <div className="flex flex-col items-center gap-4">
-                      <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-violet-50 to-indigo-100 flex items-center justify-center">
-                        <svg className="h-12 w-12 text-violet-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                      <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+                        <svg className="h-12 w-12 text-blue-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
                         </svg>
                       </div>
@@ -468,7 +472,7 @@ export default function ClientsPage() {
                       </div>
                       <button
                         onClick={() => router.push('/dashboard/clients/nouveau')}
-                        className="mt-2 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:from-violet-700 hover:to-indigo-700 transition-all cursor-pointer"
+                        className="mt-2 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:from-blue-700 hover:to-indigo-700 transition-all cursor-pointer"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -482,7 +486,7 @@ export default function ClientsPage() {
                 <tr
                   key={client.id}
                   onClick={() => router.push(`/dashboard/clients/${client.id}`)}
-                  className={`group hover:bg-violet-50/30 cursor-pointer transition-colors ${selectedIds.has(client.id) ? 'bg-violet-50/50' : ''}`}
+                    className={`group hover:bg-blue-50/30 cursor-pointer transition-colors ${selectedIds.has(client.id) ? 'bg-blue-50/50' : ''}`}
                 >
                   <td className="w-12 px-4 py-3.5">
                     <input
@@ -490,7 +494,7 @@ export default function ClientsPage() {
                       checked={selectedIds.has(client.id)}
                       onChange={e => { e.stopPropagation(); toggleSelect(client.id); }}
                       onClick={e => e.stopPropagation()}
-                      className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                   </td>
                   <td className="px-4 py-3.5">
@@ -502,7 +506,7 @@ export default function ClientsPage() {
                         {getInitials(client.raison_sociale)}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-violet-700 transition-colors">{client.raison_sociale}</p>
+                        <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-blue-700 transition-colors">{client.raison_sociale}</p>
                         <p className="text-[11px] text-gray-400">{FORME_SHORT[client.forme_juridique] || client.forme_juridique}</p>
                       </div>
                     </div>
@@ -528,7 +532,7 @@ export default function ClientsPage() {
                     {customFieldsPreview(client).length > 0 ? (
                       <div className="flex flex-wrap gap-1.5 max-w-[200px]">
                         {customFieldsPreview(client).map((champ, idx) => (
-                          <span key={`${champ.label}-${idx}`} className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                          <span key={`${champ.label}-${idx}`} className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
                             {champ.label}: {champ.valeur}
                           </span>
                         ))}
@@ -547,7 +551,7 @@ export default function ClientsPage() {
                     <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={e => { e.stopPropagation(); router.push(`/dashboard/clients/${client.id}`); }}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
                         title="Voir la fiche"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -557,7 +561,7 @@ export default function ClientsPage() {
                       </button>
                       <button
                         onClick={e => { e.stopPropagation(); router.push(`/dashboard/clients/${client.id}/modifier`); }}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
                         title="Modifier"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -620,7 +624,7 @@ export default function ClientsPage() {
                     onClick={() => fetchClients(p)}
                     className={`h-9 min-w-[36px] rounded-xl text-sm font-medium transition cursor-pointer ${
                       p === pagination.page
-                        ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm shadow-violet-500/25'
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm shadow-blue-500/25'
                         : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
                     }`}
                   >
@@ -646,9 +650,9 @@ export default function ClientsPage() {
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
-            <div className="bg-gradient-to-r from-violet-50 to-indigo-50 p-6 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
-                <svg className="h-6 w-6 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
                 </svg>
               </div>
@@ -665,29 +669,29 @@ export default function ClientsPage() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => setExportFormat('xlsx')}
-                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'xlsx' ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'xlsx' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}
                   >
-                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'xlsx' ? 'bg-violet-100' : 'bg-gray-100'}`}>
-                      <svg className={`h-5 w-5 ${exportFormat === 'xlsx' ? 'text-violet-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'xlsx' ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                      <svg className={`h-5 w-5 ${exportFormat === 'xlsx' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v.375" />
                       </svg>
                     </div>
                     <div>
-                      <p className={`text-sm font-semibold ${exportFormat === 'xlsx' ? 'text-violet-700' : 'text-gray-700'}`}>Excel (.xlsx)</p>
+                      <p className={`text-sm font-semibold ${exportFormat === 'xlsx' ? 'text-blue-700' : 'text-gray-700'}`}>Excel (.xlsx)</p>
                       <p className="text-xs text-gray-400">Compatible Excel, Google Sheets</p>
                     </div>
                   </button>
                   <button
                     onClick={() => setExportFormat('csv')}
-                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'csv' ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                    className={`flex-1 flex items-center gap-3 rounded-xl border-2 p-3.5 transition cursor-pointer ${exportFormat === 'csv' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}
                   >
-                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'csv' ? 'bg-violet-100' : 'bg-gray-100'}`}>
-                      <svg className={`h-5 w-5 ${exportFormat === 'csv' ? 'text-violet-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${exportFormat === 'csv' ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                      <svg className={`h-5 w-5 ${exportFormat === 'csv' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                       </svg>
                     </div>
                     <div>
-                      <p className={`text-sm font-semibold ${exportFormat === 'csv' ? 'text-violet-700' : 'text-gray-700'}`}>CSV (.csv)</p>
+                      <p className={`text-sm font-semibold ${exportFormat === 'csv' ? 'text-blue-700' : 'text-gray-700'}`}>CSV (.csv)</p>
                       <p className="text-xs text-gray-400">Format texte universel</p>
                     </div>
                   </button>
@@ -699,7 +703,7 @@ export default function ClientsPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Données à inclure</label>
                 <div className="space-y-2">
                   <label className="flex items-center gap-3 rounded-lg bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100 transition">
-                    <input type="checkbox" checked disabled className="h-4 w-4 rounded border-gray-300 text-violet-600" />
+                    <input type="checkbox" checked disabled className="h-4 w-4 rounded border-gray-300 text-blue-600" />
                     <div>
                       <p className="text-sm font-medium text-gray-700">Informations générales</p>
                       <p className="text-xs text-gray-400">Raison sociale, SIRET, email, téléphone, statut...</p>
@@ -710,7 +714,7 @@ export default function ClientsPage() {
                       type="checkbox"
                       checked={exportAdresses}
                       onChange={e => setExportAdresses(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                     <div>
                       <p className="text-sm font-medium text-gray-700">Adresses</p>
@@ -722,7 +726,7 @@ export default function ClientsPage() {
                       type="checkbox"
                       checked={exportContacts}
                       onChange={e => setExportContacts(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                     <div>
                       <p className="text-sm font-medium text-gray-700">Contacts</p>
@@ -742,10 +746,10 @@ export default function ClientsPage() {
                         type="radio"
                         checked={!exportApplyFilters}
                         onChange={() => setExportApplyFilters(false)}
-                        className="h-4 w-4 border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
-                      />
-                      <div>
-                        <p className="text-sm font-medium text-gray-700">Tous les clients</p>
+                      className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Tous les clients</p>
                         <p className="text-xs text-gray-400">Exporter la totalité de la base clients</p>
                       </div>
                     </label>
@@ -754,10 +758,10 @@ export default function ClientsPage() {
                         type="radio"
                         checked={exportApplyFilters}
                         onChange={() => setExportApplyFilters(true)}
-                        className="h-4 w-4 border-gray-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
-                      />
-                      <div>
-                        <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
+                      className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
                         <p className="text-xs text-gray-400">
                           {statutFilter && searchDebounce
                             ? `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label} + Recherche : "${searchDebounce}"`
@@ -791,7 +795,7 @@ export default function ClientsPage() {
                 <button
                   onClick={handleExport}
                   disabled={exporting}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:from-violet-700 hover:to-indigo-700 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:from-blue-700 hover:to-indigo-700 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {exporting ? (
                     <>

@@ -25,7 +25,7 @@ const STATUT_CONFIG: Record<StatutDevis, { label: string; bg: string; text: stri
   ACCEPTE: { label: 'Accepté', bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
   REFUSE: { label: 'Refusé', bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500' },
   EXPIRE: { label: 'Expiré', bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500' },
-  FACTURE: { label: 'Facturé', bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-500' },
+  FACTURE: { label: 'Facturé', bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
 };
 
 const STATUT_TABS: { label: string; value: StatutDevis | '' }[] = [
@@ -268,7 +268,7 @@ export default function DevisListPage() {
             { label: 'Devis ce mois', value: stats.total_mois.count, sub: `${formatMontant(stats.total_mois.montant)} €`, color: 'from-blue-500 to-indigo-500', icon: (<svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>) },
             { label: 'En attente', value: stats.en_attente.count, sub: `${formatMontant(stats.en_attente.montant)} €`, color: 'from-amber-500 to-orange-500', icon: (<svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>) },
             { label: 'Acceptés ce mois', value: stats.acceptes_mois.count, sub: `${formatMontant(stats.acceptes_mois.montant)} €`, color: 'from-emerald-500 to-teal-500', icon: (<svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>) },
-            { label: 'Taux de conversion', value: `${stats.taux_conversion}%`, sub: 'Acceptés / Envoyés', color: 'from-violet-500 to-purple-500', icon: (<svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>) },
+            { label: 'Taux de conversion', value: `${stats.taux_conversion}%`, sub: 'Acceptés / Envoyés', color: 'from-indigo-500 to-violet-500', icon: (<svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>) },
           ].map(stat => (
             <div key={stat.label} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between">
@@ -411,7 +411,7 @@ export default function DevisListPage() {
                       )}
                       <button
                         onClick={e => { e.stopPropagation(); handleAction('pdf', devis); }}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition cursor-pointer"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
                         title="PDF"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
@@ -435,7 +435,7 @@ export default function DevisListPage() {
                                 </>
                               )}
                               {devis.statut === 'ACCEPTE' && (
-                                <button onClick={e => { e.stopPropagation(); handleAction('transformer', devis); }} className="w-full text-left px-4 py-2 text-sm text-violet-700 hover:bg-violet-50 cursor-pointer">Transformer en facture</button>
+                                <button onClick={e => { e.stopPropagation(); handleAction('transformer', devis); }} className="w-full text-left px-4 py-2 text-sm text-blue-700 hover:bg-blue-50 cursor-pointer">Transformer en facture</button>
                               )}
                               {['BROUILLON', 'REFUSE'].includes(devis.statut) && (
                                 <>

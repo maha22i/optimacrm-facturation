@@ -13,12 +13,20 @@ export async function listFactures(req, res, next) {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
-    const { statut, client_id, date_debut, date_fin, type_origine, search } = req.query;
+    const { statut, client_id, date_debut, date_fin, type_origine, type_contrat, search } = req.query;
 
     const result = await factureService.listFactures({
-      page, limit, statut, client_id, date_debut, date_fin, type_origine, search,
+      page, limit, statut, client_id, date_debut, date_fin, type_origine, type_contrat, search,
     });
     sendPaginated(res, result.factures, result.pagination);
+  } catch (err) { next(err); }
+}
+
+export async function getAllIds(req, res, next) {
+  try {
+    const { statut, client_id, date_debut, date_fin, type_origine, type_contrat, search } = req.query;
+    const ids = await factureService.getAllFactureIds({ statut, client_id, date_debut, date_fin, type_origine, type_contrat, search });
+    sendSuccess(res, ids);
   } catch (err) { next(err); }
 }
 
@@ -339,6 +347,30 @@ export async function envoyerLot(req, res, next) {
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
 
     sendSuccess(res, result, `${result.envoyees} facture(s) envoyée(s) par email`);
+  } catch (err) { next(err); }
+}
+
+export async function supprimerLot(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Le champ ids est requis (tableau non vide)' });
+    }
+
+    const result = await factureService.supprimerLot(ids, req.user.id);
+
+    try {
+      await activityLog.log({
+        userId: req.user.id, userNom: activityLog.getUserName(req.user),
+        action: 'factures_supprimees_lot', module: 'factures',
+        description: `Suppression en lot : ${result.supprimees} supprimée(s), ${result.erreurs.length} erreur(s)`,
+        details: { nb_demandees: ids.length, nb_supprimees: result.supprimees, nb_erreurs: result.erreurs.length },
+        statut: result.erreurs.length ? 'partiel' : 'succes',
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+
+    sendSuccess(res, result, `${result.supprimees} facture(s) supprimée(s)`);
   } catch (err) { next(err); }
 }
 

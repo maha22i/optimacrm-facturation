@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import * as ctrl from './facture.controller.js';
+import * as ctrlTelephonie from './facturationTelephonie.controller.js';
+import * as ctrlAbonnement from './facturationAbonnement.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
@@ -12,8 +14,21 @@ router.use(authenticate);
 
 router.get('/', checkPermission('factures_read'), ctrl.listFactures);
 router.get('/stats', checkPermission('factures_read'), ctrl.getFacturesStats);
+router.get('/all-ids', checkPermission('factures_read'), ctrl.getAllIds);
 router.get('/contrats-a-facturer', checkPermission('factures_write'), ctrl.getContratsAFacturer);
 router.get('/releves-disponibles/:contratId', checkPermission('factures_read'), ctrl.getRelevesDisponibles);
+
+// ── Facturation périodique par abonnement (moteur générique) ─────────────
+
+router.get('/contrats-abonnement-a-facturer', checkPermission('factures_write'), ctrlAbonnement.getContratsAbonnement);
+router.post('/generer-abonnement', checkPermission('factures_write'), ctrlAbonnement.genererFacturesAbonnement);
+router.get('/simuler-abonnement/:contratId', checkPermission('factures_read'), ctrlAbonnement.simulerFactureAbonnement);
+
+// ── Rétrocompatibilité anciennes routes téléphonie ───────────────────────
+
+router.get('/contrats-telephonie-a-facturer', checkPermission('factures_write'), ctrlTelephonie.getContratsTelephonie);
+router.post('/generer-telephonie', checkPermission('factures_write'), ctrlTelephonie.genererFacturesTelephonie);
+router.get('/simuler-telephonie/:contratId', checkPermission('factures_read'), ctrlTelephonie.simulerFactureTelephonie);
 
 router.get('/:id/pdf', checkPermission('factures_read'), async (req, res, next) => {
   try {
@@ -62,5 +77,6 @@ router.post('/generer-lot', checkPermission('factures_write'), ctrl.executerGene
 router.post('/valider-lot', checkPermission('factures_write'), ctrl.validerLot);
 router.post('/envoyer-lot', checkPermission('factures_write'), ctrl.envoyerLot);
 router.post('/telecharger-lot', checkPermission('factures_write'), ctrl.telechargerLot);
+router.post('/supprimer-lot', checkPermission('factures_write'), ctrl.supprimerLot);
 
 export default router;

@@ -93,7 +93,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600">
+            <div className="h-10 w-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
             </div>
             <div>
@@ -108,7 +108,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
 
         {loading ? (
           <div className="p-10 flex justify-center">
-            <div className="animate-spin h-8 w-8 border-[3px] border-violet-600 border-t-transparent rounded-full" />
+            <div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" />
           </div>
         ) : (
           <div className="p-6 space-y-5">
@@ -126,7 +126,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
                 value={destinataire}
                 onChange={e => setDestinataire(e.target.value)}
                 placeholder="client@email.com"
-                className="w-full rounded-xl border border-gray-200 focus:border-violet-400 focus:ring-violet-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
               />
             </div>
 
@@ -136,7 +136,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
                 value={sujet}
                 onChange={e => setSujet(e.target.value)}
                 placeholder="Facture n°..."
-                className="w-full rounded-xl border border-gray-200 focus:border-violet-400 focus:ring-violet-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition"
               />
             </div>
 
@@ -146,7 +146,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
                 value={corps}
                 onChange={e => setCorps(e.target.value)}
                 rows={8}
-                className="w-full rounded-xl border border-gray-200 focus:border-violet-400 focus:ring-violet-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition resize-y"
+                className="w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-3 px-4 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition resize-y"
               />
             </div>
 
@@ -172,7 +172,7 @@ function SendEmailModal({ facture, onClose, onSent }: { facture: FactureDetail; 
           <button
             onClick={handleSend}
             disabled={sending || !destinataire || !sujet}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {sending ? (
               <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Envoi en cours...</>
@@ -249,7 +249,7 @@ function LineEditModal({ ligne, onClose, onSave }: {
 
   const set = (key: keyof LigneFormData, value: string | number) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const inputCls = 'w-full rounded-xl border border-gray-200 focus:border-violet-400 focus:ring-violet-500/10 bg-gray-50 py-2.5 px-3.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition';
+  const inputCls = 'w-full rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-blue-500/10 bg-gray-50 py-2.5 px-3.5 text-sm text-gray-900 placeholder-gray-400 outline-none focus:bg-white focus:ring-2 transition';
   const labelCls = 'block text-sm font-semibold text-gray-700 mb-1.5';
 
   return (
@@ -258,7 +258,7 @@ function LineEditModal({ ligne, onClose, onSave }: {
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600">
+            <div className="h-10 w-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
               {ligne ? (
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
               ) : (
@@ -320,16 +320,16 @@ function LineEditModal({ ligne, onClose, onSave }: {
             </div>
           </div>
 
-          <div className="rounded-xl bg-violet-50 border border-violet-200 p-4 space-y-1.5">
+          <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 space-y-1.5">
             <div className="flex justify-between text-sm"><span className="text-gray-600">Total HT</span><span className="font-semibold text-gray-900">{fmt(totalHt)} €</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-600">TVA ({form.taux_tva} %)</span><span className="text-gray-700">{fmt(tva)} €</span></div>
-            <div className="flex justify-between text-sm font-bold border-t border-violet-200 pt-1.5"><span className="text-violet-700">Total TTC</span><span className="text-violet-700">{fmt(totalTtc)} €</span></div>
+            <div className="flex justify-between text-sm font-bold border-t border-blue-200 pt-1.5"><span className="text-blue-700">Total TTC</span><span className="text-blue-700">{fmt(totalTtc)} €</span></div>
           </div>
         </div>
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/50">
           <button onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">Annuler</button>
-          <button onClick={handleSave} disabled={!isValid || saving} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+          <button onClick={handleSave} disabled={!isValid || saving} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
             {saving ? <div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : null}
             {saving ? 'Enregistrement...' : 'Enregistrer'}
           </button>
@@ -432,7 +432,7 @@ function RelevePopover({ ligne, onClose }: { ligne: FactureLigne; onClose: () =>
         {info.numero_batch && (
           <>
             <div className="border-t border-gray-100 pt-2 mt-2" />
-            <p className="text-xs text-gray-500">Source: Import <span className="font-mono font-medium text-violet-600">{info.numero_batch}</span></p>
+            <p className="text-xs text-gray-500">Source: Import <span className="font-mono font-medium text-blue-600">{info.numero_batch}</span></p>
             {info.date_import && <p className="text-xs text-gray-500">du {formatDate(info.date_import)}</p>}
             {info.user_nom && <p className="text-xs text-gray-500">Importé par {info.user_nom}</p>}
           </>
@@ -440,7 +440,7 @@ function RelevePopover({ ligne, onClose }: { ligne: FactureLigne; onClose: () =>
       </div>
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
         {info.import_id && (
-          <Link href={`/dashboard/parc-machines/imports/${info.import_id}`} className="text-xs font-medium text-violet-600 hover:text-violet-700 hover:underline">
+          <Link href={`/dashboard/parc-machines/imports/${info.import_id}`} className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline">
             Voir l&apos;import
           </Link>
         )}
@@ -774,7 +774,7 @@ export default function FactureDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin h-10 w-10 border-[3px] border-violet-600 border-t-transparent rounded-full" />
+        <div className="animate-spin h-10 w-10 border-[3px] border-blue-600 border-t-transparent rounded-full" />
       </div>
     );
   }
@@ -804,24 +804,23 @@ export default function FactureDetailPage() {
           {facture.statut === 'Brouillon' && (
             <>
               <button onClick={() => router.push(`/dashboard/factures/${facture.id}/modifier`)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">Modifier</button>
-              <button onClick={() => handleAction('valider')} className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 transition cursor-pointer">Valider</button>
+              <button onClick={() => handleAction('valider')} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition cursor-pointer">Valider</button>
               <button onClick={() => handleAction('supprimer')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Supprimer</button>
             </>
           )}
           {facture.statut === 'Validée' && (
             <>
-              <button onClick={() => setShowEmailModal(true)} className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 transition cursor-pointer inline-flex items-center gap-2">
+              <button onClick={() => setShowEmailModal(true)} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition cursor-pointer inline-flex items-center gap-2">
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
                 Envoyer par email
               </button>
-              <button onClick={() => handleAction('envoyer')} className="px-4 py-2 rounded-xl border border-violet-200 text-sm font-semibold text-violet-600 hover:bg-violet-50 transition cursor-pointer">Marquer envoyée</button>
+              <button onClick={() => handleAction('envoyer')} className="px-4 py-2 rounded-xl border border-blue-200 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition cursor-pointer">Marquer envoyée</button>
               <button onClick={() => setShowAvoirModal(true)} className="px-4 py-2 rounded-xl border-2 border-red-300 bg-red-50 text-sm font-semibold text-red-700 hover:bg-red-100 transition cursor-pointer">Créer un avoir</button>
-              <button onClick={() => handleAction('annuler')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Annuler</button>
             </>
           )}
           {facture.statut === 'Envoyée' && (
             <>
-            <button onClick={() => setShowEmailModal(true)} className="px-4 py-2 rounded-xl border border-violet-200 text-sm font-semibold text-violet-600 hover:bg-violet-50 transition cursor-pointer inline-flex items-center gap-2">
+            <button onClick={() => setShowEmailModal(true)} className="px-4 py-2 rounded-xl border border-blue-200 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition cursor-pointer inline-flex items-center gap-2">
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
               Renvoyer par email
             </button>
@@ -853,11 +852,11 @@ export default function FactureDetailPage() {
         <div className="space-y-6">
           {/* Machine */}
           {facture.numero_serie && (
-            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-5">
-              <p className="font-semibold text-violet-800">Concerne votre contrat n° : {facture.numero_contrat}</p>
-              <p className="text-sm text-violet-600 mt-1">CONTRAT COPIE</p>
-              <p className="text-sm text-violet-600">Matricule machine: {facture.numero_serie}</p>
-              <p className="text-sm text-violet-600">Modèle : {facture.modele_machine}</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
+              <p className="font-semibold text-blue-800">Concerne votre contrat n° : {facture.numero_contrat}</p>
+              <p className="text-sm text-blue-600 mt-1">CONTRAT COPIE</p>
+              <p className="text-sm text-blue-600">Matricule machine: {facture.numero_serie}</p>
+              <p className="text-sm text-blue-600">Modèle : {facture.modele_machine}</p>
             </div>
           )}
 
@@ -866,7 +865,7 @@ export default function FactureDetailPage() {
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-semibold text-gray-900">Lignes de facture</h2>
               {isEditable && (
-                <button onClick={handleAddLine} className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition cursor-pointer">
+                <button onClick={handleAddLine} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition cursor-pointer">
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                   Ajouter une ligne
                 </button>
@@ -917,7 +916,7 @@ export default function FactureDetailPage() {
                                 <button
                                   onClick={() => setPopoverLigneId(popoverLigneId === l.id ? null : (l.id ?? null))}
                                   title="Voir le relevé source"
-                                  className="p-1 rounded-md hover:bg-violet-50 text-gray-400 hover:text-violet-600 transition cursor-pointer"
+                                  className="p-1 rounded-md hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition cursor-pointer"
                                 >
                                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>
                                 </button>
@@ -935,7 +934,7 @@ export default function FactureDetailPage() {
                         {isEditable && (
                           <td className="px-3 py-3 text-center">
                             <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => handleEditLine(l)} title="Modifier" className="p-1.5 rounded-lg hover:bg-violet-50 text-gray-400 hover:text-violet-600 transition cursor-pointer">
+                              <button onClick={() => handleEditLine(l)} title="Modifier" className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition cursor-pointer">
                                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
                               </button>
                               <button onClick={() => setDeletingLigne(l)} title="Supprimer" className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition cursor-pointer">
@@ -952,7 +951,7 @@ export default function FactureDetailPage() {
             </div>
             {isEditable && (
               <div className="px-5 py-3 border-t border-gray-100 bg-gray-50/30">
-                <button onClick={handleAddLine} className="inline-flex items-center gap-2 text-sm font-medium text-violet-600 hover:text-violet-700 transition cursor-pointer">
+                <button onClick={handleAddLine} className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 transition cursor-pointer">
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                   Ajouter une ligne
                 </button>
@@ -974,7 +973,7 @@ export default function FactureDetailPage() {
                 <div className="border-t border-gray-200 pt-2" />
                 <div className="flex justify-between text-sm"><span className="text-gray-500">Hors Taxe</span><span className="font-semibold">{fmt(facture.total_ht)} €</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">TVA {facture.taux_tva}%</span><span>{fmt(facture.montant_tva)} €</span></div>
-                <div className="flex justify-between text-base font-bold text-violet-700 pt-1 border-t border-violet-200"><span>TTC</span><span>{fmt(facture.total_ttc)} €</span></div>
+                <div className="flex justify-between text-base font-bold text-blue-700 pt-1 border-t border-blue-200"><span>TTC</span><span>{fmt(facture.total_ttc)} €</span></div>
               </div>
             </div>
           </div>
@@ -989,7 +988,7 @@ export default function FactureDetailPage() {
             <div className="space-y-2">
               <div className="flex justify-between"><span className="text-sm text-gray-500">Total HT</span><span className="text-lg font-bold text-gray-900">{fmt(facture.total_ht)} €</span></div>
               <div className="flex justify-between"><span className="text-sm text-gray-500">TVA</span><span className="text-sm text-gray-600">{fmt(facture.montant_tva)} €</span></div>
-              <div className="flex justify-between border-t border-gray-100 pt-2"><span className="text-sm font-semibold text-violet-700">Total TTC</span><span className="text-xl font-bold text-violet-700">{fmt(facture.total_ttc)} €</span></div>
+              <div className="flex justify-between border-t border-gray-100 pt-2"><span className="text-sm font-semibold text-blue-700">Total TTC</span><span className="text-xl font-bold text-blue-700">{fmt(facture.total_ttc)} €</span></div>
             </div>
           </div>
 
@@ -997,7 +996,7 @@ export default function FactureDetailPage() {
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Client</h3>
             {(() => {
-              const cl = (facture as Record<string, unknown>).client_live as { numero_client?: string; raison_sociale?: string; email?: string; telephone?: string; adresse?: string; code_postal?: string; ville?: string } | null;
+              const cl = (facture as unknown as Record<string, unknown>).client_live as { numero_client?: string; raison_sociale?: string; email?: string; telephone?: string; adresse?: string; code_postal?: string; ville?: string } | null;
               const nom = cl?.raison_sociale || facture.client_raison_sociale;
               const code = cl?.numero_client || facture.code_client;
               const email = cl?.email || facture.client_email;
@@ -1007,7 +1006,7 @@ export default function FactureDetailPage() {
               const ville = cl?.ville || facture.client_ville;
               return (
                 <>
-                  <p className="font-semibold text-gray-900 text-sm cursor-pointer hover:text-violet-600 transition" onClick={() => router.push(`/dashboard/clients/${facture.client_id}`)}>{nom}</p>
+                  <p className="font-semibold text-gray-900 text-sm cursor-pointer hover:text-blue-600 transition" onClick={() => router.push(`/dashboard/clients/${facture.client_id}`)}>{nom}</p>
                   <p className="text-xs text-gray-400 font-mono">{code}</p>
                   {email && <p className="text-sm text-gray-500 mt-1">{email}</p>}
                   {tel && <p className="text-sm text-gray-500">{tel}</p>}
@@ -1030,7 +1029,7 @@ export default function FactureDetailPage() {
               <div className="flex justify-between"><span className="text-gray-500">Mode règlement</span><span className="text-gray-900">{facture.mode_reglement}</span></div>
               {facture.numero_contrat && (
                 <div className="flex justify-between"><span className="text-gray-500">Contrat</span>
-                  <span className="text-violet-600 font-semibold cursor-pointer hover:underline" onClick={() => facture.contrat_id && router.push(`/dashboard/contrats/${facture.contrat_id}`)}>{facture.numero_contrat}</span>
+                  <span className="text-blue-600 font-semibold cursor-pointer hover:underline" onClick={() => facture.contrat_id && router.push(`/dashboard/contrats/${facture.contrat_id}`)}>{facture.numero_contrat}</span>
                 </div>
               )}
             </div>
@@ -1043,7 +1042,7 @@ export default function FactureDetailPage() {
               <div className="space-y-3">
                 {facture.historique.map(h => (
                   <div key={h.id} className="flex items-start gap-3">
-                    <div className="h-2 w-2 rounded-full bg-violet-400 mt-1.5 shrink-0" />
+                    <div className="h-2 w-2 rounded-full bg-blue-400 mt-1.5 shrink-0" />
                     <div>
                       <p className="text-sm font-medium text-gray-900">{h.action}</p>
                       {h.description && <p className="text-xs text-gray-500">{h.description}</p>}
@@ -1068,7 +1067,7 @@ export default function FactureDetailPage() {
                         a.statut === 'Annulé' ? 'bg-gray-100 text-gray-400 line-through' :
                         a.statut === 'Validé' ? 'bg-blue-50 text-blue-700' :
                         a.statut === 'Remboursé' ? 'bg-emerald-50 text-emerald-700' :
-                        a.statut === 'Imputé' ? 'bg-purple-50 text-purple-700' :
+                        a.statut === 'Imputé' ? 'bg-indigo-50 text-indigo-700' :
                         'bg-gray-100 text-gray-600'
                       }`}>{a.statut}</span>
                     </div>

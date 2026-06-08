@@ -61,6 +61,12 @@ async function loadMigrations() {
   migrations.push(m31);
   const m32 = await import('./migrations/032_create_avoirs.js');
   migrations.push(m32);
+  const m33 = await import('./migrations/033_alter_bic_length.js');
+  migrations.push(m33);
+  const m34 = await import('./migrations/034_reset_telephonie_prochaine_facturation.js');
+  migrations.push(m34);
+  const m35 = await import('./migrations/035_add_informatique_support.js');
+  migrations.push(m35);
 }
 
 async function ensureMigrationsTable(client) {
