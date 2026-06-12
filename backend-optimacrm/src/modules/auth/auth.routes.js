@@ -54,39 +54,50 @@ router.put(
   ctrl.changePassword,
 );
 
-// ── Admin only ──────────────────────────────────────────────────────────────
+// ── Admin & Admin Technique ─────────────────────────────────────────────────
 
 router.post(
   '/users',
   authenticate,
-  authorize('admin'),
+  authorize('admin', 'admin_technique'),
   validate({
     email:      { required: true, type: 'email', label: 'Email' },
     password:   { required: true, minLength: 8, label: 'Password' },
     first_name: { required: true, minLength: 2, maxLength: 100, label: 'First name' },
     last_name:  { required: true, minLength: 2, maxLength: 100, label: 'Last name' },
-    role:       { enum: ['admin', 'user'] },
+    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien'] },
   }),
   ctrl.createUser,
 );
 
-router.get('/users',     authenticate, authorize('admin'), ctrl.getAllUsers);
-router.get('/users/:id', authenticate, authorize('admin'), ctrl.getUserById);
+router.get('/users',     authenticate, authorize('admin', 'admin_technique'), ctrl.getAllUsers);
+router.get('/users/:id', authenticate, authorize('admin', 'admin_technique'), ctrl.getUserById);
 
 router.put(
   '/users/:id',
   authenticate,
-  authorize('admin'),
+  authorize('admin', 'admin_technique'),
   validate({
     first_name: { minLength: 2, maxLength: 100 },
     last_name:  { minLength: 2, maxLength: 100 },
     email:      { type: 'email' },
-    role:       { enum: ['admin', 'user'] },
+    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien'] },
     is_active:  { type: 'boolean' },
   }),
   ctrl.updateUser,
 );
 
 router.delete('/users/:id', authenticate, authorize('admin'), ctrl.deleteUser);
+
+router.post('/users/:id/reset-password-link', authenticate, authorize('admin', 'admin_technique'), ctrl.sendResetPasswordLink);
+
+router.post(
+  '/reset-password',
+  validate({
+    token:        { required: true, label: 'Token' },
+    new_password: { required: true, minLength: 8, label: 'Nouveau mot de passe' },
+  }),
+  ctrl.resetPasswordWithToken,
+);
 
 export default router;

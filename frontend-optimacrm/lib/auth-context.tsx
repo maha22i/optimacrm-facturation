@@ -75,6 +75,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasPermission = useCallback((...perms: PermissionKey[]) => {
     if (!state.user) return false;
     if (state.user.role === 'admin') return true;
+    if (state.user.role === 'admin_technique') {
+      const adminTechPerms = new Set([
+        'tickets_read', 'tickets_write', 'tickets_admin', 'techniciens_manage',
+        'clients_read', 'parc_read', 'dashboard', 'users_manage',
+      ]);
+      const allAllowed = perms.every(p => adminTechPerms.has(p));
+      if (allAllowed) return true;
+    }
     const userPerms = state.user.permissions || [];
     return perms.some(p => userPerms.includes(p));
   }, [state.user]);

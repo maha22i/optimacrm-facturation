@@ -1,6 +1,7 @@
 import { pool, query } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
-import { CONTRATS_FIELD_GROUPS, getAllContratFields } from '../../config/contratsFieldSynonyms.js';
+import { CONTRATS_FIELD_GROUPS, getAllContratFields, RUBRIQUE_FIELD_TO_CATEGORIE } from '../../config/contratsFieldSynonyms.js';
+import { getCategoriesForType } from '../../config/contratCategories.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -51,19 +52,6 @@ function parseDecimal(val) {
   return isNaN(n) ? null : n;
 }
 
-function parseDecimal6(val) {
-  if (val == null || val === '') return null;
-  if (typeof val === 'number') return isNaN(val) ? null : val;
-  let s = String(val).trim().replace(/€/g, '').trim();
-  if (s.includes(',')) {
-    s = s.replace(/\s/g, '').replace(',', '.');
-  } else {
-    s = s.replace(/\s/g, '');
-  }
-  const n = parseFloat(s);
-  return isNaN(n) ? null : n;
-}
-
 function parseInteger(val) {
   if (val == null || val === '') return null;
   const n = parseInt(String(val).replace(/\s/g, '').replace(',', '.'), 10);
@@ -71,16 +59,21 @@ function parseInteger(val) {
 }
 
 function parseDate(val) {
-  if (val == null || val === '') return null;
+  if (val == null || val === '' || val === 0 || val === '0') return null;
   if (val instanceof Date) {
     return isNaN(val.getTime()) ? null : val.toISOString().split('T')[0];
   }
   const s = String(val).trim();
+  // ISO 8601 datetime (from JSON roundtrip of xlsx Date objects)
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  // dd/mm/yyyy or dd-mm-yyyy or dd.mm.yyyy
   const dmySlash = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
   if (dmySlash) return `${dmySlash[3]}-${dmySlash[2].padStart(2, '0')}-${dmySlash[1].padStart(2, '0')}`;
+  // yyyy-mm-dd or yyyy/mm/dd
   const ymd = s.match(/^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$/);
   if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
-  // Excel serial date
+  // Excel serial number
   const serial = parseFloat(s);
   if (!isNaN(serial) && serial > 30000 && serial < 60000) {
     const excelEpoch = new Date(1899, 11, 30);
@@ -102,11 +95,19 @@ function cleanText(val) {
 const STATUT_MAP = {
   'contrat actif': 'Actif',
   'nouveau contrat': 'Actif',
+  'actif': 'Actif',
   'suspendu': 'Suspendu',
+  'résiliation prévue': 'Suspendu',
+  'resilisation prevue': 'Suspendu',
   'résilié': 'Résilié',
   'resilie': 'Résilié',
+  'contrat résilié': 'Résilié',
+  'contrat resilie': 'Résilié',
+  'résilié pour reconditionnement': 'Résilié',
   'échu': 'Échu',
   'echu': 'Échu',
+  '1': 'Actif',
+  '0': 'Résilié',
 };
 
 const PERIODICITE_MAP = {
@@ -115,6 +116,11 @@ const PERIODICITE_MAP = {
   'b': 'Bimestriel',
   's': 'Semestriel',
   'a': 'Annuel',
+  'mensuel': 'Mensuel',
+  'bimestriel': 'Bimestriel',
+  'trimestriel': 'Trimestriel',
+  'semestriel': 'Semestriel',
+  'annuel': 'Annuel',
 };
 
 const KNOWN_BRANDS = [
@@ -126,51 +132,92 @@ const KNOWN_BRANDS = [
 function mapStatut(val) {
   if (!val) return 'Actif';
   const key = normalize(val);
-  return STATUT_MAP[key] || 'Actif';
+  return STATUT_MAP[key] || STATUT_MAP[String(val).trim()] || 'Actif';
 }
 
 function mapPeriodicite(val) {
-  if (!val) return 'Trimestriel';
+  if (!val) return 'Mensuel';
   const key = String(val).trim().toLowerCase();
-  return PERIODICITE_MAP[key] || 'Trimestriel';
+  return PERIODICITE_MAP[key] || 'Mensuel';
 }
 
 function mapLocationInterne(val) {
   if (!val) return false;
-  const key = normalize(val);
-  return key === 'location interne';
+  return normalize(val) === 'location interne';
 }
 
 function extractBrandModel(designation) {
   if (!designation) return { marque: null, modele: null, designation_clean: null };
-
   const firstLine = designation.split(/[\r\n]/)[0].trim();
   if (!firstLine) return { marque: null, modele: null, designation_clean: designation };
-
   const words = firstLine.split(/\s+/);
-  const firstWord = words[0]?.toLowerCase();
-
-  // Check 2-word brands first (Konica Minolta)
   if (words.length >= 2) {
     const twoWords = `${words[0]} ${words[1]}`.toLowerCase();
     if (KNOWN_BRANDS.includes(twoWords)) {
-      return {
-        marque: `${words[0]} ${words[1]}`.toUpperCase(),
-        modele: words.slice(2).join(' ') || null,
-        designation_clean: firstLine,
-      };
+      return { marque: `${words[0]} ${words[1]}`.toUpperCase(), modele: words.slice(2).join(' ') || null, designation_clean: firstLine };
     }
   }
-
+  const firstWord = words[0]?.toLowerCase();
   if (KNOWN_BRANDS.includes(firstWord)) {
-    return {
-      marque: words[0].toUpperCase(),
-      modele: words.slice(1).join(' ') || null,
-      designation_clean: firstLine,
-    };
+    return { marque: words[0].toUpperCase(), modele: words.slice(1).join(' ') || null, designation_clean: firstLine };
   }
-
   return { marque: null, modele: null, designation_clean: firstLine };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLIENT RESOLUTION — centralisé pour préparation multi-tenant
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function normalizeClientCode(raw) {
+  if (!raw) return '';
+  let code = String(raw).trim().toUpperCase().replace(/\s+/g, '');
+  const match = code.match(/^([A-Z]+)-?(.+)$/);
+  if (match) {
+    const prefix = match[1];
+    const rest = match[2].replace(/^0+/, '') || '0';
+    return `${prefix}-${rest}`;
+  }
+  const numMatch = code.match(/^0*(\d+)$/);
+  if (numMatch) return numMatch[1];
+  return code;
+}
+
+/**
+ * Charge les clients depuis la DB. Point unique de filtrage —
+ * ajouter `WHERE tenant_id = $1` ici suffira pour le multi-tenant.
+ */
+async function loadClientMap(/* tenantId */) {
+  const clientsRes = await query(
+    'SELECT id, numero_client, raison_sociale FROM clients'
+    // TODO multi-tenant: + ' WHERE tenant_id = $1', [tenantId]
+  );
+  const map = new Map();
+  for (const c of clientsRes.rows) {
+    if (c.numero_client) {
+      map.set(c.numero_client.trim().toUpperCase(), c);
+      map.set(normalizeClientCode(c.numero_client), c);
+    }
+  }
+  return map;
+}
+
+function findClient(clientMap, rawCode) {
+  if (!rawCode) return null;
+  const upper = String(rawCode).trim().toUpperCase();
+  if (clientMap.has(upper)) return clientMap.get(upper);
+  const normalized = normalizeClientCode(rawCode);
+  return clientMap.get(normalized) || null;
+}
+
+/**
+ * Charge les contrats existants. Point unique de filtrage multi-tenant.
+ */
+async function loadExistingContrats(/* tenantId */) {
+  const res = await query(
+    'SELECT id, numero_contrat FROM contrats WHERE deleted_at IS NULL'
+    // TODO multi-tenant: + ' AND tenant_id = $1', [tenantId]
+  );
+  return new Map(res.rows.map(r => [r.numero_contrat.trim().toUpperCase(), r.id]));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -189,7 +236,6 @@ async function loadCustomFields() {
      WHERE entite = 'CONTRAT' AND actif = true
      ORDER BY section_ordre, section, ordre`
   );
-
   const grouped = new Map();
   for (const row of result.rows) {
     if (!grouped.has(row.section)) grouped.set(row.section, []);
@@ -270,7 +316,7 @@ function autoMapField(sourceHeader, allTargetFields) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PARSE
+// PARSE — accepts optional typeContrat for pre-selecting rubrique fields
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function parseCSV(text) {
@@ -299,7 +345,7 @@ function parseCSV(text) {
   return result;
 }
 
-export async function parseFile(file) {
+export async function parseFile(file, typeContrat = null) {
   await fs.mkdir(TEMP_DIR, { recursive: true });
 
   const ext = path.extname(file.originalname).toLowerCase();
@@ -322,7 +368,6 @@ export async function parseFile(file) {
     throw ApiError.badRequest('Le fichier est vide ou ne contient qu\'une seule ligne');
   }
 
-  // Normalize headers (may contain \n)
   const headers = rows[0].map(h => String(h ?? '').replace(/\r?\n/g, ' ').trim());
   const dataRows = rows.slice(1).filter(row =>
     row.some(cell => cell != null && cell !== '' && String(cell).trim() !== '')
@@ -330,7 +375,7 @@ export async function parseFile(file) {
 
   const fileId = `temp_contrats_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const tempPath = path.join(TEMP_DIR, `${fileId}.json`);
-  await fs.writeFile(tempPath, JSON.stringify({ headers, rows: dataRows }));
+  await fs.writeFile(tempPath, JSON.stringify({ headers, rows: dataRows, typeContrat }));
 
   const preview = dataRows.slice(0, 5).map(row => {
     const obj = {};
@@ -346,8 +391,32 @@ export async function parseFile(file) {
     allTargetFields.push(...fields);
   }
 
+  // Try to load a saved mapping for this type
+  let savedMappingHint = null;
+  if (typeContrat) {
+    const savedRes = await query(
+      "SELECT mapping FROM import_mappings_saved WHERE entity_type = 'contrats' AND type_contrat = $1 ORDER BY updated_at DESC LIMIT 1",
+      [typeContrat]
+    );
+    if (savedRes.rows.length > 0) {
+      savedMappingHint = savedRes.rows[0].mapping;
+    }
+  }
+
   const usedFields = new Set();
   const mappings = headers.map(header => {
+    // If we have a saved mapping hint, use it first
+    if (savedMappingHint && savedMappingHint[header]) {
+      const savedField = savedMappingHint[header];
+      usedFields.add(savedField);
+      return {
+        source_header: header,
+        suggested_field: savedField,
+        confidence: 0.95,
+        field_group: null,
+        is_custom_field: savedField.startsWith('custom_'),
+      };
+    }
     const result = autoMapField(header, allTargetFields.filter(f => !usedFields.has(f.key)));
     if (result.suggested_field) usedFields.add(result.suggested_field);
     return { source_header: header, ...result };
@@ -377,6 +446,11 @@ export async function parseFile(file) {
     });
   }
 
+  // Detect format
+  const hasRubriqueFields = mappings.some(m =>
+    m.suggested_field && m.suggested_field.startsWith('rubrique_')
+  );
+
   return {
     file_id: fileId,
     headers,
@@ -387,11 +461,13 @@ export async function parseFile(file) {
       standard: availableFieldsStandard,
       custom: availableFieldsCustom,
     },
+    type_contrat: typeContrat,
+    detected_format: hasRubriqueFields ? 'colonnes_rubriques' : 'standard',
   };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// VALIDATE
+// FIELD VALUE PARSING
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function parseFieldValue(field, rawVal, customFieldsFlat) {
@@ -403,7 +479,7 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
     'cout_copie_t1', 'cout_copie_t2', 'cout_copie_t3',
   ];
   const decimalFields = [
-    'montant_finance', 'loyer_ht',
+    'montant_finance', 'loyer_ht', 'taux_tva',
     'service_connectic', 'service_collecteur', 'service_divers', 'service_autre',
     'derniere_facture_montant',
   ];
@@ -417,7 +493,10 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
     'date_renouvellement', 'date_echeance', 'derniere_facture_date',
   ];
 
-  if (decimal6Fields.includes(field)) return parseDecimal6(val);
+  // Rubrique fields are always decimal
+  if (field.startsWith('rubrique_')) return parseDecimal(val);
+
+  if (decimal6Fields.includes(field)) return parseDecimal(val);
   if (decimalFields.includes(field)) return parseDecimal(val);
   if (integerFields.includes(field)) return parseInteger(val);
   if (dateFields.includes(field)) return parseDate(val);
@@ -438,7 +517,11 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
   return cleanText(val);
 }
 
-function generateContratLignes(machine) {
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERATE CONTRAT LIGNES — two modes: machine-based (Copieur) and rubrique-based
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function generateContratLignesMachine(machine) {
   const lignes = [];
   let ordre = 0;
 
@@ -470,62 +553,63 @@ function generateContratLignes(machine) {
     });
   }
 
-  const connectic = parseFloat(machine.service_connectic) || 0;
-  if (connectic > 0) {
-    lignes.push({
-      ordre: ordre++,
-      categorie_ligne: 'Service Connectic',
-      reference: 'CNTC',
-      designation: 'Service Pass',
-      quantite: 1,
-      prix_unitaire_ht: connectic,
-      taux_tva: 20,
-    });
+  const services = [
+    { field: 'service_connectic', cat: 'Service Connectic', ref: 'CNTC', label: 'Service Pass' },
+    { field: 'service_collecteur', cat: 'PLC', ref: 'AUT', label: 'Service Collecteur' },
+    { field: 'service_divers', cat: 'PLC', ref: 'AUT', label: 'Service Divers' },
+    { field: 'service_autre', cat: 'PLC', ref: 'AUT', label: 'Service Autre' },
+  ];
+  for (const svc of services) {
+    const v = parseFloat(machine[svc.field]) || 0;
+    if (v > 0) {
+      lignes.push({
+        ordre: ordre++,
+        categorie_ligne: svc.cat,
+        reference: svc.ref,
+        designation: svc.label,
+        quantite: 1,
+        prix_unitaire_ht: v,
+        taux_tva: 20,
+      });
+    }
   }
 
-  const collecteur = parseFloat(machine.service_collecteur) || 0;
-  if (collecteur > 0) {
-    lignes.push({
-      ordre: ordre++,
-      categorie_ligne: 'PLC',
-      reference: 'AUT',
-      designation: 'Service Collecteur',
-      quantite: 1,
-      prix_unitaire_ht: collecteur,
-      taux_tva: 20,
-    });
-  }
+  return lignes;
+}
 
-  const divers = parseFloat(machine.service_divers) || 0;
-  if (divers > 0) {
-    lignes.push({
-      ordre: ordre++,
-      categorie_ligne: 'PLC',
-      reference: 'AUT',
-      designation: 'Service Divers',
-      quantite: 1,
-      prix_unitaire_ht: divers,
-      taux_tva: 20,
-    });
-  }
+/**
+ * Génère les lignes de contrat depuis les champs rubrique_*_ht mappés.
+ * Le prix vient TOUJOURS de la cellule. Cellule vide ou 0 → aucune ligne.
+ */
+function generateContratLignesRubriques(parsed, defaultTva) {
+  const lignes = [];
+  let ordre = 0;
 
-  const autre = parseFloat(machine.service_autre) || 0;
-  if (autre > 0) {
+  for (const [fieldKey, categorie] of Object.entries(RUBRIQUE_FIELD_TO_CATEGORIE)) {
+    const val = parseFloat(parsed[fieldKey]);
+    if (!val || val <= 0) continue;
+
     lignes.push({
       ordre: ordre++,
-      categorie_ligne: 'PLC',
-      reference: 'AUT',
-      designation: 'Service Autre',
+      categorie_ligne: categorie,
+      reference: null,
+      designation: categorie,
       quantite: 1,
-      prix_unitaire_ht: autre,
-      taux_tva: 20,
+      prix_unitaire_ht: val,
+      taux_tva: defaultTva,
+      actif: true,
+      inclus_abonnement: true,
     });
   }
 
   return lignes;
 }
 
-export async function validateData({ file_id, mappings, options = {} }) {
+// ═══════════════════════════════════════════════════════════════════════════════
+// VALIDATE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function validateData({ file_id, mappings, options = {}, typeContrat = null }) {
   const tempPath = path.join(TEMP_DIR, `${file_id}.json`);
   let fileData;
   try {
@@ -536,41 +620,30 @@ export async function validateData({ file_id, mappings, options = {} }) {
   }
 
   const { headers, rows } = fileData;
-  const { skip_duplicates = false, update_existing = false } = options;
+  const effectiveType = typeContrat || fileData.typeContrat || null;
+  const { skip_duplicates = false, update_existing = true } = options;
 
   const headerToField = {};
   for (const [sourceHeader, targetField] of Object.entries(mappings)) {
     if (targetField) headerToField[sourceHeader] = targetField;
   }
 
-  // Load custom fields
   const customFieldsGrouped = await loadCustomFields();
   const customFieldsFlat = new Map();
   for (const [, fields] of customFieldsGrouped) {
     for (const f of fields) customFieldsFlat.set(f.key, f);
   }
 
-  // Load clients from DB
-  const clientsRes = await query(
-    'SELECT id, numero_client, raison_sociale FROM clients'
-  );
-  const clientMap = new Map();
-  for (const c of clientsRes.rows) {
-    if (c.numero_client) clientMap.set(c.numero_client.trim().toUpperCase(), c);
-  }
+  const clientMap = await loadClientMap();
+  const existingContrats = await loadExistingContrats();
 
-  // Load existing contrats to detect duplicates
-  const existingContratsRes = await query(
-    'SELECT id, numero_contrat FROM contrats'
-  );
-  const existingContrats = new Map(
-    existingContratsRes.rows.map(r => [r.numero_contrat.trim().toUpperCase(), r.id])
-  );
-
-  // Load brands from DB for brand extraction
   const marquesRes = await query('SELECT LOWER(nom) as nom_lower FROM marques WHERE actif = true');
   const dbBrands = marquesRes.rows.map(r => r.nom_lower);
   const allBrands = [...new Set([...KNOWN_BRANDS, ...dbBrands])];
+
+  // Detect if any rubrique fields are mapped
+  const hasRubriqueMapping = Object.values(headerToField).some(f => f && f.startsWith('rubrique_'));
+  const isRubriqueFormat = hasRubriqueMapping;
 
   const validatedRows = [];
   let validCount = 0;
@@ -579,8 +652,10 @@ export async function validateData({ file_id, mappings, options = {} }) {
   let duplicateContrats = 0;
   let totalMachines = 0;
   let totalLignes = 0;
+  let contratsWithoutLines = 0;
   const missingClients = new Set();
   const seenContrats = new Map();
+  const duplicatesInFile = [];
 
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
@@ -597,49 +672,44 @@ export async function validateData({ file_id, mappings, options = {} }) {
     const hasAnyValue = Object.values(data).some(v => v != null && String(v).trim() !== '');
     if (!hasAnyValue) continue;
 
-    // Parse all field values
     const parsed = {};
     for (const [field, rawVal] of Object.entries(data)) {
       parsed[field] = parseFieldValue(field, rawVal, customFieldsFlat);
     }
 
-    // --- Validate required: numero_contrat ---
+    // --- numero_contrat ---
     const numContrat = cleanText(data.numero_contrat);
     if (!numContrat) {
       errors.push('Le numéro de contrat est obligatoire');
     }
     parsed.numero_contrat = numContrat;
 
-    // --- Validate required: type_contrat ---
-    const typeContrat = cleanText(data.type_contrat);
-    if (typeContrat) {
-      const validTypes = ['Copieur', 'Telephonie', 'Informatique', 'Securite'];
-      const normalized = validTypes.find(t => normalize(t) === normalize(typeContrat));
-      if (normalized) {
-        parsed.type_contrat = normalized;
+    // --- type_contrat ---
+    if (effectiveType) {
+      parsed.type_contrat = effectiveType;
+    } else {
+      const typeContratVal = cleanText(data.type_contrat);
+      if (typeContratVal) {
+        const validTypes = ['Copieur', 'Telephonie', 'Informatique', 'Securite'];
+        const normalized = validTypes.find(t => normalize(t) === normalize(typeContratVal));
+        parsed.type_contrat = normalized || 'Copieur';
+        if (!normalized) warnings.push(`Type contrat "${typeContratVal}" inconnu, défaut: Copieur`);
       } else {
         parsed.type_contrat = 'Copieur';
-        warnings.push(`Type contrat "${typeContrat}" inconnu, défaut: Copieur`);
       }
-    } else {
-      parsed.type_contrat = 'Copieur';
     }
 
-    // --- Client resolution ---
+    // --- Client resolution (centralisée) ---
     const codeClient = cleanText(data.code_client);
     if (codeClient) {
-      const client = clientMap.get(codeClient.toUpperCase());
+      const client = findClient(clientMap, codeClient);
       if (client) {
         parsed.client_id = client.id;
         parsed.client_raison_sociale = client.raison_sociale;
-
-        // Cross-check name
         const nomClient = cleanText(data.nom_client);
         if (nomClient && client.raison_sociale) {
           if (normalize(nomClient) !== normalize(client.raison_sociale)) {
-            warnings.push(
-              `Le nom "${nomClient}" ne correspond pas au client ${codeClient} en base ("${client.raison_sociale}")`
-            );
+            warnings.push(`Le nom "${nomClient}" ne correspond pas au client ${codeClient} en base ("${client.raison_sociale}")`);
           }
         }
       } else {
@@ -652,7 +722,7 @@ export async function validateData({ file_id, mappings, options = {} }) {
       clientErrors++;
     }
 
-    // --- Statut, periodicite, location ---
+    // --- Statut, periodicite ---
     parsed.statut = mapStatut(data.statut);
     parsed.periodicite = mapPeriodicite(data.periodicite);
     parsed.location_interne = mapLocationInterne(data.location_interne);
@@ -660,64 +730,90 @@ export async function validateData({ file_id, mappings, options = {} }) {
     // --- Type facturation ---
     if (data.type_facturation) {
       const tf = cleanText(data.type_facturation);
-      parsed.type_facturation = ['Unique', 'Periodique'].find(
-        t => normalize(t) === normalize(tf)
-      ) || 'Periodique';
+      parsed.type_facturation = ['Unique', 'Periodique'].find(t => normalize(t) === normalize(tf)) || 'Periodique';
     } else {
       parsed.type_facturation = 'Periodique';
     }
 
-    // --- date_debut computation ---
+    // --- date_debut ---
     parsed.date_debut = parsed.date_signature || parsed.date_installation || new Date().toISOString().split('T')[0];
 
-    // --- Brand/model extraction ---
-    const designation = cleanText(data.designation_produit);
-    if (designation) {
-      const { marque, modele, designation_clean } = extractBrandModel(designation);
-      parsed._machine_marque = marque;
-      parsed._machine_modele = modele;
-      parsed._machine_designation = designation_clean;
+    // --- TVA ---
+    const defaultTva = parsed.taux_tva != null ? parsed.taux_tva : 20;
+
+    // --- Brand/model — uniquement pour Copieur ---
+    if (parsed.type_contrat === 'Copieur') {
+      const designation = cleanText(data.designation_produit);
+      if (designation) {
+        const { marque, modele, designation_clean } = extractBrandModel(designation);
+        parsed._machine_marque = marque;
+        parsed._machine_modele = modele;
+        parsed._machine_designation = designation_clean;
+      }
     }
 
-    // --- Duplicate check ---
+    // --- Duplicate detection ---
     if (numContrat) {
       const upperNum = numContrat.toUpperCase();
-      if (existingContrats.has(upperNum)) {
+      if (seenContrats.has(upperNum)) {
         duplicateContrats++;
+        duplicatesInFile.push({
+          numero_contrat: numContrat,
+          row_first: seenContrats.get(upperNum),
+          row_duplicate: rowNumber,
+        });
+        warnings.push(`Doublon de numéro contrat "${numContrat}" dans le fichier (déjà vu ligne ${seenContrats.get(upperNum)})`);
+      } else {
+        seenContrats.set(upperNum, rowNumber);
+      }
+
+      if (existingContrats.has(upperNum)) {
         if (skip_duplicates) {
-          warnings.push(`Contrat "${numContrat}" déjà existant en base — sera ignoré`);
+          warnings.push(`Contrat "${numContrat}" existant — sera ignoré`);
           parsed._skip_duplicate = true;
         } else if (update_existing) {
           parsed._existing_contrat_id = existingContrats.get(upperNum);
-          warnings.push(`Contrat "${numContrat}" existant — machine ajoutée au contrat`);
+          warnings.push(`Contrat "${numContrat}" existant — sera mis à jour`);
         } else {
           parsed._existing_contrat_id = existingContrats.get(upperNum);
-          warnings.push(`Contrat "${numContrat}" existant — machine ajoutée au contrat`);
+          if (parsed.type_contrat === 'Copieur') {
+            warnings.push(`Contrat "${numContrat}" existant — machine ajoutée au contrat`);
+          } else {
+            warnings.push(`Contrat "${numContrat}" existant — lignes d'abonnement mises à jour`);
+          }
         }
-      } else if (seenContrats.has(upperNum)) {
-        parsed._existing_in_batch_row = seenContrats.get(upperNum);
-        duplicateContrats++;
-      } else {
-        seenContrats.set(upperNum, rowNumber);
       }
     }
 
     // --- Compute auto-generated lines ---
-    const machineParams = {
-      cout_copie_nb: parsed.cout_copie_nb || 0,
-      cout_copie_couleur: parsed.cout_copie_couleur || 0,
-      volume_forfait_nb: parsed.volume_forfait_nb || 0,
-      volume_forfait_couleur: parsed.volume_forfait_couleur || 0,
-      service_connectic: parsed.service_connectic || 0,
-      service_collecteur: parsed.service_collecteur || 0,
-      service_divers: parsed.service_divers || 0,
-      service_autre: parsed.service_autre || 0,
-    };
-    const autoLignes = generateContratLignes(machineParams);
+    let autoLignes;
+    if (isRubriqueFormat) {
+      autoLignes = generateContratLignesRubriques(parsed, defaultTva);
+      if (autoLignes.length === 0) {
+        contratsWithoutLines++;
+        warnings.push('Aucune rubrique avec montant > 0 — contrat sans ligne d\'abonnement');
+      }
+    } else {
+      const machineParams = {
+        cout_copie_nb: parsed.cout_copie_nb || 0,
+        cout_copie_couleur: parsed.cout_copie_couleur || 0,
+        volume_forfait_nb: parsed.volume_forfait_nb || 0,
+        volume_forfait_couleur: parsed.volume_forfait_couleur || 0,
+        service_connectic: parsed.service_connectic || 0,
+        service_collecteur: parsed.service_collecteur || 0,
+        service_divers: parsed.service_divers || 0,
+        service_autre: parsed.service_autre || 0,
+      };
+      autoLignes = generateContratLignesMachine(machineParams);
+    }
+
+    parsed._auto_lignes = autoLignes;
     parsed._auto_lignes_count = autoLignes.length;
+    parsed._is_rubrique_format = isRubriqueFormat;
+    parsed._default_tva = defaultTva;
     totalLignes += autoLignes.length;
 
-    if (parsed.numero_serie || designation) {
+    if (parsed.type_contrat === 'Copieur' && (parsed.numero_serie || cleanText(data.designation_produit))) {
       totalMachines++;
     }
 
@@ -737,11 +833,15 @@ export async function validateData({ file_id, mappings, options = {} }) {
     valid: validCount,
     errors: errorCount,
     duplicates: duplicateContrats,
+    duplicates_in_file: duplicatesInFile,
     skipped: rows.length - validCount - errorCount,
     missing_clients: [...missingClients],
     client_errors: clientErrors,
     total_machines: totalMachines,
     total_lignes_auto: totalLignes,
+    contrats_without_lines: contratsWithoutLines,
+    format: isRubriqueFormat ? 'colonnes_rubriques' : 'standard',
+    type_contrat: typeContrat,
     rows: validatedRows,
   };
 }
@@ -750,7 +850,7 @@ export async function validateData({ file_id, mappings, options = {} }) {
 // EXECUTE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function executeImport({ file_id, mappings, options = {}, user_id }) {
+export async function executeImport({ file_id, mappings, options = {}, user_id, typeContrat = null }) {
   const tempPath = path.join(TEMP_DIR, `${file_id}.json`);
   let fileData;
   try {
@@ -760,7 +860,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
     throw ApiError.badRequest('Fichier temporaire introuvable. Veuillez relancer le parsing.');
   }
 
-  const validationResult = await validateData({ file_id, mappings, options });
+  const validationResult = await validateData({ file_id, mappings, options, typeContrat });
   const validRows = validationResult.rows.filter(r => r.status === 'valid');
 
   if (validRows.length === 0) {
@@ -769,16 +869,16 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
 
   const client = await pool.connect();
   let contratsCreated = 0;
+  let contratsUpdated = 0;
   let machinesCreated = 0;
   let lignesCreated = 0;
+  let contratsWithoutLines = 0;
   const importErrors = [];
-  // Track contrats created within this execution for multi-machine grouping
   const createdContratsMap = new Map();
 
   try {
     await client.query('BEGIN');
 
-    // Load custom fields config for saving values
     const customConfigRes = await client.query(
       "SELECT id, cle FROM champs_personnalises_config WHERE entite = 'CONTRAT' AND actif = true"
     );
@@ -786,44 +886,84 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
 
     for (const row of validRows) {
       try {
+        await client.query('SAVEPOINT row_sp');
         const d = row.data;
         let contratId;
+        const isUpdate = !!d._existing_contrat_id;
+        const isRubrique = d._is_rubrique_format;
 
-        // Check if contrat already exists in DB
+        // --- UPSERT: if contrat exists, UPDATE header + DELETE/INSERT lines ---
         if (d._existing_contrat_id) {
           contratId = d._existing_contrat_id;
-        }
-        // Check if contrat was created earlier in this batch
-        else if (d._existing_in_batch_row && createdContratsMap.has(d.numero_contrat.toUpperCase())) {
+
+          await client.query(
+            `UPDATE contrats SET
+              type_contrat = COALESCE($2, type_contrat),
+              type_facturation = COALESCE($3, type_facturation),
+              client_id = COALESCE($4, client_id),
+              periodicite = COALESCE($5, periodicite),
+              date_signature = COALESCE($6, date_signature),
+              date_debut = COALESCE($7, date_debut),
+              date_echeance = COALESCE($8, date_echeance),
+              date_prochaine_facture = COALESCE($9, date_prochaine_facture),
+              prochaine_date_facturation = COALESCE($9, prochaine_date_facturation),
+              date_renouvellement = COALESCE($10, date_renouvellement),
+              duree_contrat_mois = COALESCE($11, duree_contrat_mois),
+              statut = COALESCE($12, statut),
+              notes = COALESCE($13, notes),
+              updated_at = NOW()
+            WHERE id = $1`,
+            [
+              contratId,
+              d.type_contrat || null,
+              d.type_facturation || null,
+              d.client_id || null,
+              d.periodicite || null,
+              d.date_signature || null,
+              d.date_debut || null,
+              d.date_echeance || null,
+              d.date_prochaine_facture || null,
+              d.date_renouvellement || null,
+              d.duree_contrat_mois || null,
+              d.statut || null,
+              d.notes || null,
+            ]
+          );
+
+          // Delete existing lines, then re-insert
+          await client.query('DELETE FROM contrat_lignes WHERE contrat_id = $1', [contratId]);
+          contratsUpdated++;
+
+        } else if (createdContratsMap.has(d.numero_contrat.toUpperCase())) {
           contratId = createdContratsMap.get(d.numero_contrat.toUpperCase());
-        }
-        // Create new contrat
-        else {
+        } else {
+          // --- CREATE new contrat ---
           const insertRes = await client.query(
             `INSERT INTO contrats (
               numero_contrat, type_contrat, type_facturation, client_id,
               periodicite, date_signature, date_installation, date_debut,
-              date_echeance, date_prochaine_facture, date_renouvellement,
+              date_echeance, date_prochaine_facture, prochaine_date_facturation,
+              date_renouvellement,
               duree_contrat_mois, numero_dossier_financement, organisme_credit,
               montant_finance, loyer_ht, location_interne, statut,
               derniere_facture_date, derniere_facture_numero, derniere_facture_montant_ht,
               notes
             ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
             ) RETURNING id`,
             [
               d.numero_contrat,
               d.type_contrat,
               d.type_facturation || 'Periodique',
               d.client_id,
-              d.periodicite || 'Trimestriel',
+              d.periodicite || 'Mensuel',
               d.date_signature || null,
               d.date_installation || null,
               d.date_debut,
               d.date_echeance || null,
               d.date_prochaine_facture || null,
               d.date_renouvellement || null,
-              d.duree_contrat_mois || 63,
+              d.duree_contrat_mois || null,
               d.numero_dossier || null,
               d.organisme_credit || null,
               d.montant_finance || 0,
@@ -841,108 +981,90 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
           createdContratsMap.set(d.numero_contrat.toUpperCase(), contratId);
         }
 
-        // Create machine
-        const numSerie = d.numero_serie || `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const machineRes = await client.query(
-          `INSERT INTO contrat_machines (
-            contrat_id, numero_serie, modele, marque, designation,
-            cout_copie_nb, cout_copie_couleur, cout_copie_t1, cout_copie_t2, cout_copie_t3,
-            volume_forfait_nb, volume_forfait_couleur, volume_forfait_t1, volume_forfait_t2,
-            service_connectic, service_collecteur, service_divers, service_autre
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-          [
-            contratId,
-            numSerie,
-            d._machine_modele || null,
-            d._machine_marque || null,
-            d._machine_designation || d.designation_produit || null,
-            d.cout_copie_nb || 0,
-            d.cout_copie_couleur || 0,
-            d.cout_copie_t1 || 0,
-            d.cout_copie_t2 || 0,
-            d.cout_copie_t3 || 0,
-            d.volume_forfait_nb || 0,
-            d.volume_forfait_couleur || 0,
-            d.volume_forfait_t1 || 0,
-            d.volume_forfait_t2 || 0,
-            d.service_connectic || 0,
-            d.service_collecteur || 0,
-            d.service_divers || 0,
-            d.service_autre || 0,
-          ]
-        );
-        machinesCreated++;
-
-        // Sync to parc_machines if real serial number
-        if (numSerie && !numSerie.startsWith('IMPORT-')) {
-          const existingParc = await client.query(
-            'SELECT id FROM parc_machines WHERE numero_serie = $1',
-            [numSerie]
-          );
-          if (existingParc.rows.length === 0) {
-            await client.query(
-              `INSERT INTO parc_machines (
-                numero_serie, designation, marque, modele, categorie,
-                client_id, contrat_id, numero_contrat,
-                date_installation, statut
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-              [
-                numSerie,
-                d._machine_designation || d.designation_produit || 'Machine importée',
-                d._machine_marque || null,
-                d._machine_modele || null,
-                'Copieur',
-                d.client_id,
-                contratId,
-                d.numero_contrat,
-                d.date_installation || null,
-                'En service',
-              ]
-            );
-          }
+        // --- INSERT contrat_lignes ---
+        const autoLignes = d._auto_lignes || [];
+        if (autoLignes.length === 0) {
+          contratsWithoutLines++;
         }
 
-        // Auto-generate contrat lines
-        const machineParams = {
-          cout_copie_nb: d.cout_copie_nb || 0,
-          cout_copie_couleur: d.cout_copie_couleur || 0,
-          volume_forfait_nb: d.volume_forfait_nb || 0,
-          volume_forfait_couleur: d.volume_forfait_couleur || 0,
-          service_connectic: d.service_connectic || 0,
-          service_collecteur: d.service_collecteur || 0,
-          service_divers: d.service_divers || 0,
-          service_autre: d.service_autre || 0,
-        };
-        const autoLignes = generateContratLignes(machineParams);
-
-        // Get current max ordre for this contrat
-        const ordreRes = await client.query(
-          'SELECT COALESCE(MAX(ordre), -1) as max_ordre FROM contrat_lignes WHERE contrat_id = $1',
-          [contratId]
-        );
-        let currentOrdre = ordreRes.rows[0].max_ordre + 1;
+        let currentOrdre = 0;
+        if (!isUpdate) {
+          const ordreRes = await client.query(
+            'SELECT COALESCE(MAX(ordre), -1) as max_ordre FROM contrat_lignes WHERE contrat_id = $1',
+            [contratId]
+          );
+          currentOrdre = ordreRes.rows[0].max_ordre + 1;
+        }
 
         for (const ligne of autoLignes) {
           await client.query(
             `INSERT INTO contrat_lignes (
               contrat_id, ordre, categorie_ligne, reference, designation,
-              quantite, prix_unitaire_ht, taux_tva
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+              quantite, prix_unitaire_ht, taux_tva, actif, inclus_abonnement
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
             [
               contratId,
               currentOrdre++,
               ligne.categorie_ligne,
-              ligne.reference,
+              ligne.reference || null,
               ligne.designation,
               ligne.quantite,
               ligne.prix_unitaire_ht,
               ligne.taux_tva,
+              ligne.actif !== false,
+              ligne.inclus_abonnement !== false,
             ]
           );
           lignesCreated++;
         }
 
-        // Save custom field values for this contrat
+        // --- Machine — uniquement pour Copieur ---
+        if (d.type_contrat === 'Copieur') {
+          const numSerie = d.numero_serie || `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          await client.query(
+            `INSERT INTO contrat_machines (
+              contrat_id, numero_serie, modele, marque, designation,
+              cout_copie_nb, cout_copie_couleur, cout_copie_t1, cout_copie_t2, cout_copie_t3,
+              volume_forfait_nb, volume_forfait_couleur, volume_forfait_t1, volume_forfait_t2,
+              service_connectic, service_collecteur, service_divers, service_autre
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+            [
+              contratId, numSerie,
+              d._machine_modele || null, d._machine_marque || null,
+              d._machine_designation || d.designation_produit || null,
+              d.cout_copie_nb || 0, d.cout_copie_couleur || 0,
+              d.cout_copie_t1 || 0, d.cout_copie_t2 || 0, d.cout_copie_t3 || 0,
+              d.volume_forfait_nb || 0, d.volume_forfait_couleur || 0,
+              d.volume_forfait_t1 || 0, d.volume_forfait_t2 || 0,
+              d.service_connectic || 0, d.service_collecteur || 0,
+              d.service_divers || 0, d.service_autre || 0,
+            ]
+          );
+          machinesCreated++;
+
+          if (numSerie && !numSerie.startsWith('IMPORT-')) {
+            const existingParc = await client.query(
+              'SELECT id FROM parc_machines WHERE numero_serie = $1', [numSerie]
+            );
+            if (existingParc.rows.length === 0) {
+              await client.query(
+                `INSERT INTO parc_machines (
+                  numero_serie, designation, marque, modele, categorie,
+                  client_id, contrat_id, numero_contrat, date_installation, statut
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                [
+                  numSerie,
+                  d._machine_designation || d.designation_produit || 'Machine importée',
+                  d._machine_marque || null, d._machine_modele || null, 'Copieur',
+                  d.client_id, contratId, d.numero_contrat,
+                  d.date_installation || null, 'En service',
+                ]
+              );
+            }
+          }
+        }
+
+        // --- Save custom field values ---
         for (const [key, val] of Object.entries(d)) {
           if (key.startsWith('custom_') && val !== null && val !== undefined) {
             const cle = key.replace('custom_', '');
@@ -957,7 +1079,9 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
             }
           }
         }
+        await client.query('RELEASE SAVEPOINT row_sp');
       } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT row_sp');
         importErrors.push({ row_number: row.row_number, error: err.message });
       }
     }
@@ -970,27 +1094,32 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
         'contrats',
         'import',
         validationResult.total,
-        contratsCreated + machinesCreated,
+        contratsCreated + contratsUpdated,
         validationResult.errors + importErrors.length,
         validationResult.skipped,
         JSON.stringify(mappings),
-        JSON.stringify(options),
+        JSON.stringify({ ...options, typeContrat }),
         importErrors.length > 0 ? JSON.stringify(importErrors) : null,
         user_id || null,
       ]
     );
 
     await client.query('COMMIT');
-
     await fs.unlink(tempPath).catch(() => {});
 
     return {
       total: validationResult.total,
       contrats_created: contratsCreated,
+      contrats_updated: contratsUpdated,
       machines_created: machinesCreated,
       lignes_created: lignesCreated,
+      contrats_without_lines: contratsWithoutLines,
       errors: importErrors.length,
       skipped: validationResult.skipped,
+      duplicates_in_file: validationResult.duplicates_in_file,
+      missing_clients: validationResult.missing_clients,
+      format: validationResult.format,
+      type_contrat: typeContrat,
       error_details: importErrors,
     };
   } catch (err) {
@@ -1002,23 +1131,28 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SAVED MAPPINGS
+// SAVED MAPPINGS — filtered by type_contrat
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function listSavedMappings() {
-  const result = await query(
-    "SELECT id, name, mapping, created_at, updated_at FROM import_mappings_saved WHERE entity_type = 'contrats' ORDER BY updated_at DESC"
-  );
+export async function listSavedMappings(typeContrat = null) {
+  let sql = "SELECT id, name, mapping, type_contrat, created_at, updated_at FROM import_mappings_saved WHERE entity_type = 'contrats'";
+  const params = [];
+  if (typeContrat) {
+    sql += ' AND (type_contrat = $1 OR type_contrat IS NULL)';
+    params.push(typeContrat);
+  }
+  sql += ' ORDER BY updated_at DESC';
+  const result = await query(sql, params);
   return result.rows;
 }
 
-export async function saveMappingConfig({ name, mapping, user_id }) {
+export async function saveMappingConfig({ name, mapping, user_id, typeContrat = null }) {
   const result = await query(
-    `INSERT INTO import_mappings_saved (entity_type, name, mapping, created_by)
-     VALUES ('contrats', $1, $2, $3)
-     ON CONFLICT (entity_type, name) DO UPDATE SET mapping = $2, updated_at = NOW()
-     RETURNING id, name, mapping, created_at, updated_at`,
-    [name, JSON.stringify(mapping), user_id || null]
+    `INSERT INTO import_mappings_saved (entity_type, name, mapping, type_contrat, created_by)
+     VALUES ('contrats', $1, $2, $3, $4)
+     ON CONFLICT (entity_type, name, type_contrat) DO UPDATE SET mapping = $2, updated_at = NOW()
+     RETURNING id, name, mapping, type_contrat, created_at, updated_at`,
+    [name, JSON.stringify(mapping), typeContrat, user_id || null]
   );
   return result.rows[0];
 }

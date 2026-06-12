@@ -47,10 +47,17 @@ const STEPS = [
 const CONTRAT_ENTITY = 'CONTRAT';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
+// MAIN COMPONENT — supports optional typeContrat prop for typed imports
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export default function ImportContratsPage() {
+interface ImportContratsWizardProps {
+  typeContrat?: string | null;
+  title?: string;
+  subtitle?: string;
+}
+
+export default function ImportContratsPage({ typeContrat: typeContratProp, title: titleProp, subtitle: subtitleProp }: ImportContratsWizardProps = {}) {
+  const typeContrat = typeContratProp || null;
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -85,13 +92,16 @@ export default function ImportContratsPage() {
   const [executeResult, setExecuteResult] = useState<ImportContratExecuteResult | null>(null);
 
   useEffect(() => {
-    api.get<ApiResponse<ImportSavedMapping[]>>('/import/contrats/mappings')
+    const mappingsUrl = typeContrat
+      ? `/import/contrats/mappings?type_contrat=${typeContrat}`
+      : '/import/contrats/mappings';
+    api.get<ApiResponse<ImportSavedMapping[]>>(mappingsUrl)
       .then(res => setSavedMappings(res.data || []))
       .catch(() => {});
     api.get<ApiResponse<SectionInfo[]>>(`/champs-config/sections?entite=${CONTRAT_ENTITY}`)
       .then(res => setSections(res.data || []))
       .catch(() => {});
-  }, []);
+  }, [typeContrat]);
 
   // ─── STEP 1: Upload ───────────────────────────────────────────────────────
 
@@ -107,7 +117,10 @@ export default function ImportContratsPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await api.upload<ApiResponse<ImportParseResult>>('/import/contrats/parse', formData);
+      const parseUrl = typeContrat
+        ? `/import/contrats/parse?type_contrat=${typeContrat}`
+        : '/import/contrats/parse';
+      const res = await api.upload<ApiResponse<ImportParseResult>>(parseUrl, formData);
       setParseResult(res.data);
 
       const initial: Record<string, string | null> = {};
@@ -155,6 +168,7 @@ export default function ImportContratsPage() {
       const res = await api.post<ApiResponse<ImportSavedMapping>>('/import/contrats/mappings', {
         name: saveMappingName.trim(),
         mapping: userMappings,
+        type_contrat: typeContrat,
       });
       setSavedMappings(prev => {
         const filtered = prev.filter(m => m.id !== res.data.id);
@@ -252,6 +266,7 @@ export default function ImportContratsPage() {
         file_id: parseResult.file_id,
         mappings: userMappings,
         options,
+        type_contrat: typeContrat,
       });
       setValidationResult(res.data);
       setStep(2);
@@ -272,6 +287,7 @@ export default function ImportContratsPage() {
         file_id: parseResult.file_id,
         mappings: userMappings,
         options,
+        type_contrat: typeContrat,
       });
       setExecuteResult(res.data);
       setStep(3);
@@ -307,12 +323,12 @@ export default function ImportContratsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-            <span className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <span className={`h-10 w-10 rounded-xl bg-gradient-to-br ${typeContrat === 'Telephonie' ? 'from-green-500 to-emerald-600 shadow-green-500/20' : typeContrat === 'Informatique' ? 'from-purple-500 to-violet-600 shadow-purple-500/20' : 'from-blue-500 to-indigo-600 shadow-blue-500/20'} flex items-center justify-center shadow-lg`}>
               <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
             </span>
-            Import des contrats depuis Capasoft
+            {titleProp || (typeContrat ? `Import contrats ${typeContrat.toLowerCase()}` : 'Import des contrats')}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 ml-[52px]">Importez vos contrats, machines et lignes depuis un fichier Excel Capasoft</p>
+          <p className="mt-1 text-sm text-gray-500 ml-[52px]">{subtitleProp || 'Importez vos contrats depuis un fichier Excel, avec mapping des colonnes'}</p>
         </div>
         <button onClick={() => router.push('/dashboard/contrats')} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 shadow-sm transition cursor-pointer">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
@@ -372,8 +388,8 @@ export default function ImportContratsPage() {
                   <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
                 </div>
                 <div>
-                  <p className="text-base font-semibold text-gray-700">Glissez-déposez votre fichier Capasoft ici</p>
-                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour parcourir — fichier listes_contrat.XLS</p>
+                  <p className="text-base font-semibold text-gray-700">Glissez-déposez votre fichier ici</p>
+                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour parcourir{typeContrat ? ` — contrats ${typeContrat.toLowerCase()}` : ''}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">CSV</span>
@@ -499,7 +515,11 @@ export default function ImportContratsPage() {
                 <input type="checkbox" checked={options.update_existing}
                   onChange={e => setOptions(prev => ({ ...prev, update_existing: e.target.checked, skip_duplicates: e.target.checked ? false : prev.skip_duplicates }))}
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" />
-                <span className="text-sm text-gray-600 group-hover:text-gray-800">Ajouter les machines aux contrats existants</span>
+                <span className="text-sm text-gray-600 group-hover:text-gray-800">
+                  {typeContrat && typeContrat !== 'Copieur'
+                    ? 'Mettre à jour les contrats existants (recréer les lignes)'
+                    : 'Ajouter les machines aux contrats existants'}
+                </span>
               </label>
             </div>
           </div>
@@ -548,7 +568,7 @@ export default function ImportContratsPage() {
       {step === 2 && validationResult && (
         <div className="space-y-4">
           {/* KPI cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Contrats valides</p>
               <p className="text-2xl font-bold mt-1 text-emerald-600">{validationResult.valid}</p>
@@ -561,15 +581,53 @@ export default function ImportContratsPage() {
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Doublons contrat</p>
               <p className="text-2xl font-bold mt-1 text-amber-600">{validationResult.duplicates}</p>
             </div>
+            {validationResult.format !== 'colonnes_rubriques' && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Machines à créer</p>
+                <p className="text-2xl font-bold mt-1 text-blue-600">{validationResult.total_machines}</p>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Machines à créer</p>
-              <p className="text-2xl font-bold mt-1 text-blue-600">{validationResult.total_machines}</p>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Lignes auto-générées</p>
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Lignes abonnement</p>
               <p className="text-2xl font-bold mt-1 text-violet-600">{validationResult.total_lignes_auto}</p>
             </div>
+            {(validationResult.contrats_without_lines ?? 0) > 0 && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Sans ligne</p>
+                <p className="text-2xl font-bold mt-1 text-orange-600">{validationResult.contrats_without_lines}</p>
+              </div>
+            )}
           </div>
+
+          {/* Format detected */}
+          {validationResult.format && (
+            <div className="bg-blue-50 rounded-xl border border-blue-100 p-3 flex items-center gap-3">
+              <svg className="h-5 w-5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
+              <span className="text-sm text-blue-800">
+                Format détecté : <strong>{validationResult.format === 'colonnes_rubriques' ? 'Colonnes de rubriques (1 ligne = 1 contrat)' : 'Standard (1 ligne = 1 machine)'}</strong>
+                {validationResult.type_contrat && <> &middot; Type : <strong>{validationResult.type_contrat}</strong></>}
+              </span>
+            </div>
+          )}
+
+          {/* Duplicates in file alert */}
+          {(validationResult.duplicates_in_file?.length ?? 0) > 0 && (
+            <div className="bg-orange-50 rounded-xl border border-orange-200 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 text-orange-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <div className="text-sm text-orange-800">
+                  <p className="font-semibold mb-1">{validationResult.duplicates_in_file!.length} doublon{validationResult.duplicates_in_file!.length > 1 ? 's' : ''} de numéro contrat dans le fichier</p>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {validationResult.duplicates_in_file!.slice(0, 15).map((d, i) => (
+                      <span key={i} className="rounded-md bg-orange-100 px-2 py-0.5 text-xs font-mono font-medium">
+                        {d.numero_contrat} (lignes {d.row_first} et {d.row_duplicate})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Missing clients alert */}
           {validationResult.missing_clients.length > 0 && (
@@ -633,9 +691,16 @@ export default function ImportContratsPage() {
                     <th className="px-3 py-2.5 text-center text-[11px] font-bold text-gray-500 uppercase w-20">Statut</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">N° Contrat</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Client</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">N° Série</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Machine</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Erreurs</th>
+                    {validationResult.format !== 'colonnes_rubriques' && (
+                      <>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">N° Série</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Machine</th>
+                      </>
+                    )}
+                    {validationResult.format === 'colonnes_rubriques' && (
+                      <th className="px-3 py-2.5 text-center text-[11px] font-bold text-gray-500 uppercase">Lignes</th>
+                    )}
+                    <th className="px-3 py-2.5 text-left text-[11px] font-bold text-gray-500 uppercase">Erreurs / Warnings</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -648,16 +713,31 @@ export default function ImportContratsPage() {
                       <td className="px-3 py-2 text-center">
                         {row.status === 'valid' && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Valide</span>}
                         {row.status === 'error' && <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">Erreur</span>}
+                        {row.status === 'skipped' && <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[10px] font-bold text-gray-600">Ignoré</span>}
                       </td>
                       <td className="px-3 py-2 text-xs font-mono text-gray-700">{String(row.data.numero_contrat ?? '-')}</td>
                       <td className="px-3 py-2 text-xs text-gray-600">{String(row.data.client_raison_sociale ?? row.data.code_client ?? '-')}</td>
-                      <td className="px-3 py-2 text-xs font-mono text-gray-600">{String(row.data.numero_serie ?? '-')}</td>
-                      <td className="px-3 py-2 text-xs text-gray-600 max-w-[180px] truncate">{String(row.data._machine_designation ?? row.data.designation_produit ?? '-')}</td>
+                      {validationResult.format !== 'colonnes_rubriques' && (
+                        <>
+                          <td className="px-3 py-2 text-xs font-mono text-gray-600">{String(row.data.numero_serie ?? '-')}</td>
+                          <td className="px-3 py-2 text-xs text-gray-600 max-w-[180px] truncate">{String(row.data._machine_designation ?? row.data.designation_produit ?? '-')}</td>
+                        </>
+                      )}
+                      {validationResult.format === 'colonnes_rubriques' && (
+                        <td className="px-3 py-2 text-center text-xs font-semibold text-violet-600">{String(row.data._auto_lignes_count ?? 0)}</td>
+                      )}
                       <td className="px-3 py-2">
                         {row.errors.length > 0 && (
                           <div className="space-y-0.5">
                             {row.errors.map((err, i) => (
                               <p key={i} className="text-[11px] text-red-600">{err}</p>
+                            ))}
+                          </div>
+                        )}
+                        {row.warnings.length > 0 && (
+                          <div className="space-y-0.5">
+                            {row.warnings.map((w, i) => (
+                              <p key={i} className="text-[11px] text-amber-600">{w}</p>
                             ))}
                           </div>
                         )}
@@ -698,27 +778,75 @@ export default function ImportContratsPage() {
               <svg className="h-8 w-8 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
             </div>
             <h2 className="text-xl font-bold text-gray-900 mb-1">Import terminé !</h2>
-            <p className="text-sm text-gray-500">{executeResult.contrats_created} contrats, {executeResult.machines_created} machines et {executeResult.lignes_created} lignes créés</p>
+            <p className="text-sm text-gray-500">
+              {executeResult.contrats_created} contrats créés
+              {executeResult.contrats_updated > 0 && `, ${executeResult.contrats_updated} mis à jour`}
+              {executeResult.machines_created > 0 && `, ${executeResult.machines_created} machines`}
+              {` et ${executeResult.lignes_created} lignes d'abonnement`}
+            </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className={`grid grid-cols-2 sm:grid-cols-3 ${executeResult.format === 'colonnes_rubriques' ? 'lg:grid-cols-5' : 'lg:grid-cols-6'} gap-3`}>
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
               <p className="text-2xl font-bold text-emerald-600">{executeResult.contrats_created}</p>
               <p className="text-xs text-gray-500 mt-1">Contrats créés</p>
             </div>
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
-              <p className="text-2xl font-bold text-blue-600">{executeResult.machines_created}</p>
-              <p className="text-xs text-gray-500 mt-1">Machines créées</p>
-            </div>
+            {executeResult.contrats_updated > 0 && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <p className="text-2xl font-bold text-blue-600">{executeResult.contrats_updated}</p>
+                <p className="text-xs text-gray-500 mt-1">Contrats mis à jour</p>
+              </div>
+            )}
+            {executeResult.format !== 'colonnes_rubriques' && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <p className="text-2xl font-bold text-blue-600">{executeResult.machines_created}</p>
+                <p className="text-xs text-gray-500 mt-1">Machines créées</p>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
               <p className="text-2xl font-bold text-violet-600">{executeResult.lignes_created}</p>
-              <p className="text-xs text-gray-500 mt-1">Lignes auto-générées</p>
+              <p className="text-xs text-gray-500 mt-1">Lignes abonnement</p>
             </div>
+            {(executeResult.contrats_without_lines ?? 0) > 0 && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <p className="text-2xl font-bold text-orange-600">{executeResult.contrats_without_lines}</p>
+                <p className="text-xs text-gray-500 mt-1">Sans ligne (vides)</p>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
               <p className="text-2xl font-bold text-red-600">{executeResult.errors}</p>
               <p className="text-xs text-gray-500 mt-1">Erreurs</p>
             </div>
           </div>
+
+          {/* Duplicates in file */}
+          {(executeResult.duplicates_in_file?.length ?? 0) > 0 && (
+            <div className="bg-orange-50 rounded-xl border border-orange-200 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 text-orange-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <div className="text-sm text-orange-800">
+                  <p className="font-semibold">{executeResult.duplicates_in_file!.length} doublon(s) de numéro contrat détectés dans le fichier</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Missing clients */}
+          {(executeResult.missing_clients?.length ?? 0) > 0 && (
+            <div className="bg-red-50 rounded-xl border border-red-100 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 text-red-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <div className="text-sm text-red-800">
+                  <p className="font-semibold mb-1">{executeResult.missing_clients!.length} client(s) introuvable(s)</p>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {executeResult.missing_clients!.map(c => (
+                      <span key={c} className="rounded-md bg-red-100 px-2 py-0.5 text-xs font-mono font-medium">{c}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {executeResult.error_details.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">

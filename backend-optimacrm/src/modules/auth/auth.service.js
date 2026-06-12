@@ -145,15 +145,47 @@ export async function createUser({ email, password, first_name, last_name, role 
     [email.toLowerCase(), hashed, first_name, last_name, role],
   );
 
-  return result.rows[0];
+  const newUser = result.rows[0];
+
+  const DEFAULT_PERMISSIONS = {
+    admin_technique: [
+      'tickets_read', 'tickets_write', 'tickets_admin', 'techniciens_manage',
+      'clients_read', 'parc_read',
+    ],
+    technicien: [
+      'tickets_read', 'tickets_write',
+      'clients_read',
+    ],
+  };
+
+  const defaultPerms = DEFAULT_PERMISSIONS[role];
+  if (defaultPerms && defaultPerms.length > 0) {
+    const placeholders = defaultPerms.map((_, idx) => `($1, $${idx + 2})`).join(', ');
+    await query(
+      `INSERT INTO user_permissions (user_id, permission) VALUES ${placeholders} ON CONFLICT DO NOTHING`,
+      [newUser.id, ...defaultPerms],
+    );
+  }
+
+  return newUser;
 }
 
-export async function getAllUsers(page = 1, limit = 20) {
+export async function getAllUsers(page = 1, limit = 20, roleFilter = null) {
   const offset = (page - 1) * limit;
 
+  const params = [limit, offset];
+  let whereClause = '';
+  let countWhereClause = '';
+
+  if (roleFilter) {
+    whereClause = 'WHERE role = $3';
+    countWhereClause = 'WHERE role = $1';
+    params.push(roleFilter);
+  }
+
   const [usersRes, countRes] = await Promise.all([
-    query(`SELECT ${USER_FIELDS} FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset]),
-    query('SELECT COUNT(*)::int AS total FROM users'),
+    query(`SELECT ${USER_FIELDS} FROM users ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`, params),
+    query(`SELECT COUNT(*)::int AS total FROM users ${countWhereClause}`, roleFilter ? [roleFilter] : []),
   ]);
 
   return {
@@ -191,6 +223,11 @@ export async function updateUser(id, data) {
   if (data.email !== undefined)      { sets.push(`email = $${i++}`);      vals.push(data.email.toLowerCase()); }
   if (data.role !== undefined)       { sets.push(`role = $${i++}`);       vals.push(data.role); }
   if (data.is_active !== undefined)  { sets.push(`is_active = $${i++}`);  vals.push(data.is_active); }
+  if (data.password !== undefined && data.password.trim().length >= 8) {
+    const hashed = await bcrypt.hash(data.password, SALT_ROUNDS);
+    sets.push(`password = $${i++}`);
+    vals.push(hashed);
+  }
 
   if (sets.length === 0) throw ApiError.badRequest('No fields to update');
 
@@ -204,6 +241,14 @@ export async function updateUser(id, data) {
 
   if (result.rows.length === 0) throw ApiError.notFound('User not found');
   return result.rows[0];
+}
+
+export async function generateResetToken(userId) {
+  const userRes = await query('SELECT id, email, first_name, last_name FROM users WHERE id = $1', [userId]);
+  if (userRes.rows.length === 0) throw ApiError.notFound('User not found');
+
+  const token = jwt.sign({ userId, purpose: 'reset' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+  return { user: userRes.rows[0], token };
 }
 
 export async function deleteUser(id) {

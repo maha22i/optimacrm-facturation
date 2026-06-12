@@ -1,18 +1,30 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import type { UserRole } from '@/lib/types';
+
+function getLoginRedirect(role: UserRole): string {
+  if (role === 'admin_technique' || role === 'technicien') return '/dashboard/tickets';
+  return '/dashboard';
+}
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user: authUser } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (authUser) {
+      router.push(getLoginRedirect(authUser.role));
+    }
+  }, [authUser, router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -21,10 +33,8 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Une erreur est survenue');
-    } finally {
       setLoading(false);
     }
   }

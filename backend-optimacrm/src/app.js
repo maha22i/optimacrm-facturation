@@ -36,6 +36,8 @@ import * as importsRelevesController from './modules/imports-releves/importsRele
 import sepaRoutes from './modules/sepa/sepa.routes.js';
 import avoirRoutes from './modules/avoirs/avoir.routes.js';
 import * as avoirController from './modules/avoirs/avoir.controller.js';
+import ticketRoutes from './modules/tickets/ticket.routes.js';
+import * as ticketController from './modules/tickets/ticket.controller.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -83,6 +85,9 @@ app.get('/api/releves-compteurs', authenticate, checkPermission('factures_read')
 app.use('/api/imports-releves', importsRelevesRoutes);
 app.get('/api/parc-machines/:id/timeline', authenticate, checkPermission('parc_read'), importsRelevesController.getMachineTimeline);
 app.use('/api/sepa', sepaRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.get('/api/clients/:id/tickets', authenticate, checkPermission('tickets_read'), ticketController.getTicketsByClient);
+app.get('/api/parc-machines/:id/tickets', authenticate, checkPermission('tickets_read'), ticketController.getTicketsByMachine);
 app.use('/api/activity-logs', activityLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/email', emailRoutes);

@@ -55,6 +55,21 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function formatModeReglement(val) {
+  if (!val) return '—';
+  const labels = {
+    PRELEVEMENT_SEPA: 'Prélèvement SEPA',
+    PRELEVEMENT: 'Prélèvement',
+    'Prélèvement': 'Prélèvement',
+    VIREMENT: 'Virement',
+    CHEQUE: 'Chèque',
+    CB: 'Carte bancaire',
+    ESPECES: 'Espèces',
+    LCR: 'LCR',
+  };
+  return labels[val] || val;
+}
+
 // ─── Données ─────────────────────────────────────────────────────────────────
 
 async function getSocieteConfig() {
@@ -243,7 +258,7 @@ async function generateFactureHTML(facture, lignes, reglements, societe, logoBas
     for (const r of reglements) {
       html += `<tr>
         <td style="padding:4px 8px;border-bottom:1px solid #f3f0ff;color:#4b5563;">${formatDate(r.date_reglement)}</td>
-        <td style="padding:4px 8px;border-bottom:1px solid #f3f0ff;color:#4b5563;">${escapeHtml(r.mode_reglement)}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f3f0ff;color:#4b5563;">${escapeHtml(formatModeReglement(r.mode_reglement))}</td>
         <td style="padding:4px 8px;text-align:right;border-bottom:1px solid #f3f0ff;font-weight:600;color:#1a1a2e;">${formatMontant(r.montant)}</td>
       </tr>`;
     }
@@ -358,7 +373,7 @@ async function generateFactureHTML(facture, lignes, reglements, societe, logoBas
           </tr>` : ''}
           <tr>
             <td style="text-align:right;color:#6b7280;padding-right:10px;font-size:9px;text-transform:uppercase;letter-spacing:0.3px;">MODE RÈGLEMENT</td>
-            <td style="color:#1a1a2e;">${escapeHtml(f.mode_reglement) || '—'}</td>
+            <td style="color:#1a1a2e;">${escapeHtml(formatModeReglement(f.mode_reglement))}</td>
           </tr>
         </table>
       </td>

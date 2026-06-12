@@ -726,7 +726,10 @@ export async function deleteAllContrats() {
 }
 
 // ---------------------------------------------------------------------------
-// IMPORT CONTRATS (GÉNÉRIQUE — paramétré par type_contrat)
+// @deprecated — IMPORT CONTRATS LEGACY (Système A)
+// Ce code est remplacé par le wizard générique dans import-contrats/importContrats.service.js
+// Il reste temporairement pour rétro-compatibilité mais ne doit plus être utilisé
+// pour les nouveaux imports. Utiliser le Système B (import-contrats) à la place.
 // ---------------------------------------------------------------------------
 
 const IMPORT_EXCLUDED_CONTRACTS = ['S-5095', 'L-0750', 'B-4684', 'N-6226', 'I-6176'];
@@ -1005,6 +1008,7 @@ function parseTerm(raw) {
   return null;
 }
 
+/** @deprecated Utiliser import-contrats/importContrats.service.js parseFile() à la place */
 export async function previewImportContrats(buffer, typeContrat) {
   const XLSX = await import('xlsx');
   const workbook = XLSX.read(buffer, { type: 'buffer', raw: true });
@@ -1271,11 +1275,12 @@ export async function previewImportContrats(buffer, typeContrat) {
   return preview;
 }
 
-// Rétro-compatibilité
+/** @deprecated Rétro-compatibilité. Utiliser le wizard générique. */
 export async function previewImportTelephonie(buffer) {
   return previewImportContrats(buffer, 'Telephonie');
 }
 
+/** @deprecated Utiliser import-contrats/importContrats.service.js executeImport() à la place */
 export async function importContrats(buffer, typeContrat, userId, userName, ipAddress, logicielsBuffer) {
   const XLSX = await import('xlsx');
   const workbook = XLSX.read(buffer, { type: 'buffer', raw: true });
@@ -1333,7 +1338,7 @@ export async function importContrats(buffer, typeContrat, userId, userName, ipAd
   return rapport;
 }
 
-// Rétro-compatibilité
+/** @deprecated Rétro-compatibilité. Utiliser le wizard générique. */
 export async function importContratsTelephonie(buffer, userId, userName, ipAddress) {
   return importContrats(buffer, 'Telephonie', userId, userName, ipAddress);
 }

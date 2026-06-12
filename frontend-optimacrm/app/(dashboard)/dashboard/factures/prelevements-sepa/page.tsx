@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { ApiResponse, SepaCreancier, SepaFactureEligible, SepaRemise, SepaGenerationResult } from '@/lib/types';
 
@@ -30,6 +31,7 @@ function getNextBusinessDay(): string {
 }
 
 export default function PrelevementsSepaPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'eligible' | 'historique' | 'parametres'>('eligible');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -323,13 +325,17 @@ export default function PrelevementsSepaPage() {
                             Prêt
                           </span>
                         ) : (
-                          <span className="group relative inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-700 cursor-help">
+                          <button
+                            onClick={() => router.push(`/dashboard/clients/${f.client_id}/modifier#bancaire`)}
+                            className="group relative inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 transition-colors cursor-pointer"
+                          >
                             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
                             Incomplet
+                            <svg className="h-3 w-3 ml-0.5 text-red-400 group-hover:text-red-600 transition-colors" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
                             <span className="invisible group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-xl z-10">
-                              {f.champs_manquants.join(', ')}
+                              {f.champs_manquants.join(', ')} — Cliquez pour compléter
                             </span>
-                          </span>
+                          </button>
                         )}
                       </td>
                     </tr>

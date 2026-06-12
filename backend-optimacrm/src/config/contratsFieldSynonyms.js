@@ -10,16 +10,17 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'text',
         synonyms: [
           'numéro contrat', 'numero contrat', 'n° contrat', 'ref contrat',
-          'contrat', 'référence contrat', 'reference contrat',
+          'contrat', 'référence contrat', 'reference contrat', 'numero_contrat',
         ],
       },
       {
         key: 'type_contrat',
         label: 'Type contrat',
-        required: true,
+        required: false,
         type: 'text',
         synonyms: [
           'type contrat', 'type', 'catégorie contrat', 'categorie contrat',
+          'type_contrat',
         ],
       },
       {
@@ -29,6 +30,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'text',
         synonyms: [
           'type facturation', 'type\nfacturation', 'facturation', 'mode facturation',
+          'mode_reglement', 'mode reglement',
         ],
       },
       {
@@ -38,7 +40,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'lookup',
         synonyms: [
           'code client', 'code', 'ref client', 'référence client',
-          'reference client', 'id client',
+          'reference client', 'id client', 'code_client', 'n°client', 'n° client',
         ],
       },
       {
@@ -48,6 +50,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'text',
         synonyms: [
           'nom du client', 'nom client', 'client', 'raison sociale',
+          'nom_client', 'enseigne',
         ],
       },
       {
@@ -57,6 +60,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'text',
         synonyms: [
           'statut activité', 'statut activite', 'statut contrat', 'statut', 'état', 'etat',
+          'activité', 'activite', 'activite_contrat',
         ],
       },
       {
@@ -66,6 +70,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'text',
         synonyms: [
           'fr', 'fréquence', 'frequence', 'périodicité', 'periodicite',
+          'frequence_facturation',
         ],
       },
       {
@@ -128,6 +133,7 @@ export const CONTRATS_FIELD_GROUPS = [
         synonyms: [
           'échéance du contrat', 'echeance du contrat', 'echeance', 'échéance',
           'date échéance', 'date echeance', 'fin contrat',
+          'echeance_contrat', 'echeance contrat',
         ],
       },
       {
@@ -137,6 +143,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'integer',
         synonyms: [
           'duree contrat', 'durée contrat', 'durée', 'duree', 'engagement',
+          'duree_mois', 'durée mois',
         ],
       },
     ],
@@ -448,7 +455,155 @@ export const CONTRATS_FIELD_GROUPS = [
       },
     ],
   },
+  {
+    group: 'Coordonnées / Bancaire',
+    icon: '🏦',
+    fields: [
+      {
+        key: 'email',
+        label: 'Email',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'email', 'email facturation', 'e-mail', 'courriel', 'mail',
+        ],
+      },
+      {
+        key: 'iban',
+        label: 'IBAN',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'iban', 'n° iban', 'numero iban',
+        ],
+      },
+      {
+        key: 'bic',
+        label: 'BIC',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'bic', 'swift', 'code bic',
+        ],
+      },
+    ],
+  },
+  {
+    group: 'TVA',
+    icon: '💶',
+    fields: [
+      {
+        key: 'taux_tva',
+        label: 'Taux TVA (%)',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'taux tva', 'tva', 'taux_tva', 'tva %',
+        ],
+      },
+    ],
+  },
+  {
+    group: 'Rubriques montant',
+    icon: '📊',
+    fields: [
+      {
+        key: 'rubrique_forfait_fixe_ht',
+        label: 'Forfait Fixe HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'forfait fixe ht', 'forfait_fixe_ht', 'forfait fixe', 'abonnement fixe',
+        ],
+      },
+      {
+        key: 'rubrique_forfait_mobile_ht',
+        label: 'Forfait Mobile HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'forfait mobile ht', 'forfait_mobile_ht', 'forfait mobile', 'abonnement mobile',
+        ],
+      },
+      {
+        key: 'rubrique_fibre_ht',
+        label: 'Fibre HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'fibre ht', 'fibre_ht', 'fibre',
+        ],
+      },
+      {
+        key: 'rubrique_internet_ht',
+        label: 'Internet HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'internet ht', 'internet_ht', 'internet', 'lien internet', 'lien acces internet',
+        ],
+      },
+      {
+        key: 'rubrique_location_materiel_ht',
+        label: 'Location Matériel HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'location materiel ht', 'location_materiel_ht', 'location matériel ht', 'location materiel',
+        ],
+      },
+      {
+        key: 'rubrique_abonnement_divers_ht',
+        label: 'Abonnement Divers HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'abonnement divers ht', 'abonnement_divers_ht', 'abonnement divers', 'divers ht',
+        ],
+      },
+      {
+        key: 'rubrique_securite_ht',
+        label: 'Sécurité HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'securite ht', 'securite_ht', 'sécurité ht', 'sécurité',
+        ],
+      },
+      {
+        key: 'rubrique_services_it_ht',
+        label: 'Services IT HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'services it ht', 'services_it_ht', 'services it', 'service it',
+        ],
+      },
+      {
+        key: 'rubrique_service_astreinte_ipbx_ht',
+        label: 'Astreinte IPBX HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'service astreinte ipbx ht', 'service_astreinte_ipbx_ht', 'astreinte ipbx', 'astreinte ipbx ht',
+        ],
+      },
+    ],
+  },
 ];
+
+// Mapping rubrique_*_ht field keys → catégorie de ligne
+export const RUBRIQUE_FIELD_TO_CATEGORIE = {
+  rubrique_forfait_fixe_ht: 'Forfait Fixe',
+  rubrique_forfait_mobile_ht: 'Forfait Mobile',
+  rubrique_fibre_ht: 'Fibre',
+  rubrique_internet_ht: 'Internet',
+  rubrique_location_materiel_ht: 'Location Matériel',
+  rubrique_abonnement_divers_ht: 'Abonnement Divers',
+  rubrique_securite_ht: 'Sécurité',
+  rubrique_services_it_ht: 'Services IT',
+  rubrique_service_astreinte_ipbx_ht: 'Service Astreinte IPBX',
+};
 
 export function getAllContratFields() {
   const fields = [];

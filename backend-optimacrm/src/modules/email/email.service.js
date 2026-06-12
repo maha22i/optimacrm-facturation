@@ -362,7 +362,7 @@ export async function getEmailLogs({ page = 1, limit = 20, document_id, type_doc
 
 // ── Helpers privés ───────────────────────────────────────────────────────────
 
-function createTransporter(config) {
+export function createTransporter(config) {
   return nodemailer.createTransport({
     host: config.smtp_host,
     port: parseInt(config.smtp_port) || 587,
@@ -375,7 +375,7 @@ function createTransporter(config) {
   });
 }
 
-async function logEmail({ type_document, document_id, document_numero, destinataire, sujet, statut, message_erreur }) {
+export async function logEmail({ type_document, document_id, document_numero, destinataire, sujet, statut, message_erreur }) {
   await query(
     `INSERT INTO email_logs (type_document, document_id, document_numero, destinataire, sujet, statut, message_erreur)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -393,7 +393,7 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

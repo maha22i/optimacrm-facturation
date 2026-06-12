@@ -1,6 +1,7 @@
 import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ABONNEMENT_TYPES } from '../../config/contratCategories.js';
+import { toDateStr, addMonthsUTC as addMonths, subDayUTC as subDay } from '../../utils/dateUtils.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -8,20 +9,10 @@ import { ABONNEMENT_TYPES } from '../../config/contratCategories.js';
 
 function formatDateFR(d) {
   if (!d) return '';
-  const date = new Date(d);
-  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function addMonths(dateStr, months) {
-  const d = new Date(dateStr);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
-
-function subDay(dateStr) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  const s = toDateStr(d);
+  if (!s) return '';
+  const [y, m, day] = s.split('-');
+  return `${day}/${m}/${y}`;
 }
 
 function getFrequencyMonths(periodicite) {
@@ -181,7 +172,7 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
       if (contrat.statut !== 'Actif' && contrat.statut !== 'actif') continue;
 
       const mois = getFrequencyMonths(contrat.periodicite);
-      const prochaineFacturation = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+      const prochaineFacturation = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
       if (!prochaineFacturation) continue;
 
       const periodeDebut = prochaineFacturation;
@@ -446,7 +437,7 @@ export async function simulerFactureAbonnement(contratId, dateFacturation) {
   if (!contrat) throw new ApiError(404, 'Contrat introuvable');
 
   const mois = getFrequencyMonths(contrat.periodicite);
-  const prochaineFacturation = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+  const prochaineFacturation = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
   const periodeDebut = prochaineFacturation || dateFact;
   const periodeFin = subDay(addMonths(periodeDebut, mois));
 

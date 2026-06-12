@@ -1418,7 +1418,7 @@ export default function ParametresPage() {
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   Actif
                 </span>
-                <span className="text-[11px] text-gray-400 capitalize">{user.role === 'admin' ? 'Administrateur' : 'Utilisateur'}</span>
+                <span className="text-[11px] text-gray-400 capitalize">{user.role === 'admin' ? 'Administrateur' : user.role === 'admin_technique' ? 'Admin technique' : user.role === 'technicien' ? 'Technicien' : 'Utilisateur'}</span>
               </div>
             </div>
 

@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type {
   ClientDetail, ClientStats, ClientAdresse, ClientContact,
   StatutClient, ApiResponse, TypeAdresse, RoleContact, TypeDocument,
-  Contrat, Facture, Devis, Avoir, PaginatedResponse,
+  Contrat, Facture, Devis, Avoir, PaginatedResponse, Ticket, StatutTicket, PrioriteTicket,
 } from '@/lib/types';
 import ChampsPersonnalisesForm from '@/components/ChampsPersonnalisesForm';
 
@@ -489,12 +490,15 @@ function SectionHeader({ icon, title, dotColor }: { icon: React.ReactNode; title
 // Main Page
 // ---------------------------------------------------------------------------
 
-type Tab = 'infos' | 'adresses' | 'contacts' | 'contrats' | 'documents' | 'historique';
+type Tab = 'infos' | 'adresses' | 'contacts' | 'contrats' | 'tickets' | 'documents' | 'historique';
 
 export default function ClientDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { user } = useAuth();
   const clientId = params.id as string;
+
+  const canEditClient = ['admin', 'admin_technique', 'user'].includes(user?.role || '');
 
   const [client, setClient] = useState<ClientDetail | null>(null);
   const [stats, setStats] = useState<ClientStats | null>(null);
@@ -515,17 +519,23 @@ export default function ClientDetailPage() {
   const [clientAvoirs, setClientAvoirs] = useState<Avoir[]>([]);
   const [historiqueLoading, setHistoriqueLoading] = useState(false);
   const [historiqueLoaded, setHistoriqueLoaded] = useState(false);
+  const [clientTickets, setClientTickets] = useState<Ticket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [ticketsLoaded, setTicketsLoaded] = useState(false);
 
   const fetchClient = useCallback(async () => {
     try {
-      const [clientRes, statsRes, contratsRes] = await Promise.all([
+      const [clientRes, statsRes] = await Promise.all([
         api.get<ApiResponse<ClientDetail>>(`/clients/${clientId}`),
         api.get<ApiResponse<ClientStats>>(`/clients/${clientId}/stats`),
-        api.get<ApiResponse<Contrat[]>>(`/contrats/client/${clientId}`),
       ]);
       setClient(clientRes.data);
       setStats(statsRes.data);
-      setClientContrats(contratsRes.data);
+
+      try {
+        const contratsRes = await api.get<ApiResponse<Contrat[]>>(`/contrats/client/${clientId}`);
+        setClientContrats(contratsRes.data);
+      } catch { /* permission contrats non disponible */ }
     } catch {
       setToast({ message: 'Erreur lors du chargement du client', type: 'error' });
     } finally {
@@ -553,11 +563,26 @@ export default function ClientDetailPage() {
     }
   }, [clientId, historiqueLoaded]);
 
+  const fetchTickets = useCallback(async () => {
+    if (ticketsLoaded) return;
+    setTicketsLoading(true);
+    try {
+      const res = await api.get<ApiResponse<Ticket[]>>(`/clients/${clientId}/tickets`);
+      setClientTickets(res.data);
+      setTicketsLoaded(true);
+    } catch {
+      setToast({ message: 'Erreur lors du chargement des tickets', type: 'error' });
+    } finally {
+      setTicketsLoading(false);
+    }
+  }, [clientId, ticketsLoaded]);
+
   useEffect(() => { fetchClient(); }, [fetchClient]);
 
   useEffect(() => {
     if (activeTab === 'historique') fetchHistorique();
-  }, [activeTab, fetchHistorique]);
+    if (activeTab === 'tickets') fetchTickets();
+  }, [activeTab, fetchHistorique, fetchTickets]);
 
   const handleDelete = async () => {
     try {
@@ -680,6 +705,7 @@ export default function ClientDetailPage() {
     { id: 'adresses', label: `Adresses (${client.adresses.length})`, icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" /></svg> },
     { id: 'contacts', label: `Contacts (${client.contacts.length})`, icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg> },
     { id: 'contrats', label: `Contrats (${clientContrats.length})`, icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75h6m-6 3h4" /></svg> },
+    { id: 'tickets' as Tab, label: `Tickets (${clientTickets.length})`, icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg> },
     { id: 'documents', label: `Documents (${client.documents.length})`, icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg> },
     { id: 'historique', label: 'Historique', icon: <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg> },
   ];
@@ -720,9 +746,9 @@ export default function ClientDetailPage() {
       )}
 
       {/* Breadcrumb */}
-      <button onClick={() => router.push('/dashboard/clients')} className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-violet-600 mb-6 transition group cursor-pointer">
+      <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-violet-600 mb-6 transition group cursor-pointer">
         <svg className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
-        Retour aux clients
+        Retour
       </button>
 
       {/* Blocage alert */}
@@ -760,34 +786,36 @@ export default function ClientDetailPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.push(`/dashboard/clients/${clientId}/modifier`)}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition cursor-pointer"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
-              Modifier
-            </button>
-            <div className="relative">
+          {canEditClient && (
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowMenu(!showMenu)}
-                className="rounded-xl border border-gray-200 bg-white p-2.5 text-gray-500 hover:bg-gray-50 hover:border-gray-300 transition cursor-pointer"
+                onClick={() => router.push(`/dashboard/clients/${clientId}/modifier`)}
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition cursor-pointer"
               >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" /></svg>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
+                Modifier
               </button>
-              {showMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl border border-gray-100 shadow-xl py-1.5 z-10">
-                  <button
-                    onClick={() => { setShowMenu(false); setShowDeleteConfirm(true); }}
-                    className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2.5 cursor-pointer"
-                  >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                    Supprimer
-                  </button>
-                </div>
-              )}
+              <div className="relative">
+                <button
+                  onClick={() => setShowMenu(!showMenu)}
+                  className="rounded-xl border border-gray-200 bg-white p-2.5 text-gray-500 hover:bg-gray-50 hover:border-gray-300 transition cursor-pointer"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" /></svg>
+                </button>
+                {showMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl border border-gray-100 shadow-xl py-1.5 z-10">
+                    <button
+                      onClick={() => { setShowMenu(false); setShowDeleteConfirm(true); }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2.5 cursor-pointer"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                      Supprimer
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -1275,6 +1303,127 @@ export default function ClientDetailPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tickets Tab */}
+      {activeTab === 'tickets' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-700">
+              {clientTickets.length} ticket{clientTickets.length > 1 ? 's' : ''}
+            </h3>
+            <button
+              onClick={() => router.push(`/dashboard/tickets/nouveau?client_id=${clientId}`)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all cursor-pointer"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Nouveau ticket
+            </button>
+          </div>
+
+          {ticketsLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="animate-spin h-8 w-8 border-4 border-violet-600 border-t-transparent rounded-full" />
+            </div>
+          ) : clientTickets.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
+              <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center mb-4">
+                <svg className="h-8 w-8 text-blue-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
+                </svg>
+              </div>
+              <p className="text-sm font-semibold text-gray-700">Aucun ticket</p>
+              <p className="text-xs text-gray-400 mt-1">Ce client n&apos;a pas encore de ticket de support</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50">
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">N°</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sujet</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Priorité</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Statut</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Technicien</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {clientTickets.map(ticket => {
+                      const TICKET_STATUT_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+                        nouveau: { label: 'Nouveau', bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
+                        assigne: { label: 'Assigné', bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-500' },
+                        en_cours: { label: 'En cours', bg: 'bg-yellow-50', text: 'text-yellow-700', dot: 'bg-yellow-500' },
+                        en_attente: { label: 'En attente', bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500' },
+                        resolu: { label: 'Résolu', bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+                        cloture: { label: 'Clôturé', bg: 'bg-gray-100', text: 'text-gray-600', dot: 'bg-gray-400' },
+                      };
+                      const TICKET_PRIORITE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
+                        basse: { label: 'Basse', bg: 'bg-gray-100', text: 'text-gray-600' },
+                        normale: { label: 'Normale', bg: 'bg-blue-50', text: 'text-blue-700' },
+                        haute: { label: 'Haute', bg: 'bg-amber-50', text: 'text-amber-700' },
+                        urgente: { label: 'Urgente', bg: 'bg-red-50', text: 'text-red-700' },
+                      };
+                      const sc = TICKET_STATUT_CONFIG[ticket.statut] || TICKET_STATUT_CONFIG.nouveau;
+                      const pc = TICKET_PRIORITE_CONFIG[ticket.priorite] || TICKET_PRIORITE_CONFIG.normale;
+                      const techNom = ticket.technicien_prenom && ticket.technicien_nom_famille
+                        ? `${ticket.technicien_prenom} ${ticket.technicien_nom_famille}`
+                        : null;
+                      return (
+                        <tr
+                          key={ticket.id}
+                          onClick={() => router.push(`/dashboard/tickets/${ticket.id}`)}
+                          className="group hover:bg-blue-50/30 cursor-pointer transition-colors"
+                        >
+                          <td className="px-4 py-3">
+                            <span className="text-xs font-bold text-gray-500 font-mono">{ticket.numero}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-sm text-gray-800 truncate block max-w-[200px]">{ticket.sujet}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${pc.bg} ${pc.text} ${ticket.priorite === 'urgente' ? 'animate-pulse' : ''}`}>
+                              {pc.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${sc.bg} ${sc.text}`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
+                              {sc.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {techNom ? (
+                              <span className="text-sm text-gray-700">{techNom}</span>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic">Non assigné</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-xs text-gray-400">{new Date(ticket.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {clientTickets.length > 5 && (
+                <div className="border-t border-gray-100 px-6 py-3 text-center">
+                  <button
+                    onClick={() => router.push(`/dashboard/tickets?client_id=${clientId}`)}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700 transition cursor-pointer"
+                  >
+                    Voir tous les tickets →
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

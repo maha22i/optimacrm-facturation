@@ -97,6 +97,19 @@ export default function ModifierClientPage() {
   useEffect(() => { fetchClient(); }, [fetchClient]);
 
   useEffect(() => {
+    if (!loading && window.location.hash === '#bancaire') {
+      const el = document.getElementById('bancaire');
+      if (el) {
+        setTimeout(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          el.classList.add('ring-2', 'ring-indigo-400', 'ring-offset-4', 'rounded-xl');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-indigo-400', 'ring-offset-4', 'rounded-xl'), 3000);
+        }, 100);
+      }
+    }
+  }, [loading]);
+
+  useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(null), 3000);
       return () => clearTimeout(t);
@@ -505,7 +518,7 @@ export default function ModifierClientPage() {
         </section>
 
         {/* ── Informations bancaires ── */}
-        <section className="border-t border-gray-100 pt-8 mt-8">
+        <section id="bancaire" className="border-t border-gray-100 pt-8 mt-8">
           <div className="flex items-center gap-2.5 mb-5">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
             <svg className="h-4.5 w-4.5 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25h-15a2.25 2.25 0 0 0-2.25 2.25v10.5a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>

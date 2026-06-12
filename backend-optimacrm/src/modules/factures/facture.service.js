@@ -1,5 +1,6 @@
 import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { toDateStr, addMonthsUTC, subDayUTC, periodEnd } from '../../utils/dateUtils.js';
 
 // ---------------------------------------------------------------------------
 // Numérotation
@@ -684,12 +685,8 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
       periodeDebut = periode_debut;
       periodeFin = periode_fin;
     } else {
-      periodeDebut = contrat.date_prochaine_facture || new Date().toISOString().slice(0, 10);
-      const pDebut = new Date(periodeDebut);
-      const pFin = new Date(pDebut);
-      pFin.setMonth(pFin.getMonth() + mois);
-      pFin.setDate(pFin.getDate() - 1);
-      periodeFin = pFin.toISOString().slice(0, 10);
+      periodeDebut = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
+      periodeFin = periodEnd(periodeDebut, mois);
     }
     const dateEcheance = periodeFin;
 
@@ -1149,7 +1146,7 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
       statut: contrat.statut,
       date_debut: contrat.date_debut,
       date_echeance: contrat.date_echeance,
-      date_prochaine_facture: contrat.date_prochaine_facture,
+      date_prochaine_facture: contrat.prochaine_date_facturation || contrat.date_prochaine_facture,
       derniere_facture_date: contrat.derniere_facture_date,
       nb_machines: machines.length,
       nb_machines_actives: machines.filter(m => m.actif).length,
@@ -1592,8 +1589,10 @@ export async function recalculerTotaux(factureId) {
 
 function formatDateFR(d) {
   if (!d) return '';
-  const date = new Date(d);
-  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const s = toDateStr(d);
+  if (!s) return '';
+  const [y, m, day] = s.split('-');
+  return `${day}/${m}/${y}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1613,12 +1612,10 @@ async function rollbackContratFacturation(contratId, factureId) {
 
   const periodiciteMap = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
   const mois = periodiciteMap[contrat.periodicite] || 1;
-  const currentNext = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+  const currentNext = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
   if (!currentNext) return;
 
-  const prevDate = new Date(currentNext);
-  prevDate.setMonth(prevDate.getMonth() - mois);
-  const prevDateStr = prevDate.toISOString().slice(0, 10);
+  const prevDateStr = addMonthsUTC(currentNext, -mois);
 
   await query(
     `UPDATE contrats SET
@@ -1641,12 +1638,10 @@ async function rollbackContratFacturationTx(dbClient, contratId, factureId) {
 
   const periodiciteMap = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
   const mois = periodiciteMap[contrat.periodicite] || 1;
-  const currentNext = contrat.prochaine_date_facturation || contrat.date_prochaine_facture;
+  const currentNext = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
   if (!currentNext) return;
 
-  const prevDate = new Date(currentNext);
-  prevDate.setMonth(prevDate.getMonth() - mois);
-  const prevDateStr = prevDate.toISOString().slice(0, 10);
+  const prevDateStr = addMonthsUTC(currentNext, -mois);
 
   await dbClient.query(
     `UPDATE contrats SET
@@ -1716,14 +1711,16 @@ async function insertFactureFromContrat(dbClient, { numero, contrat, snapshot, p
 }
 
 async function updateContratApresFacturation(dbClient, contrat, facture, mois, periodeFin) {
-  const baseDate = periodeFin ? new Date(periodeFin) : new Date(contrat.date_prochaine_facture || new Date());
+  let nextDate;
   if (periodeFin) {
-    baseDate.setDate(baseDate.getDate() + 1);
+    const pf = toDateStr(periodeFin);
+    const [y, m, d] = pf.split('-').map(Number);
+    nextDate = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
   } else {
-    baseDate.setMonth(baseDate.getMonth() + mois);
+    const base = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
+    nextDate = addMonthsUTC(base, mois);
   }
-  const nextDate = baseDate.toISOString().slice(0, 10);
-  const derniereDateFact = periodeFin || new Date().toISOString().slice(0, 10);
+  const derniereDateFact = toDateStr(periodeFin) || new Date().toISOString().slice(0, 10);
 
   await dbClient.query(
     `UPDATE contrats SET

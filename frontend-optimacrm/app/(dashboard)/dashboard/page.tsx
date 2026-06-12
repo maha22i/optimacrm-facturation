@@ -4,6 +4,11 @@ import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import Link from 'next/link';
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import type { TicketStats, ApiResponse } from '@/lib/types';
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+} from 'recharts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -362,16 +367,393 @@ function SectionCard({ title, icon, href, hrefLabel, children, className = '' }:
 }
 
 // ---------------------------------------------------------------------------
+// Ticket chart constants
+// ---------------------------------------------------------------------------
+
+const TICKET_STATUT_COLORS: Record<string, { label: string; color: string }> = {
+  nouveau:    { label: 'Nouveau',    color: '#3B82F6' },
+  assigne:    { label: 'Assigné',    color: '#6366F1' },
+  en_cours:   { label: 'En cours',   color: '#EAB308' },
+  en_attente: { label: 'En attente', color: '#F97316' },
+  resolu:     { label: 'Résolu',     color: '#10B981' },
+  cloture:    { label: 'Clôturé',    color: '#9CA3AF' },
+};
+
+const TICKET_PRIORITE_COLORS: Record<string, { label: string; color: string }> = {
+  urgente: { label: 'Urgente', color: '#EF4444' },
+  haute:   { label: 'Haute',   color: '#F97316' },
+  normale: { label: 'Normale', color: '#3B82F6' },
+  basse:   { label: 'Basse',   color: '#9CA3AF' },
+};
+
+function TicketDonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number; payload: { color: string } }> }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0];
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-lg px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: d.payload.color }} />
+        <span className="text-sm font-semibold text-gray-800">{d.name}</span>
+      </div>
+      <p className="text-lg font-bold text-gray-900 mt-0.5">{d.value} ticket{d.value > 1 ? 's' : ''}</p>
+    </div>
+  );
+}
+
+function TicketBarTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-lg px-4 py-2.5">
+      <p className="text-sm font-semibold text-gray-800">{label}</p>
+      <p className="text-lg font-bold text-gray-900 mt-0.5">{payload[0].value} ticket{payload[0].value > 1 ? 's' : ''}</p>
+    </div>
+  );
+}
+
+function DonutCenterLabel({ viewBox, total }: { viewBox?: { cx: number; cy: number }; total: number }) {
+  if (!viewBox) return null;
+  const { cx, cy } = viewBox;
+  return (
+    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central">
+      <tspan x={cx} y={cy - 8} className="fill-gray-900 text-2xl font-bold">{total}</tspan>
+      <tspan x={cx} y={cy + 14} className="fill-gray-400 text-xs">tickets</tspan>
+    </text>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard Admin Technique
+// ---------------------------------------------------------------------------
+
+function AdminTechniqueDashboard({ user, ticketStats, loading, onRefresh }: {
+  user: { first_name: string; last_name: string; role: string };
+  ticketStats: TicketStats | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir';
+  const initials = `${user.first_name[0] ?? ''}${user.last_name[0] ?? ''}`.toUpperCase();
+
+  const hasData = ticketStats && ticketStats.total > 0;
+
+  const statutData = ticketStats
+    ? Object.entries(TICKET_STATUT_COLORS)
+        .map(([key, cfg]) => ({ name: cfg.label, value: ticketStats.par_statut[key] || 0, color: cfg.color }))
+        .filter(d => d.value > 0)
+    : [];
+
+  const prioriteData = ticketStats
+    ? Object.entries(TICKET_PRIORITE_COLORS).map(([key, cfg]) => ({
+        name: cfg.label, value: ticketStats.par_priorite[key] || 0, fill: cfg.color,
+      }))
+    : [];
+
+  const categorieData = ticketStats?.par_categorie || [];
+
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-28 bg-white rounded-2xl border border-gray-100" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-white rounded-2xl border border-gray-100" />)}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {[1, 2].map(i => <div key={i} className="h-80 bg-white rounded-2xl border border-gray-100" />)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-indigo-900 via-purple-900 to-indigo-900 rounded-2xl p-6 text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTAgMGg0MHY0MEgweiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-purple-400 to-indigo-600 flex items-center justify-center text-white text-lg font-bold shadow-lg shadow-purple-500/30">
+              {initials}
+            </div>
+            <div>
+              <h1 className="text-xl font-bold">{greeting}, {user.first_name} !</h1>
+              <p className="text-sm text-indigo-200 mt-0.5">Tableau de bord — Support technique</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onRefresh}
+              className="text-[10px] text-indigo-300 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+              </svg>
+              Actualiser
+            </button>
+            <div className="text-right hidden sm:block">
+              <p className="text-xs text-indigo-300">Aujourd&apos;hui</p>
+              <p className="text-sm font-semibold">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+              <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
+              </svg>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total tickets</p>
+          </div>
+          <p className="text-3xl font-bold text-gray-900">{ticketStats?.total ?? 0}</p>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-10 w-10 rounded-xl bg-red-50 flex items-center justify-center">
+              <span className="text-lg">🔴</span>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">SLA dépassés</p>
+          </div>
+          <p className={`text-3xl font-bold ${(ticketStats?.sla_depasses ?? 0) > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+            {ticketStats?.sla_depasses ?? 0}
+          </p>
+          {(ticketStats?.sla_depasses ?? 0) > 0 && (
+            <p className="text-[10px] text-red-500 font-medium mt-1 flex items-center gap-1">
+              <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" /></span>
+              Attention requise
+            </p>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-10 w-10 rounded-xl bg-amber-50 flex items-center justify-center">
+              <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Prise en charge</p>
+          </div>
+          <p className="text-3xl font-bold text-gray-900">
+            {(ticketStats?.temps_moyen_prise_en_charge_heures ?? 0) > 0 ? `${ticketStats!.temps_moyen_prise_en_charge_heures}h` : '—'}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-1">Temps moyen</p>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+              <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Résolution</p>
+          </div>
+          <p className="text-3xl font-bold text-gray-900">
+            {(ticketStats?.temps_moyen_resolution_heures ?? 0) > 0 ? `${ticketStats!.temps_moyen_resolution_heures}h` : '—'}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-1">Temps moyen</p>
+        </div>
+      </div>
+
+      {/* État vide */}
+      {!hasData && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm py-20 text-center">
+          <div className="mx-auto h-24 w-24 rounded-3xl bg-gradient-to-br from-purple-50 to-indigo-100 flex items-center justify-center mb-6">
+            <svg className="h-12 w-12 text-purple-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+            </svg>
+          </div>
+          <p className="text-base font-semibold text-gray-700">Aucune donnée disponible</p>
+          <p className="text-sm text-gray-400 mt-1">Aucun ticket n&apos;a été créé pour le moment</p>
+          <Link
+            href="/dashboard/tickets/nouveau"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            Créer un ticket
+          </Link>
+        </div>
+      )}
+
+      {/* Graphiques */}
+      {hasData && ticketStats && (
+        <>
+          {/* Ligne : Donut statut + Barres priorité */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h2 className="text-base font-bold text-gray-900 mb-6">Répartition par statut</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie data={statutData} cx="50%" cy="50%" innerRadius={65} outerRadius={105} paddingAngle={3} dataKey="value" strokeWidth={0}>
+                    {statutData.map((entry, idx) => (<Cell key={idx} fill={entry.color} />))}
+                    <DonutCenterLabel total={ticketStats.total} />
+                  </Pie>
+                  <Tooltip content={<TicketDonutTooltip />} />
+                  <Legend verticalAlign="bottom" iconType="circle" iconSize={8} formatter={(value: string) => {
+                    const item = statutData.find(d => d.name === value);
+                    return <span className="text-xs text-gray-600">{value} <span className="font-bold text-gray-900 ml-1">{item?.value}</span></span>;
+                  }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h2 className="text-base font-bold text-gray-900 mb-6">Répartition par priorité</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={prioriteData} layout="vertical" margin={{ top: 0, right: 40, bottom: 0, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
+                  <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 13, fill: '#374151', fontWeight: 600 }} />
+                  <Tooltip content={<TicketBarTooltip />} cursor={{ fill: '#f9fafb' }} />
+                  <Bar dataKey="value" radius={[0, 8, 8, 0]} barSize={32} label={{ position: 'right', fontSize: 13, fontWeight: 700, fill: '#374151' }}>
+                    {prioriteData.map((entry, idx) => (<Cell key={idx} fill={entry.fill} />))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Tableau performance techniciens */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <span>👥</span> Performance par technicien
+              </h2>
+            </div>
+            {ticketStats.par_technicien.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50">
+                      <th className="px-6 py-3.5 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Technicien</th>
+                      <th className="px-6 py-3.5 text-center text-[11px] font-bold text-gray-500 uppercase tracking-wider">Tickets ouverts</th>
+                      <th className="px-6 py-3.5 text-center text-[11px] font-bold text-gray-500 uppercase tracking-wider">Résolus ce mois</th>
+                      <th className="px-6 py-3.5 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">Taux résolution</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {ticketStats.par_technicien.map(tech => {
+                      const total = tech.ouverts + tech.resolus_ce_mois;
+                      const taux = total > 0 ? Math.round((tech.resolus_ce_mois / total) * 100) : 0;
+                      const barColor = taux >= 80 ? 'bg-emerald-500' : taux >= 50 ? 'bg-amber-500' : 'bg-red-500';
+                      return (
+                        <tr key={tech.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
+                                {tech.nom.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{tech.nom}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className={`inline-flex items-center justify-center h-7 min-w-[28px] px-2 rounded-full text-xs font-bold ${tech.ouverts > 5 ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
+                              {tech.ouverts}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className="text-sm font-bold text-gray-900">{tech.resolus_ce_mois}</span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden max-w-[160px]">
+                                <div className={`h-full rounded-full ${barColor} transition-all duration-500`} style={{ width: `${taux}%` }} />
+                              </div>
+                              <span className="text-sm font-bold text-gray-700 w-10 text-right">{taux}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-12 text-center">
+                <p className="text-sm text-gray-400">Aucun technicien avec des tickets assignés</p>
+              </div>
+            )}
+          </div>
+
+          {/* Par catégorie */}
+          {categorieData.filter(c => c.count > 0).length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h2 className="text-base font-bold text-gray-900 mb-6">Répartition par catégorie</h2>
+              <ResponsiveContainer width="100%" height={Math.max(250, categorieData.filter(c => c.count > 0).length * 50)}>
+                <BarChart data={categorieData.filter(c => c.count > 0)} margin={{ top: 0, right: 40, bottom: 0, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="nom" tick={{ fontSize: 12, fill: '#374151', fontWeight: 500 }} interval={0}
+                    angle={categorieData.length > 6 ? -30 : 0}
+                    textAnchor={categorieData.length > 6 ? 'end' : 'middle'}
+                    height={categorieData.length > 6 ? 80 : 40}
+                  />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#9ca3af' }} />
+                  <Tooltip content={<TicketBarTooltip />} cursor={{ fill: '#f9fafb' }} />
+                  <Bar dataKey="count" radius={[8, 8, 0, 0]} barSize={40} label={{ position: 'top', fontSize: 13, fontWeight: 700, fill: '#374151' }}>
+                    {categorieData.filter(c => c.count > 0).map((entry, idx) => (
+                      <Cell key={idx} fill={entry.couleur || '#6366F1'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Actions rapides */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="h-8 w-8 rounded-lg bg-violet-50 flex items-center justify-center">
+            <svg className="h-4 w-4 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+            </svg>
+          </div>
+          <h3 className="text-sm font-semibold text-gray-900">Actions rapides</h3>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Nouveau ticket', href: '/dashboard/tickets/nouveau', icon: 'M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z', color: 'text-blue-600 bg-blue-50 hover:bg-blue-100' },
+            { label: 'Tous les tickets', href: '/dashboard/tickets', icon: 'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z', color: 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' },
+            { label: 'Réglages tickets', href: '/dashboard/tickets/reglages', icon: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z', color: 'text-amber-600 bg-amber-50 hover:bg-amber-100' },
+            { label: 'Utilisateurs', href: '/dashboard/users', icon: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z', color: 'text-purple-600 bg-purple-50 hover:bg-purple-100' },
+          ].map(action => (
+            <Link key={action.href} href={action.href} className={`flex flex-col items-center gap-2.5 p-4 rounded-xl transition-all duration-200 group ${action.color}`}>
+              <div className="h-10 w-10 rounded-xl bg-white/60 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d={action.icon} />
+                </svg>
+              </div>
+              <p className="text-xs font-semibold text-center">{action.label}</p>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
   const { user, hasPermission } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
+  const [ticketStats, setTicketStats] = useState<TicketStats | null>(null);
+  const [ticketStatsLoading, setTicketStatsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [denied, setDenied] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const isAdminTechnique = user?.role === 'admin_technique';
 
   const fetchData = useCallback(async () => {
     try {
@@ -391,16 +773,34 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const fetchTicketStats = useCallback(async () => {
+    setTicketStatsLoading(true);
+    try {
+      const res = await api.get<ApiResponse<TicketStats>>('/tickets/stats');
+      setTicketStats(res.data);
+    } catch { /* silently fail */ }
+    finally { setTicketStatsLoading(false); }
+  }, []);
+
   useEffect(() => {
-    if (user && hasPermission('dashboard')) {
+    if (user && hasPermission('dashboard') && !isAdminTechnique) {
       fetchData();
       const interval = setInterval(fetchData, 5 * 60 * 1000);
       return () => clearInterval(interval);
-    } else if (user) {
+    } else if (user && !isAdminTechnique) {
+      setLoading(false);
+      setDenied(true);
+    } else if (user && isAdminTechnique) {
       setLoading(false);
       setDenied(true);
     }
-  }, [fetchData, user, hasPermission]);
+  }, [fetchData, user, hasPermission, isAdminTechnique]);
+
+  useEffect(() => {
+    if (user && hasPermission('tickets_read')) {
+      fetchTicketStats();
+    }
+  }, [user, hasPermission, fetchTicketStats]);
 
   const chartData = useMemo(() => {
     if (!data) return null;
@@ -412,6 +812,11 @@ export default function DashboardPage() {
       clientsSpark: data.clients.par_mois.map(m => m.count),
     };
   }, [data]);
+
+  // Admin technique → dashboard dédié tickets
+  if (user && isAdminTechnique) {
+    return <AdminTechniqueDashboard user={user} ticketStats={ticketStats} loading={ticketStatsLoading} onRefresh={fetchTicketStats} />;
+  }
 
   if (!user || denied) return null;
 

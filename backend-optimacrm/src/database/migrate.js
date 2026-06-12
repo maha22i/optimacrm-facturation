@@ -67,6 +67,12 @@ async function loadMigrations() {
   migrations.push(m34);
   const m35 = await import('./migrations/035_add_informatique_support.js');
   migrations.push(m35);
+  const m36 = await import('./migrations/036_create_ticket_tables.js');
+  migrations.push(m36);
+  const m37 = await import('./migrations/037_add_technical_roles.js');
+  migrations.push(m37);
+  const m38 = await import('./migrations/038_remove_categorie_check_add_mapping_type.js');
+  migrations.push(m38);
 }
 
 async function ensureMigrationsTable(client) {

@@ -1,11 +1,12 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
+import { api } from '@/lib/api';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 
-import type { PermissionKey } from '@/lib/types';
+import type { PermissionKey, ApiResponse, TicketStats, UserRole } from '@/lib/types';
 
 interface NavChild {
   label: string;
@@ -14,6 +15,7 @@ interface NavChild {
 }
 
 interface NavItem {
+  key?: string;
   label: string;
   href: string;
   icon: React.ReactNode;
@@ -21,8 +23,31 @@ interface NavItem {
   requiredPermission?: PermissionKey;
 }
 
+const MENU_KEYS_BY_ROLE: Record<UserRole, string[] | null> = {
+  admin: null,
+  user: null,
+  admin_technique: ['dashboard', 'tickets', 'users', 'parametres'],
+  technicien: ['tickets'],
+};
+
+const ALLOWED_PATHS_BY_ROLE: Record<UserRole, RegExp[] | null> = {
+  admin: null,
+  user: null,
+  admin_technique: null,
+  technicien: [
+    /^\/dashboard\/tickets(\/|$)/,
+    /^\/dashboard\/clients\/\d+(\/|$)/,
+  ],
+};
+
+function getRedirectForRole(role: UserRole): string {
+  if (role === 'technicien') return '/dashboard/tickets';
+  return '/dashboard';
+}
+
 const NAV_ITEMS: NavItem[] = [
   {
+    key: 'dashboard',
     label: 'Dashboard',
     href: '/dashboard',
     requiredPermission: 'dashboard',
@@ -33,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    key: 'journal',
     label: 'Journal',
     href: '/dashboard/journal',
     requiredPermission: 'activity_logs',
@@ -43,6 +69,21 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    key: 'tickets',
+    label: 'Tickets',
+    href: '/dashboard/tickets',
+    requiredPermission: 'tickets_read',
+    icon: (
+      <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
+      </svg>
+    ),
+    children: [
+      { label: 'Réglages', href: '/dashboard/tickets/reglages', requiredPermission: 'tickets_admin' },
+    ],
+  },
+  {
+    key: 'clients',
     label: 'Clients',
     href: '/dashboard/clients',
     requiredPermission: 'clients_read',
@@ -56,6 +97,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: 'devis',
     label: 'Devis',
     href: '/dashboard/devis',
     requiredPermission: 'devis_read',
@@ -69,6 +111,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: 'factures',
     label: 'Factures',
     href: '/dashboard/factures',
     requiredPermission: 'factures_read',
@@ -87,6 +130,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: 'contrats',
     label: 'Contrats',
     href: '/dashboard/contrats',
     requiredPermission: 'contrats_read',
@@ -103,6 +147,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: 'parc-machines',
     label: 'Parc Machine',
     href: '/dashboard/parc-machines',
     requiredPermission: 'parc_read',
@@ -117,6 +162,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: 'catalogue',
     label: 'Catalogue',
     href: '/dashboard/catalogue',
     requiredPermission: 'catalogue_read',
@@ -135,6 +181,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const CHAMPS_PERSO_NAV: NavItem = {
+  key: 'champs-perso',
   label: 'Champs perso',
   href: '/dashboard/champs-personnalises',
   requiredPermission: 'champs_personnalises',
@@ -147,6 +194,7 @@ const CHAMPS_PERSO_NAV: NavItem = {
 };
 
 const SETTINGS_NAV: NavItem = {
+  key: 'parametres',
   label: 'Paramètres',
   href: '/dashboard/parametres',
   requiredPermission: 'parametres_societe',
@@ -159,6 +207,7 @@ const SETTINGS_NAV: NavItem = {
 };
 
 const ADMIN_NAV: NavItem = {
+  key: 'users',
   label: 'Utilisateurs',
   href: '/dashboard/users',
   requiredPermission: 'users_manage',
@@ -179,18 +228,47 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [ticketsNouveaux, setTicketsNouveaux] = useState(0);
+
+  const fetchTicketsBadge = useCallback(async () => {
+    try {
+      const res = await api.get<ApiResponse<TicketStats>>('/tickets/stats');
+      setTicketsNouveaux(res.data?.par_statut?.nouveau || 0);
+    } catch { /* silently ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (!user || !hasPermission('tickets_read')) return;
+    fetchTicketsBadge();
+    const interval = setInterval(fetchTicketsBadge, 60000);
+    return () => clearInterval(interval);
+  }, [user, hasPermission, fetchTicketsBadge]);
 
   useEffect(() => {
     if (isLoading) return;
     if (!user) { router.push('/login'); return; }
 
-    if (pathname === '/dashboard' && !hasPermission('dashboard')) {
-      const rawItems: NavItem[] = [...NAV_ITEMS, ...(user.role === 'admin' ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
-      const first = rawItems.find(
-        (item) => item.href !== '/dashboard' && (!item.requiredPermission || hasPermission(item.requiredPermission)),
-      );
-      if (first) {
-        router.replace(first.href);
+    const allowedPaths = ALLOWED_PATHS_BY_ROLE[user.role as UserRole];
+    if (allowedPaths && !allowedPaths.some(re => re.test(pathname))) {
+      router.replace(getRedirectForRole(user.role as UserRole));
+      return;
+    }
+
+    if (pathname === '/dashboard') {
+      const roleRedirect = getRedirectForRole(user.role as UserRole);
+      if (roleRedirect !== '/dashboard') {
+        router.replace(roleRedirect);
+        return;
+      }
+      if (!hasPermission('dashboard')) {
+        const showUsersNav = user.role === 'admin' || user.role === 'admin_technique';
+        const rawItems: NavItem[] = [...NAV_ITEMS, ...(showUsersNav ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
+        const first = rawItems.find(
+          (item) => item.href !== '/dashboard' && (!item.requiredPermission || hasPermission(item.requiredPermission)),
+        );
+        if (first) {
+          router.replace(first.href);
+        }
       }
     }
   }, [user, isLoading, router, pathname, hasPermission]);
@@ -225,10 +303,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
-  const rawNav: NavItem[] = [...NAV_ITEMS, ...(user.role === 'admin' ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
+  const showUsers = user.role === 'admin' || user.role === 'admin_technique';
+  const rawNav: NavItem[] = [...NAV_ITEMS, ...(showUsers ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
+
+  const allowedKeys = MENU_KEYS_BY_ROLE[user.role as UserRole] ?? null;
 
   const allNav: NavItem[] = rawNav
-    .filter((item) => !item.requiredPermission || hasPermission(item.requiredPermission))
+    .filter((item) => {
+      if (allowedKeys && item.key && !allowedKeys.includes(item.key)) return false;
+      return !item.requiredPermission || hasPermission(item.requiredPermission);
+    })
     .map((item) => ({
       ...item,
       children: item.children?.filter(
@@ -241,12 +325,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isActive = (href: string) => {
     const p = hrefPath(href);
     if (p === '/dashboard') return pathname === '/dashboard';
-    return pathname.startsWith(p);
+    return pathname === p || pathname.startsWith(p + '/');
   };
 
   const isParentActive = (item: NavItem) => {
     if (isActive(item.href)) return true;
-    return item.children?.some(child => pathname.startsWith(hrefPath(child.href))) ?? false;
+    return item.children?.some(child => {
+      const cp = hrefPath(child.href);
+      return pathname === cp || pathname.startsWith(cp + '/');
+    }) ?? false;
   };
 
   const sidebarContent = (
@@ -296,6 +383,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {!sidebarCollapsed && (
                     <>
                       <span>{item.label}</span>
+                      {item.label === 'Tickets' && ticketsNouveaux > 0 && (
+                        <span className="ml-auto mr-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-bold text-white">
+                          {ticketsNouveaux}
+                        </span>
+                      )}
                       {hasChildren && (
                         <svg
                           className={`ml-auto h-3.5 w-3.5 transition-transform duration-200 ${childrenOpen ? 'rotate-180' : ''} ${active ? 'text-blue-400/60' : 'text-slate-600'}`}
@@ -313,7 +405,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {item.children!.map(child => {
                       const childPath = hrefPath(child.href);
                       const childQuery = child.href.includes('?') ? new URLSearchParams(child.href.split('?')[1]) : null;
-                      const childActive = pathname.startsWith(childPath) && (
+                      const childActive = (pathname === childPath || pathname.startsWith(childPath + '/')) && (
                         !childQuery || [...childQuery.entries()].every(([k, v]) => searchParams.get(k) === v)
                       );
                       return (
@@ -348,7 +440,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {!sidebarCollapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-semibold text-slate-200 truncate">{user.first_name} {user.last_name}</p>
-                <p className="text-[11px] text-slate-500 capitalize">{user.role === 'admin' ? 'Administrateur' : 'Utilisateur'}</p>
+                <p className="text-[11px] text-slate-500 capitalize">{{ admin: 'Administrateur', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
               </div>
             )}
           </div>
@@ -448,7 +540,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </div>
                   <div className="text-left hidden sm:block">
                     <p className="text-[13px] font-semibold text-gray-800 leading-tight">{user.first_name} {user.last_name}</p>
-                    <p className="text-[11px] text-gray-400 capitalize leading-tight">{user.role === 'admin' ? 'Admin' : 'Utilisateur'}</p>
+                    <p className="text-[11px] text-gray-400 capitalize leading-tight">{{ admin: 'Admin', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
                   </div>
                   <svg className={`h-3.5 w-3.5 text-gray-400 hidden sm:block transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />

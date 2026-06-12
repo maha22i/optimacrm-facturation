@@ -7,43 +7,50 @@ export async function parse(req, res, next) {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Aucun fichier fourni' });
     }
-    const result = await service.parseFile(req.file);
+    const typeContrat = req.query.type_contrat || req.body?.type_contrat || null;
+    const result = await service.parseFile(req.file, typeContrat);
     sendSuccess(res, result, 'Fichier parsé avec succès');
   } catch (err) { next(err); }
 }
 
 export async function validate(req, res, next) {
   try {
-    const { file_id, mappings, options } = req.body;
+    const { file_id, mappings, options, type_contrat } = req.body;
     if (!file_id || !mappings) {
       return res.status(400).json({ success: false, message: 'file_id et mappings requis' });
     }
-    const result = await service.validateData({ file_id, mappings, options });
+    const result = await service.validateData({ file_id, mappings, options, typeContrat: type_contrat || null });
     sendSuccess(res, result, 'Validation terminée');
   } catch (err) { next(err); }
 }
 
 export async function execute(req, res, next) {
   try {
-    const { file_id, mappings, options } = req.body;
+    const { file_id, mappings, options, type_contrat } = req.body;
     if (!file_id || !mappings) {
       return res.status(400).json({ success: false, message: 'file_id et mappings requis' });
     }
     const result = await service.executeImport({
       file_id, mappings, options,
       user_id: req.user?.id,
+      typeContrat: type_contrat || null,
     });
     try {
-      const created = result.created || result.summary?.created || 0;
-      const machines = result.machines_created || result.summary?.machines_created || 0;
-      const errors = result.errors?.length || result.summary?.errors || 0;
-      const total = result.total || result.summary?.total || 0;
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
         action: 'contrats_importes', module: 'contrats',
-        description: `Import de ${total} contrats (${created} créés, ${machines} machines ajoutées au parc)`,
-        details: { fichier: file_id, lignes_total: total, contrats_crees: created, machines_creees: machines, lignes_erreur: errors },
-        statut: errors > 0 ? 'partiel' : 'succes',
+        description: `Import ${type_contrat || 'contrats'} : ${result.contrats_created} créés, ${result.contrats_updated} mis à jour, ${result.lignes_created} lignes`,
+        details: {
+          fichier: file_id,
+          type_contrat: type_contrat,
+          format: result.format,
+          contrats_crees: result.contrats_created,
+          contrats_maj: result.contrats_updated,
+          machines_creees: result.machines_created,
+          lignes_creees: result.lignes_created,
+          erreurs: result.errors,
+        },
+        statut: result.errors > 0 ? 'partiel' : 'succes',
         ipAddress: activityLog.getClientIp(req),
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
@@ -53,20 +60,22 @@ export async function execute(req, res, next) {
 
 export async function listMappings(req, res, next) {
   try {
-    const mappings = await service.listSavedMappings();
+    const typeContrat = req.query.type_contrat || null;
+    const mappings = await service.listSavedMappings(typeContrat);
     sendSuccess(res, mappings);
   } catch (err) { next(err); }
 }
 
 export async function saveMapping(req, res, next) {
   try {
-    const { name, mapping } = req.body;
+    const { name, mapping, type_contrat } = req.body;
     if (!name || !mapping) {
       return res.status(400).json({ success: false, message: 'name et mapping requis' });
     }
     const result = await service.saveMappingConfig({
       name, mapping,
       user_id: req.user?.id,
+      typeContrat: type_contrat || null,
     });
     sendSuccess(res, result, 'Mapping sauvegardé');
   } catch (err) { next(err); }

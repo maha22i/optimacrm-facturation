@@ -8,14 +8,17 @@ export type PermissionKey =
   | 'catalogue_read' | 'catalogue_write' | 'catalogue_import'
   | 'fournisseurs' | 'marques' | 'familles_unites'
   | 'champs_personnalises' | 'champs_templates'
+  | 'tickets_read' | 'tickets_write' | 'tickets_admin' | 'techniciens_manage'
   | 'parametres_societe';
+
+export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien';
 
 export interface User {
   id: string;
   email: string;
   first_name: string;
   last_name: string;
-  role: 'admin' | 'user';
+  role: UserRole;
   is_active: boolean;
   permissions?: PermissionKey[];
   created_at: string;
@@ -755,6 +758,8 @@ export interface ImportParseResult {
     standard: ImportFieldGroup[];
     custom: ImportFieldGroup[];
   };
+  type_contrat?: string | null;
+  detected_format?: 'colonnes_rubriques' | 'standard';
 }
 
 export interface ImportValidationRow {
@@ -793,6 +798,7 @@ export interface ImportSavedMapping {
   id: number;
   name: string;
   mapping: Record<string, string>;
+  type_contrat?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -815,21 +821,31 @@ export interface ImportContratValidationResult {
   valid: number;
   errors: number;
   duplicates: number;
+  duplicates_in_file?: { numero_contrat: string; row_first: number; row_duplicate: number }[];
   skipped: number;
   missing_clients: string[];
   client_errors: number;
   total_machines: number;
   total_lignes_auto: number;
+  contrats_without_lines?: number;
+  format?: string;
+  type_contrat?: string | null;
   rows: ImportContratValidationRow[];
 }
 
 export interface ImportContratExecuteResult {
   total: number;
   contrats_created: number;
+  contrats_updated: number;
   machines_created: number;
   lignes_created: number;
+  contrats_without_lines?: number;
   errors: number;
   skipped: number;
+  duplicates_in_file?: { numero_contrat: string; row_first: number; row_duplicate: number }[];
+  missing_clients?: string[];
+  format?: string;
+  type_contrat?: string | null;
   error_details: { row_number: number; error: string }[];
 }
 
@@ -1471,4 +1487,113 @@ export interface AvoirsFacture {
   facture_total_ttc: number;
   total_avoirs: number;
   net_du: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tickets (Support)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type StatutTicket = 'nouveau' | 'assigne' | 'en_cours' | 'en_attente' | 'resolu';
+export type PrioriteTicket = 'basse' | 'normale' | 'haute' | 'urgente';
+export type SlaStatus = 'ok' | 'warning' | 'depasse';
+
+export interface TicketCategorie {
+  id: number;
+  nom: string;
+  description: string | null;
+  couleur: string;
+  ordre: number;
+  technicien_defaut_id: string | null;
+  tech_prenom: string | null;
+  tech_nom: string | null;
+  actif: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TicketSla {
+  prise_en_charge: SlaStatus;
+  resolution: SlaStatus;
+}
+
+export interface Ticket {
+  id: number;
+  numero: string;
+  sujet: string;
+  description: string | null;
+  categorie_id: number | null;
+  priorite: PrioriteTicket;
+  statut: StatutTicket;
+  client_id: number;
+  machine_id: number | null;
+  cree_par_id: string | null;
+  technicien_id: string | null;
+  date_prise_en_charge: string | null;
+  date_resolution: string | null;
+  sla_prise_en_charge_echeance: string | null;
+  sla_resolution_echeance: string | null;
+  pieces_jointes: string[];
+  created_at: string;
+  updated_at: string;
+  client_nom?: string;
+  numero_client?: string;
+  categorie_nom?: string;
+  categorie_couleur?: string;
+  technicien_prenom?: string;
+  technicien_nom_famille?: string;
+  sla?: TicketSla;
+}
+
+export interface TicketDetail extends Ticket {
+  client_email?: string;
+  createur_prenom?: string;
+  createur_nom_famille?: string;
+  machine_numero_serie?: string;
+  machine_designation?: string;
+  technicien_email?: string;
+  commentaires: TicketCommentaire[];
+  historique: TicketHistorique[];
+}
+
+export interface TicketCommentaire {
+  id: number;
+  ticket_id: number;
+  user_id: string | null;
+  user_nom: string | null;
+  contenu: string;
+  est_interne: boolean;
+  pieces_jointes: string[];
+  created_at: string;
+}
+
+export interface TicketHistorique {
+  id: number;
+  ticket_id: number;
+  ancien_statut: string | null;
+  nouveau_statut: string;
+  user_id: string | null;
+  user_nom: string | null;
+  motif: string | null;
+  created_at: string;
+}
+
+export interface TicketStats {
+  total: number;
+  par_statut: Record<string, number>;
+  par_priorite: Record<string, number>;
+  sla_depasses: number;
+  temps_moyen_resolution_heures: number;
+  temps_moyen_prise_en_charge_heures: number;
+  par_technicien: { id: string; nom: string; ouverts: number; resolus_ce_mois: number }[];
+  par_categorie: { id: number; nom: string; count: number; couleur?: string }[];
+}
+
+export interface TicketSlaRule {
+  id: number;
+  priorite: PrioriteTicket;
+  delai_prise_en_charge_heures: number;
+  delai_resolution_heures: number;
+  couleur: string;
+  created_at: string;
+  updated_at: string;
 }
