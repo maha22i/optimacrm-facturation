@@ -80,7 +80,7 @@ export async function getContratsAbonnement(dateFacturation, typeFilter) {
             c.client_id, cl.raison_sociale AS client_raison_sociale,
             cl.numero_client AS client_code,
             COALESCE(c.prochaine_date_facturation, c.date_prochaine_facture) AS prochaine_facturation,
-            c.date_renouvellement, c.ftc,
+            c.date_renouvellement, c.ftc, c.terme_facturation,
             (SELECT COALESCE(SUM(
               CASE WHEN lg.actif AND lg.categorie_ligne != 'Hors Forfait'
                 THEN lg.quantite * lg.prix_unitaire_ht * (1 - COALESCE(lg.remise_pourcentage, 0) / 100)
@@ -102,8 +102,19 @@ export async function getContratsAbonnement(dateFacturation, typeFilter) {
 
   const result = contrats.map(c => {
     const mois = getFrequencyMonths(c.periodicite);
-    const periodeDebut = c.prochaine_facturation;
-    const periodeFin = periodeDebut ? subDay(addMonths(periodeDebut, mois)) : null;
+    const terme = c.terme_facturation || 'TEC';
+    const prochaine = c.prochaine_facturation;
+    let periodeDebut, periodeFin;
+    if (!prochaine) {
+      periodeDebut = null;
+      periodeFin = null;
+    } else if (terme === 'TEC') {
+      periodeDebut = addMonths(prochaine, -mois);
+      periodeFin = subDay(prochaine);
+    } else {
+      periodeDebut = prochaine;
+      periodeFin = subDay(addMonths(prochaine, mois));
+    }
     const ftc = parseFloat(c.ftc) || 0;
     const montantAbonnement = parseFloat(c.montant_abonnement_ht) || 0;
     const totalHT = montantAbonnement + ftc;
@@ -175,8 +186,15 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
       const prochaineFacturation = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
       if (!prochaineFacturation) continue;
 
-      const periodeDebut = prochaineFacturation;
-      const periodeFin = subDay(addMonths(periodeDebut, mois));
+      const terme = contrat.terme_facturation || 'TEC';
+      let periodeDebut, periodeFin;
+      if (terme === 'TEC') {
+        periodeDebut = addMonths(prochaineFacturation, -mois);
+        periodeFin = subDay(prochaineFacturation);
+      } else {
+        periodeDebut = prochaineFacturation;
+        periodeFin = subDay(addMonths(prochaineFacturation, mois));
+      }
 
       // --- Augmentation annuelle ---
       const dateRenouvellement = contrat.date_renouvellement;
@@ -373,7 +391,7 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
       );
 
       // --- Mettre à jour le contrat ---
-      const prochaineDate = addMonths(periodeDebut, mois);
+      const prochaineDate = addMonths(prochaineFacturation, mois);
       await dbClient.query(
         `UPDATE contrats SET
           date_prochaine_facture = $1,
@@ -438,8 +456,16 @@ export async function simulerFactureAbonnement(contratId, dateFacturation) {
 
   const mois = getFrequencyMonths(contrat.periodicite);
   const prochaineFacturation = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture);
-  const periodeDebut = prochaineFacturation || dateFact;
-  const periodeFin = subDay(addMonths(periodeDebut, mois));
+  const prochaine = prochaineFacturation || dateFact;
+  const terme = contrat.terme_facturation || 'TEC';
+  let periodeDebut, periodeFin;
+  if (terme === 'TEC') {
+    periodeDebut = addMonths(prochaine, -mois);
+    periodeFin = subDay(prochaine);
+  } else {
+    periodeDebut = prochaine;
+    periodeFin = subDay(addMonths(prochaine, mois));
+  }
 
   const { rows: contratLignes } = await query(
     `SELECT * FROM contrat_lignes WHERE contrat_id = $1 AND actif = true ORDER BY ordre`,

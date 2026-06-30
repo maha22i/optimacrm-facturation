@@ -297,7 +297,8 @@ function autoMapField(sourceHeader, allTargetFields) {
       }
     }
 
-    if (confidence > bestConfidence) {
+    if (confidence > bestConfidence ||
+        (confidence === bestConfidence && bestMatch?.key?.startsWith('custom_') && !field.key.startsWith('custom_'))) {
       bestConfidence = confidence;
       bestMatch = field;
     }
@@ -482,11 +483,14 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
     'montant_finance', 'loyer_ht', 'taux_tva',
     'service_connectic', 'service_collecteur', 'service_divers', 'service_autre',
     'derniere_facture_montant',
+    'ligne_prix_unitaire_ht', 'ligne_montant_ht',
+    'ftc', 'ect',
   ];
   const integerFields = [
     'duree_contrat_mois',
     'volume_forfait_nb', 'volume_forfait_couleur',
     'volume_forfait_t1', 'volume_forfait_t2',
+    'ligne_quantite',
   ];
   const dateFields = [
     'date_signature', 'date_installation', 'date_prochaine_facture',
@@ -641,9 +645,11 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
   const dbBrands = marquesRes.rows.map(r => r.nom_lower);
   const allBrands = [...new Set([...KNOWN_BRANDS, ...dbBrands])];
 
-  // Detect if any rubrique fields are mapped
+  // Detect format: rubrique columns OR ligne-per-row
   const hasRubriqueMapping = Object.values(headerToField).some(f => f && f.startsWith('rubrique_'));
+  const hasLigneMapping = Object.values(headerToField).some(f => f && (f === 'ligne_prix_unitaire_ht' || f === 'ligne_montant_ht'));
   const isRubriqueFormat = hasRubriqueMapping;
+  const isLigneParLigne = hasLigneMapping && !hasRubriqueMapping;
 
   const validatedRows = [];
   let validCount = 0;
@@ -756,13 +762,15 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     if (numContrat) {
       const upperNum = numContrat.toUpperCase();
       if (seenContrats.has(upperNum)) {
-        duplicateContrats++;
-        duplicatesInFile.push({
-          numero_contrat: numContrat,
-          row_first: seenContrats.get(upperNum),
-          row_duplicate: rowNumber,
-        });
-        warnings.push(`Doublon de numéro contrat "${numContrat}" dans le fichier (déjà vu ligne ${seenContrats.get(upperNum)})`);
+        if (!isLigneParLigne) {
+          duplicateContrats++;
+          duplicatesInFile.push({
+            numero_contrat: numContrat,
+            row_first: seenContrats.get(upperNum),
+            row_duplicate: rowNumber,
+          });
+          warnings.push(`Doublon de numéro contrat "${numContrat}" dans le fichier (déjà vu ligne ${seenContrats.get(upperNum)})`);
+        }
       } else {
         seenContrats.set(upperNum, rowNumber);
       }
@@ -787,7 +795,30 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
 
     // --- Compute auto-generated lines ---
     let autoLignes;
-    if (isRubriqueFormat) {
+    if (isLigneParLigne) {
+      // Format "ligne par rubrique": each row = one contrat_ligne
+      const prixUnit = parsed.ligne_prix_unitaire_ht;
+      const montant = parsed.ligne_montant_ht;
+      const qte = parsed.ligne_quantite || 1;
+      const cat = parsed.ligne_categorie || null;
+      const desig = parsed.ligne_designation || cat || 'Abonnement';
+      const effectivePrix = prixUnit != null ? prixUnit : (montant != null ? montant / qte : 0);
+      if (effectivePrix > 0 || cat) {
+        autoLignes = [{
+          ordre: 0,
+          categorie_ligne: cat || 'Autre',
+          reference: null,
+          designation: desig,
+          quantite: qte,
+          prix_unitaire_ht: effectivePrix,
+          taux_tva: defaultTva,
+          actif: true,
+          inclus_abonnement: true,
+        }];
+      } else {
+        autoLignes = [];
+      }
+    } else if (isRubriqueFormat) {
       autoLignes = generateContratLignesRubriques(parsed, defaultTva);
       if (autoLignes.length === 0) {
         contratsWithoutLines++;
@@ -810,6 +841,7 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     parsed._auto_lignes = autoLignes;
     parsed._auto_lignes_count = autoLignes.length;
     parsed._is_rubrique_format = isRubriqueFormat;
+    parsed._is_ligne_par_ligne = isLigneParLigne;
     parsed._default_tva = defaultTva;
     totalLignes += autoLignes.length;
 
@@ -840,7 +872,7 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     total_machines: totalMachines,
     total_lignes_auto: totalLignes,
     contrats_without_lines: contratsWithoutLines,
-    format: isRubriqueFormat ? 'colonnes_rubriques' : 'standard',
+    format: isLigneParLigne ? 'ligne_par_rubrique' : isRubriqueFormat ? 'colonnes_rubriques' : 'standard',
     type_contrat: typeContrat,
     rows: validatedRows,
   };
@@ -884,6 +916,9 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
     );
     const customConfigMap = new Map(customConfigRes.rows.map(r => [r.cle, r.id]));
 
+    // Track contrats whose existing lignes have been cleared (for ligne_par_ligne upsert)
+    const clearedContratsLignes = new Set();
+
     for (const row of validRows) {
       try {
         await client.query('SAVEPOINT row_sp');
@@ -891,10 +926,12 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
         let contratId;
         const isUpdate = !!d._existing_contrat_id;
         const isRubrique = d._is_rubrique_format;
+        const isLPL = d._is_ligne_par_ligne;
 
         // --- UPSERT: if contrat exists, UPDATE header + DELETE/INSERT lines ---
-        if (d._existing_contrat_id) {
+        if (d._existing_contrat_id && !createdContratsMap.has(d.numero_contrat.toUpperCase())) {
           contratId = d._existing_contrat_id;
+          createdContratsMap.set(d.numero_contrat.toUpperCase(), contratId);
 
           await client.query(
             `UPDATE contrats SET
@@ -911,6 +948,8 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               duree_contrat_mois = COALESCE($11, duree_contrat_mois),
               statut = COALESCE($12, statut),
               notes = COALESCE($13, notes),
+              ftc = COALESCE($14, ftc),
+              ect = COALESCE($15, ect),
               updated_at = NOW()
             WHERE id = $1`,
             [
@@ -927,15 +966,29 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.duree_contrat_mois || null,
               d.statut || null,
               d.notes || null,
+              d.ftc || null,
+              d.ect || null,
             ]
           );
 
-          // Delete existing lines, then re-insert
-          await client.query('DELETE FROM contrat_lignes WHERE contrat_id = $1', [contratId]);
+          // Clear old lignes once per contrat when we have new data to insert
+          const autoLignesForCheck = d._auto_lignes || [];
+          if (autoLignesForCheck.length > 0) {
+            await client.query('DELETE FROM contrat_lignes WHERE contrat_id = $1', [contratId]);
+            clearedContratsLignes.add(contratId);
+          }
           contratsUpdated++;
 
         } else if (createdContratsMap.has(d.numero_contrat.toUpperCase())) {
           contratId = createdContratsMap.get(d.numero_contrat.toUpperCase());
+          // For ligne_par_ligne: clear old lignes on first additional row if not yet cleared
+          if (isLPL && d._existing_contrat_id && !clearedContratsLignes.has(contratId)) {
+            const autoLignesForCheck = d._auto_lignes || [];
+            if (autoLignesForCheck.length > 0) {
+              await client.query('DELETE FROM contrat_lignes WHERE contrat_id = $1', [contratId]);
+              clearedContratsLignes.add(contratId);
+            }
+          }
         } else {
           // --- CREATE new contrat ---
           const insertRes = await client.query(
@@ -947,9 +1000,9 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               duree_contrat_mois, numero_dossier_financement, organisme_credit,
               montant_finance, loyer_ht, location_interne, statut,
               derniere_facture_date, derniere_facture_numero, derniere_facture_montant_ht,
-              notes
+              notes, ftc, ect
             ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
             ) RETURNING id`,
             [
               d.numero_contrat,
@@ -974,6 +1027,8 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.derniere_facture_numero || null,
               d.derniere_facture_montant || null,
               d.notes || null,
+              d.ftc || 0,
+              d.ect || 0,
             ]
           );
           contratId = insertRes.rows[0].id;
@@ -988,7 +1043,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
         }
 
         let currentOrdre = 0;
-        if (!isUpdate) {
+        if (!isUpdate || isLPL) {
           const ordreRes = await client.query(
             'SELECT COALESCE(MAX(ordre), -1) as max_ordre FROM contrat_lignes WHERE contrat_id = $1',
             [contratId]

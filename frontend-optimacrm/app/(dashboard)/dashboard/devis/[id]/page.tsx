@@ -89,10 +89,11 @@ function computeTvaBreakdown(lignes: DevisLigne[]) {
   for (const l of lignes) {
     if (l.type === 'COMMENTAIRE' || l.type === 'SAUT_DE_LIGNE' || l.type === 'SOUS_TOTAL') continue;
     if (l.est_optionnel) continue;
-    const rate = l.taux_tva;
+    // pg renvoie les DECIMAL en chaînes : conversion obligatoire avant addition
+    const rate = parseFloat(String(l.taux_tva)) || 0;
     if (!map[rate]) map[rate] = { base: 0, tva: 0 };
-    map[rate].base += l.montant_ht;
-    map[rate].tva += l.montant_tva;
+    map[rate].base += parseFloat(String(l.montant_ht)) || 0;
+    map[rate].tva += parseFloat(String(l.montant_tva)) || 0;
   }
   return Object.entries(map)
     .map(([rate, v]) => ({ rate: parseFloat(rate), ...v }))
@@ -142,6 +143,12 @@ function IconBuilding() {
 }
 function IconClock() {
   return <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>;
+}
+function IconLink() {
+  return <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>;
+}
+function IconSignature() {
+  return <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>;
 }
 
 function SendDevisEmailModal({ devis, onClose, onSent }: { devis: DevisDetail; onClose: () => void; onSent: () => void }) {
@@ -317,6 +324,20 @@ export default function DevisDetailPage() {
 
   useEffect(() => { fetchDevis(); }, [fetchDevis]);
 
+  const copierLienSignature = async () => {
+    if (!devis?.token_public) {
+      setToast({ message: 'Aucun lien de signature — envoyez d\'abord le devis par email', type: 'error' });
+      return;
+    }
+    const lien = `${window.location.origin}/devis/signer/${devis.token_public}`;
+    try {
+      await navigator.clipboard.writeText(lien);
+      setToast({ message: 'Lien de signature copié dans le presse-papiers', type: 'success' });
+    } catch {
+      setToast({ message: 'Impossible de copier le lien', type: 'error' });
+    }
+  };
+
   const handleAction = async (action: string) => {
     if (!devis) return;
     if (action === 'pdf') {
@@ -363,12 +384,18 @@ export default function DevisDetailPage() {
           router.push(`/dashboard/devis/${res.data.id}`);
           break;
         }
-        case 'transformer':
-          await api.post(`/devis/${devisId}/transformer-facture`, {});
-          setToast({ message: 'Facture créée avec succès', type: 'success' });
+        case 'transformer': {
+          const res = await api.post<ApiResponse<{ facture?: { id: number; numero_facture: string } }>>(`/devis/${devisId}/transformer-facture`, {});
           setModal(null);
-          fetchDevis();
+          const facture = res.data?.facture;
+          setToast({ message: facture ? `Facture ${facture.numero_facture} créée avec succès` : 'Facture créée avec succès', type: 'success' });
+          if (facture?.id) {
+            setTimeout(() => router.push(`/dashboard/factures/${facture.id}`), 800);
+          } else {
+            fetchDevis();
+          }
           break;
+        }
         case 'supprimer':
           await api.delete(`/devis/${devisId}`);
           setToast({ message: 'Devis supprimé', type: 'success' });
@@ -473,6 +500,7 @@ export default function DevisDetailPage() {
               <>
                 <ActionBtn label="Modifier" icon={<IconEdit />} onClick={() => handleAction('modifier')} />
                 <ActionBtn label="Renvoyer email" icon={<IconMail />} onClick={() => setShowEmailModal(true)} />
+                <ActionBtn label="Copier le lien de signature" icon={<IconLink />} onClick={copierLienSignature} />
                 <ActionBtn label="Accepter" icon={<IconCheck />} onClick={() => handleAction('accepter')} variant="success" disabled={actionLoading} />
                 <ActionBtn label="Refuser" icon={<IconX />} onClick={() => handleAction('refuser')} variant="danger" disabled={actionLoading} />
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
@@ -716,6 +744,42 @@ export default function DevisDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* Signature client */}
+          {devis.signature_client && (
+            <div className="bg-white rounded-2xl border border-emerald-100 shadow-sm p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-emerald-600"><IconSignature /></span>
+                <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Signature client</h3>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 mb-3 flex justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={devis.signature_client} alt="Signature du client" className="max-h-24 object-contain" />
+              </div>
+              <dl className="space-y-1.5 text-sm">
+                {devis.signataire_nom && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-gray-500">Signataire</dt>
+                    <dd className="font-medium text-gray-900 text-right">{devis.signataire_nom}</dd>
+                  </div>
+                )}
+                <div className="flex justify-between gap-2">
+                  <dt className="text-gray-500">Signé le</dt>
+                  <dd className="font-medium text-gray-900 text-right">
+                    {devis.date_signature
+                      ? new Date(devis.date_signature).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : '—'}
+                  </dd>
+                </div>
+                {devis.ip_signature && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-gray-500">Adresse IP</dt>
+                    <dd className="font-mono text-xs text-gray-700 text-right">{devis.ip_signature}</dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          )}
 
           {/* Custom fields (all) */}
           {devis.champs_personnalises.length > 0 && (

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import * as ctrl from './ticket.controller.js';
+import * as emailConfigCtrl from './emailConfig.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { authorize } from '../../middleware/authorize.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
 
@@ -10,6 +12,25 @@ router.use(authenticate);
 
 // ── Stats (avant /:id pour éviter conflit) ──────────────────────────────────
 router.get('/stats', checkPermission('tickets_read'), ctrl.getStats);
+
+// ── Config boîte mail support (admin / admin_technique, avant /:id) ─────────
+router.get('/email-config', authorize('admin', 'admin_technique'), emailConfigCtrl.getEmailConfig);
+
+router.put(
+  '/email-config',
+  authorize('admin', 'admin_technique'),
+  validate({
+    imap_host: { minLength: 1, maxLength: 255, label: 'Hôte IMAP' },
+    imap_user: { minLength: 1, maxLength: 255, label: 'Utilisateur IMAP' },
+    folder:    { maxLength: 255, label: 'Dossier' },
+    imap_tls:  { type: 'boolean', label: 'TLS' },
+    actif:     { type: 'boolean', label: 'Actif' },
+  }),
+  emailConfigCtrl.updateEmailConfig,
+);
+
+router.post('/email-config/test', authorize('admin', 'admin_technique'), emailConfigCtrl.testEmailConnection);
+router.post('/email-config/sync', authorize('admin', 'admin_technique'), emailConfigCtrl.syncEmails);
 
 // ── Catégories ──────────────────────────────────────────────────────────────
 router.get('/categories', checkPermission('tickets_read'), ctrl.listCategories);

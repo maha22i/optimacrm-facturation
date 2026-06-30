@@ -34,6 +34,8 @@ export async function updateEmailConfig(data) {
     'smtp_from_name', 'smtp_from_email', 'reply_to_email', 'signature',
     'template_facture_sujet', 'template_facture_corps',
     'template_devis_sujet', 'template_devis_corps',
+    'template_devis_verif_sujet', 'template_devis_verif_corps',
+    'template_devis_signe_sujet', 'template_devis_signe_corps',
   ];
 
   const setClauses = [];
@@ -203,7 +205,7 @@ export async function sendFactureEmail({ facture, pdfBuffer, destinataire, sujet
 
 // ── Envoi devis par email ─────────────────────────────────────────────────────
 
-export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, corps }) {
+export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, corps, lienSignature }) {
   const config = await getEmailConfigRaw();
   if (!config || !config.est_configure) {
     throw ApiError.badRequest('Le SMTP n\'est pas configuré. Configurez-le dans Paramètres > Email.');
@@ -220,6 +222,19 @@ export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, co
   const numero = devis.numero_devis || String(devis.id);
   const filename = `DEVIS-${numero}.pdf`;
 
+  // Bouton de signature en ligne, ajouté automatiquement si le lien est fourni
+  const lienSignatureHtml = lienSignature ? `
+            <div style="text-align:center;margin:24px 0 8px 0;">
+              <a href="${lienSignature}" target="_blank"
+                 style="display:inline-block;background:#2563EB;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;padding:12px 32px;border-radius:8px;">
+                Consulter et signer le devis en ligne
+              </a>
+              <p style="color:#9ca3af;font-size:11px;margin-top:10px;">
+                Ou copiez ce lien dans votre navigateur :<br>
+                <a href="${lienSignature}" style="color:#2563EB;word-break:break-all;">${lienSignature}</a>
+              </p>
+            </div>` : '';
+
   try {
     await transporter.sendMail({
       from: `"${fromName}" <${fromEmail}>`,
@@ -233,6 +248,7 @@ export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, co
           </div>
           <div style="background:#ffffff;padding:24px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;">
             <div style="color:#1a1a2e;font-size:14px;line-height:1.6;">${corpsHtml}</div>
+            ${lienSignatureHtml}
             ${signatureHtml}
           </div>
           <div style="text-align:center;padding:12px;color:#9ca3af;font-size:11px;">
@@ -242,6 +258,177 @@ export async function sendDevisEmail({ devis, pdfBuffer, destinataire, sujet, co
       `,
       attachments: [{
         filename,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      }],
+    });
+
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'envoyé',
+    });
+
+    return { success: true };
+  } catch (err) {
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'erreur',
+      message_erreur: err.message,
+    });
+    throw ApiError.badRequest(`Erreur d'envoi : ${err.message}`);
+  }
+}
+
+// ── Signature publique de devis ──────────────────────────────────────────────
+
+function renderTemplate(template, vars) {
+  let out = template || '';
+  for (const [key, val] of Object.entries(vars)) {
+    out = out.replaceAll(key, val);
+  }
+  return out;
+}
+
+async function getSocieteNom() {
+  const societe = await query('SELECT raison_sociale FROM societe_config WHERE id = 1');
+  return societe.rows[0]?.raison_sociale || '';
+}
+
+function buildSimpleEmailHtml(fromName, corps) {
+  const corpsHtml = escapeHtml(corps).replace(/\n/g, '<br>');
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+      <div style="background:#2563EB;padding:16px 20px;border-radius:8px 8px 0 0;text-align:center;">
+        <h1 style="color:white;margin:0;font-size:18px;">${escapeHtml(fromName)}</h1>
+      </div>
+      <div style="background:#ffffff;padding:24px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;">
+        <div style="color:#1a1a2e;font-size:14px;line-height:1.6;">${corpsHtml}</div>
+      </div>
+      <div style="text-align:center;padding:12px;color:#9ca3af;font-size:11px;">
+        Envoyé via OptimaCRM
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Envoie le code de vérification au signataire d'un devis.
+ * Variables disponibles : {{numero}}, {{signataire}}, {{code}}, {{societe}}
+ */
+export async function sendDevisVerificationEmail({ devis, destinataire, code, signataire }) {
+  const config = await getEmailConfigRaw();
+  if (!config || !config.est_configure) {
+    throw ApiError.badRequest('Le SMTP n\'est pas configuré. Configurez-le dans Paramètres > Email.');
+  }
+
+  const societeNom = await getSocieteNom();
+  const vars = {
+    '{{numero}}': devis.numero_devis || '',
+    '{{signataire}}': signataire || '',
+    '{{code}}': code,
+    '{{societe}}': societeNom,
+  };
+
+  const sujet = renderTemplate(
+    config.template_devis_verif_sujet || 'Code de vérification pour signer le devis {{numero}}',
+    vars,
+  );
+  const corps = renderTemplate(
+    config.template_devis_verif_corps || 'Bonjour,\n\nVoici votre code de vérification : {{code}}\n\nCe code est valable 15 minutes.',
+    vars,
+  );
+
+  const transporter = createTransporter(config);
+  const fromName = config.smtp_from_name || 'OptimaCRM';
+  const fromEmail = config.smtp_from_email || config.smtp_user;
+
+  try {
+    await transporter.sendMail({
+      from: `"${fromName}" <${fromEmail}>`,
+      to: destinataire,
+      replyTo: config.reply_to_email || fromEmail,
+      subject: sujet,
+      html: buildSimpleEmailHtml(fromName, corps),
+    });
+
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'envoyé',
+    });
+
+    return { success: true };
+  } catch (err) {
+    await logEmail({
+      type_document: 'devis',
+      document_id: devis.id,
+      document_numero: devis.numero_devis,
+      destinataire,
+      sujet,
+      statut: 'erreur',
+      message_erreur: err.message,
+    });
+    throw ApiError.badRequest(`Erreur d'envoi : ${err.message}`);
+  }
+}
+
+/**
+ * Envoie la confirmation de signature au signataire, avec le PDF signé en pièce jointe.
+ * Variables disponibles : {{numero}}, {{signataire}}, {{montant_ttc}}, {{date_signature}}, {{societe}}
+ */
+export async function sendDevisSignatureConfirmationEmail({ devis, destinataire, pdfBuffer, signataire, dateSignature }) {
+  const config = await getEmailConfigRaw();
+  if (!config || !config.est_configure) {
+    throw ApiError.badRequest('Le SMTP n\'est pas configuré. Configurez-le dans Paramètres > Email.');
+  }
+
+  const societeNom = await getSocieteNom();
+  const dateSignatureStr = dateSignature
+    ? new Date(dateSignature).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })
+    : '';
+
+  const vars = {
+    '{{numero}}': devis.numero_devis || '',
+    '{{signataire}}': signataire || '',
+    '{{montant_ttc}}': formatMontant(devis.montant_ttc),
+    '{{date_signature}}': dateSignatureStr,
+    '{{societe}}': societeNom,
+  };
+
+  const sujet = renderTemplate(
+    config.template_devis_signe_sujet || 'Confirmation de signature — Devis {{numero}}',
+    vars,
+  );
+  const corps = renderTemplate(
+    config.template_devis_signe_corps || 'Bonjour,\n\nNous confirmons la signature du devis {{numero}}.\n\nVous trouverez le devis signé en pièce jointe.',
+    vars,
+  );
+
+  const transporter = createTransporter(config);
+  const fromName = config.smtp_from_name || 'OptimaCRM';
+  const fromEmail = config.smtp_from_email || config.smtp_user;
+  const numero = devis.numero_devis || String(devis.id);
+
+  try {
+    await transporter.sendMail({
+      from: `"${fromName}" <${fromEmail}>`,
+      to: destinataire,
+      replyTo: config.reply_to_email || fromEmail,
+      subject: sujet,
+      html: buildSimpleEmailHtml(fromName, corps),
+      attachments: [{
+        filename: `DEVIS-${numero}-signe.pdf`,
         content: pdfBuffer,
         contentType: 'application/pdf',
       }],
@@ -312,6 +499,9 @@ export async function getRenderedDevisTemplate(devis) {
   const clientLabel = devis.client?.raison_sociale || devis.nom_client_libre || '';
   const destinataire = devis.contact?.email || devis.client?.email_principal || '';
 
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const lienSignature = devis.token_public ? `${frontendUrl}/devis/signer/${devis.token_public}` : '';
+
   const vars = {
     '{{numero}}': devis.numero_devis || '',
     '{{societe}}': s.raison_sociale || '',
@@ -321,6 +511,7 @@ export async function getRenderedDevisTemplate(devis) {
     '{{date_emission}}': formatDate(devis.date_emission || devis.date_creation),
     '{{client}}': clientLabel,
     '{{objet}}': devis.objet || '',
+    '{{lien_signature}}': lienSignature,
   };
 
   let sujet = sujetTemplate;

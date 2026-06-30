@@ -489,7 +489,7 @@ export const CONTRATS_FIELD_GROUPS = [
     ],
   },
   {
-    group: 'TVA',
+    group: 'TVA & Frais',
     icon: '💶',
     fields: [
       {
@@ -499,6 +499,81 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'decimal',
         synonyms: [
           'taux tva', 'tva', 'taux_tva', 'tva %',
+        ],
+      },
+      {
+        key: 'ftc',
+        label: 'FTC (Frais Techniques Complémentaires)',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'ftc', 'frais techniques', 'frais techniques complementaires',
+          'frais techniques complémentaires', 'frais_techniques',
+        ],
+      },
+      {
+        key: 'ect',
+        label: 'ECT (Eco-Contribution)',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'ect', 'eco contribution', 'éco-contribution', 'eco_contribution',
+          'eco-contribution', 'contribution eco',
+        ],
+      },
+    ],
+  },
+  {
+    group: 'Ligne d\'abonnement',
+    icon: '📝',
+    fields: [
+      {
+        key: 'ligne_categorie',
+        label: 'Catégorie',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'catégorie', 'categorie', 'catégorie ligne', 'categorie ligne',
+          'rubrique', 'type ligne', 'type rubrique', 'categorie_ligne',
+        ],
+      },
+      {
+        key: 'ligne_designation',
+        label: 'Désignation',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'désignation', 'designation', 'libellé', 'libelle',
+          'description ligne', 'intitulé', 'intitule',
+        ],
+      },
+      {
+        key: 'ligne_quantite',
+        label: 'Quantité',
+        required: false,
+        type: 'integer',
+        synonyms: [
+          'quantité', 'quantite', 'qté', 'qte', 'qty', 'nb',
+        ],
+      },
+      {
+        key: 'ligne_prix_unitaire_ht',
+        label: 'Prix unitaire HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'prix unitaire ht', 'prix unitaire', 'pu ht', 'prix ht',
+          'prix_unitaire_ht', 'tarif ht', 'tarif unitaire',
+        ],
+      },
+      {
+        key: 'ligne_montant_ht',
+        label: 'Montant HT',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'montant ht', 'montant', 'total ht', 'montant_ht',
+          'montant ligne', 'total ligne',
         ],
       },
     ],

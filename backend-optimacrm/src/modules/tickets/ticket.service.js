@@ -1,4 +1,4 @@
-import { query } from '../../config/database.js';
+import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 // ---------------------------------------------------------------------------
@@ -101,6 +101,7 @@ export async function listTickets({
   client_id,
   technicien_id,
   search,
+  source,
   date_debut,
   date_fin,
   sla_depasse,
@@ -145,6 +146,10 @@ export async function listTickets({
     conditions.push(`(t.numero ILIKE $${i} OR t.sujet ILIKE $${i} OR t.description ILIKE $${i})`);
     params.push(`%${search}%`);
     i++;
+  }
+  if (source && ['manuel', 'email'].includes(source)) {
+    conditions.push(`t.source = $${i++}`);
+    params.push(source);
   }
   if (date_debut) {
     conditions.push(`t.created_at >= $${i++}`);
@@ -319,6 +324,68 @@ export async function createTicket(data, userId, userNom) {
   );
 
   return ticket;
+}
+
+/**
+ * Création d'un ticket depuis un email entrant (ingestion IMAP).
+ * Réutilise la numérotation TK-YYYY-NNNNN, le calcul SLA et l'historique de statut.
+ * Insertion ticket + historique dans une même transaction.
+ */
+export async function createTicketFromEmail({
+  sujet,
+  description,
+  client_id = null,
+  email_message_id,
+  email_from,
+  email_received_at,
+}) {
+  const numero = await generateNumero();
+  const priorite = 'normale';
+  const now = new Date();
+  const sla = await computeSlaDeadlines(priorite, now);
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const result = await dbClient.query(
+      `INSERT INTO tickets (
+        numero, sujet, description, categorie_id, priorite, statut,
+        client_id, machine_id, cree_par_id, technicien_id,
+        sla_prise_en_charge_echeance, sla_resolution_echeance,
+        pieces_jointes, source, email_message_id, email_from, email_received_at
+      ) VALUES ($1,$2,$3,NULL,$4,'nouveau',$5,NULL,NULL,NULL,$6,$7,'[]','email',$8,$9,$10)
+      RETURNING *`,
+      [
+        numero,
+        sujet,
+        description || null,
+        priorite,
+        client_id,
+        sla.sla_prise_en_charge_echeance,
+        sla.sla_resolution_echeance,
+        email_message_id,
+        email_from || null,
+        email_received_at || null,
+      ],
+    );
+
+    const ticket = result.rows[0];
+
+    await dbClient.query(
+      `INSERT INTO ticket_historique_statuts (ticket_id, ancien_statut, nouveau_statut, user_id, user_nom)
+       VALUES ($1, NULL, 'nouveau', NULL, 'Email entrant')`,
+      [ticket.id],
+    );
+
+    await dbClient.query('COMMIT');
+    return ticket;
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
 }
 
 export async function updateTicket(id, data) {

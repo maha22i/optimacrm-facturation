@@ -285,6 +285,14 @@ export default function TicketDetailPage() {
                 <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
                 {sc.label}
               </span>
+              {ticket.source === 'email' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-0.5 text-[11px] font-semibold text-violet-700" title="Ticket créé depuis un email entrant">
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                  </svg>
+                  Via mail
+                </span>
+              )}
             </div>
             <h1 className="text-xl font-bold text-gray-900">{ticket.sujet}</h1>
           </div>
@@ -400,9 +408,13 @@ export default function TicketDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-gray-500 mb-1">Client</p>
-                <Link href={`/dashboard/clients/${ticket.client_id}`} className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
-                  {ticket.client_nom || `Client #${ticket.client_id}`}
-                </Link>
+                {ticket.client_id ? (
+                  <Link href={`/dashboard/clients/${ticket.client_id}`} className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
+                    {ticket.client_nom || `Client #${ticket.client_id}`}
+                  </Link>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">Non rapproché</span>
+                )}
               </div>
               <div>
                 <p className="text-xs text-gray-500 mb-1">Machine</p>
@@ -457,6 +469,32 @@ export default function TicketDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* Encart "Reçu par email" */}
+          {ticket.source === 'email' && (
+            <div className="bg-violet-50 rounded-2xl border border-violet-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-8 w-8 rounded-xl bg-violet-100 flex items-center justify-center">
+                  <svg className="h-4 w-4 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                  </svg>
+                </div>
+                <h3 className="text-sm font-bold text-violet-900 uppercase tracking-wider">Reçu par email</h3>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-violet-500 mb-0.5">Expéditeur</p>
+                  <p className="text-sm font-medium text-violet-900 break-all">{ticket.email_from || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-violet-500 mb-0.5">Reçu le</p>
+                  <p className="text-sm font-medium text-violet-900">
+                    {ticket.email_received_at ? formatDate(ticket.email_received_at) : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Diagnostic & Résolution — affiché quand le ticket est terminé */}
           {isTermine && (() => {
@@ -729,28 +767,43 @@ export default function TicketDetailPage() {
           </div>
 
           {/* Client Card */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
-              </svg>
-              Client
-            </h3>
-            <p className="text-base font-semibold text-gray-900">{ticket.client_nom}</p>
-            {ticket.numero_client && (
-              <p className="text-xs text-gray-500 mt-0.5">N° {ticket.numero_client}</p>
-            )}
-            {ticket.client_email && <p className="text-sm text-gray-500 mt-1">{ticket.client_email}</p>}
-            {clientTicketCount !== null && (
-              <p className="text-xs text-gray-500 mt-2">{clientTicketCount} ticket(s) au total</p>
-            )}
-            <div className="mt-3 pt-3 border-t border-gray-100">
-              <Link href={`/dashboard/clients/${ticket.client_id}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
-                Voir fiche
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
-              </Link>
+          {ticket.client_id ? (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+                </svg>
+                Client
+              </h3>
+              <p className="text-base font-semibold text-gray-900">{ticket.client_nom}</p>
+              {ticket.numero_client && (
+                <p className="text-xs text-gray-500 mt-0.5">N° {ticket.numero_client}</p>
+              )}
+              {ticket.client_email && <p className="text-sm text-gray-500 mt-1">{ticket.client_email}</p>}
+              {clientTicketCount !== null && (
+                <p className="text-xs text-gray-500 mt-2">{clientTicketCount} ticket(s) au total</p>
+              )}
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <Link href={`/dashboard/clients/${ticket.client_id}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700 transition">
+                  Voir fiche
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+                </Link>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+                </svg>
+                Client
+              </h3>
+              <p className="text-sm text-gray-400 italic">Aucun client rapproché</p>
+              {ticket.email_from && (
+                <p className="text-xs text-gray-500 mt-1 break-all">Expéditeur : {ticket.email_from}</p>
+              )}
+            </div>
+          )}
 
           {/* Machine Card */}
           {ticket.machine_id && (

@@ -50,6 +50,7 @@ router.post(
     type_facturation: { enum: ['Unique', 'Periodique'] },
     periodicite:     { enum: ['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] },
     statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé', 'Inactif'] },
+    terme_facturation: { enum: ['TAE', 'TEC'] },
   }),
   ctrl.createContrat,
 );
@@ -62,6 +63,7 @@ router.put(
     type_facturation: { enum: ['Unique', 'Periodique'] },
     periodicite:     { enum: ['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] },
     statut:          { enum: ['Brouillon', 'Actif', 'Suspendu', 'Résilié', 'Échu', 'Renouvelé', 'Inactif'] },
+    terme_facturation: { enum: ['TAE', 'TEC'] },
   }),
   ctrl.updateContrat,
 );

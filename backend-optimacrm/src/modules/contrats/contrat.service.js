@@ -1,6 +1,7 @@
 import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CONTRAT_CATEGORIES, getCategoriesForType } from '../../config/contratCategories.js';
+import { getValeurs as getChampsPersoValeurs, saveValeurs as saveChampsPersoValeurs } from '../champs-config/champsConfig.service.js';
 
 // ---------------------------------------------------------------------------
 // Constantes
@@ -13,7 +14,7 @@ const CONTRAT_FIELDS = `
   c.duree_contrat_mois, c.numero_dossier_financement, c.organisme_credit,
   c.montant_finance, c.loyer_ht, c.location_interne, c.statut,
   c.derniere_facture_date, c.derniere_facture_numero, c.derniere_facture_montant_ht,
-  c.ftc, c.ect, c.notes, c.devis_id, c.created_at, c.updated_at
+  c.ftc, c.ect, c.notes, c.devis_id, c.terme_facturation, c.created_at, c.updated_at
 `;
 
 const TYPE_PREFIXES = {
@@ -153,15 +154,17 @@ export async function getContratById(id) {
   );
   if (contratRes.rows.length === 0) throw ApiError.notFound('Contrat non trouvé');
 
-  const [lignesRes, machinesRes] = await Promise.all([
+  const [lignesRes, machinesRes, champsPerso] = await Promise.all([
     query('SELECT * FROM contrat_lignes WHERE contrat_id = $1 ORDER BY ordre, id', [id]),
     query('SELECT * FROM contrat_machines WHERE contrat_id = $1 ORDER BY id', [id]),
+    getChampsPersoValeurs('CONTRAT', id).catch(() => []),
   ]);
 
   return {
     ...contratRes.rows[0],
     lignes: lignesRes.rows,
     machines: machinesRes.rows,
+    champs_personnalises: champsPerso,
   };
 }
 
@@ -178,14 +181,16 @@ export async function createContrat(data) {
     const dup = await client.query('SELECT id FROM contrats WHERE numero_contrat = $1', [numero_contrat]);
     if (dup.rows.length > 0) throw ApiError.conflict('Un contrat avec ce numéro existe déjà');
 
+    const termeFacturation = ['TAE', 'TEC'].includes(data.terme_facturation) ? data.terme_facturation : 'TEC';
+
     const contratRes = await client.query(
       `INSERT INTO contrats (
         numero_contrat, type_contrat, type_facturation, client_id, periodicite,
         date_signature, date_installation, date_debut, date_echeance,
         date_prochaine_facture, date_renouvellement, duree_contrat_mois,
         numero_dossier_financement, organisme_credit, montant_finance, loyer_ht,
-        location_interne, statut, ftc, ect, notes, devis_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        location_interne, statut, ftc, ect, notes, devis_id, terme_facturation
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
       RETURNING *`,
       [
         numero_contrat,
@@ -210,6 +215,7 @@ export async function createContrat(data) {
         data.ect ?? 0,
         data.notes || null,
         data.devis_id || null,
+        termeFacturation,
       ],
     );
 
@@ -282,6 +288,11 @@ export async function createContrat(data) {
     }
 
     await client.query('COMMIT');
+
+    if (data.champs_personnalises && Object.keys(data.champs_personnalises).length > 0) {
+      await saveChampsPersoValeurs('CONTRAT', contrat.id, data.champs_personnalises);
+    }
+
     return getContratById(contrat.id);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -305,6 +316,10 @@ export async function updateContrat(id, data) {
     if (clientCheck.rows.length === 0) throw ApiError.badRequest('Client non trouvé');
   }
 
+  if (data.terme_facturation !== undefined && !['TAE', 'TEC'].includes(data.terme_facturation)) {
+    throw ApiError.badRequest('terme_facturation doit être TAE ou TEC');
+  }
+
   const allowedFields = [
     'numero_contrat', 'type_contrat', 'type_facturation', 'client_id', 'periodicite',
     'date_signature', 'date_installation', 'date_debut', 'date_echeance',
@@ -312,6 +327,7 @@ export async function updateContrat(id, data) {
     'numero_dossier_financement', 'organisme_credit', 'montant_finance', 'loyer_ht',
     'location_interne', 'statut', 'ftc', 'ect', 'notes', 'devis_id',
     'derniere_facture_date', 'derniere_facture_numero', 'derniere_facture_montant_ht',
+    'terme_facturation',
   ];
 
   const { sets, vals, nextIndex } = buildUpdateQuery(data, allowedFields);
@@ -324,6 +340,10 @@ export async function updateContrat(id, data) {
     `UPDATE contrats SET ${sets.join(', ')} WHERE id = $${nextIndex} AND deleted_at IS NULL`,
     vals,
   );
+
+  if (data.champs_personnalises && Object.keys(data.champs_personnalises).length > 0) {
+    await saveChampsPersoValeurs('CONTRAT', id, data.champs_personnalises);
+  }
 
   return getContratById(id);
 }
@@ -581,6 +601,7 @@ export async function duplicateContrat(id) {
     statut: 'Brouillon',
     ftc: original.ftc,
     ect: original.ect,
+    terme_facturation: original.terme_facturation || 'TEC',
     notes: original.notes ? `[Copie de ${original.numero_contrat}] ${original.notes}` : `Copie de ${original.numero_contrat}`,
     date_debut: new Date().toISOString().split('T')[0],
     lignes: original.lignes.map(l => ({
@@ -712,8 +733,11 @@ export async function deleteAllContrats() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('DELETE FROM facture_lignes WHERE facture_id IN (SELECT id FROM factures WHERE contrat_id IS NOT NULL)');
+    await client.query('DELETE FROM factures WHERE contrat_id IS NOT NULL');
     await client.query('DELETE FROM contrat_machines');
     await client.query('DELETE FROM contrat_lignes');
+    await client.query("DELETE FROM champs_personnalises_valeurs WHERE config_id IN (SELECT id FROM champs_personnalises_config WHERE entite = 'CONTRAT')");
     const result = await client.query('DELETE FROM contrats RETURNING id');
     await client.query('COMMIT');
     return { deletedCount: result.rowCount };

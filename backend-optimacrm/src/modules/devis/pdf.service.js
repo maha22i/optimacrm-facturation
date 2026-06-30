@@ -80,7 +80,7 @@ async function fetchLogoAsBase64(logoUrl) {
 }
 
 /** Même logique que le front : import Excel sans insertion de devis_lignes */
-function lignesPourPdf(devisData) {
+export function lignesPourPdf(devisData) {
   const lignes = devisData.lignes || [];
   if (lignes.length > 0) return lignes;
 
@@ -238,6 +238,33 @@ function generateDevisHTML(devisData, lignes, societe, logoBase64) {
   }[d.mode_paiement] || d.mode_paiement || '';
 
   const tvaRate = 20;
+
+  const formatDateHeure = (date) => {
+    if (!date) return '—';
+    return new Date(date).toLocaleString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+      timeZone: 'Europe/Paris',
+    });
+  };
+
+  const signatureHtml = d.signature_client ? `
+  <!-- BON POUR ACCORD / SIGNATURE -->
+  <div style="margin-top:6mm;padding:10px 14px;border:1px solid #ede9fe;border-radius:6px;background:#fbfaff;">
+    <div style="font-size:10px;font-weight:700;color:#6B46C1;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Bon pour accord</div>
+    <table style="width:100%;">
+      <tr>
+        <td style="width:45%;vertical-align:top;">
+          <img src="${d.signature_client}" style="max-height:60px;max-width:220px;object-fit:contain;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">
+        </td>
+        <td style="width:55%;vertical-align:top;font-size:9px;color:#4b5563;line-height:1.8;padding-left:10px;">
+          <div>Signataire : <span style="font-weight:600;color:#1a1a2e;">${escapeHtml(d.signataire_nom || '')}</span></div>
+          <div>Signé électroniquement le ${formatDateHeure(d.date_signature)}</div>
+          ${d.ip_signature ? `<div>Adresse IP : ${escapeHtml(d.ip_signature)}</div>` : ''}
+        </td>
+      </tr>
+    </table>
+  </div>` : '';
 
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -404,6 +431,8 @@ function generateDevisHTML(devisData, lignes, societe, logoBase64) {
 
   <!-- MESSAGE CLIENT -->
   ${d.message_client ? `<div style="margin-top:4mm;padding:6px 10px;background:#f5f3ff;border-left:3px solid #6B46C1;font-size:9px;color:#4b5563;border-radius:0 4px 4px 0;">${escapeHtml(d.message_client)}</div>` : ''}
+
+  ${signatureHtml}
 
 </div>
 

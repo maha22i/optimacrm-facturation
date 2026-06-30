@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import clientRoutes from './modules/clients/client.routes.js';
 import devisRoutes from './modules/devis/devis.routes.js';
+import devisPublicRoutes from './modules/devis/devis.public.routes.js';
 import catalogueRoutes from './modules/catalogue/catalogue.routes.js';
 import champsTemplatesRoutes from './modules/champs-templates/champsTemplates.routes.js';
 import societeRoutes from './modules/societe/societe.routes.js';
@@ -38,6 +39,7 @@ import avoirRoutes from './modules/avoirs/avoir.routes.js';
 import * as avoirController from './modules/avoirs/avoir.controller.js';
 import ticketRoutes from './modules/tickets/ticket.routes.js';
 import * as ticketController from './modules/tickets/ticket.controller.js';
+import planningRoutes from './modules/planning/planning.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -58,6 +60,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, message: 'API is running', timestamp: new Date().toISOString() });
 });
+
+// Routes publiques (signature de devis par token) — montées AVANT les routes authentifiées
+app.use('/api/public/devis', devisPublicRoutes);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
@@ -86,6 +91,7 @@ app.use('/api/imports-releves', importsRelevesRoutes);
 app.get('/api/parc-machines/:id/timeline', authenticate, checkPermission('parc_read'), importsRelevesController.getMachineTimeline);
 app.use('/api/sepa', sepaRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/planning', planningRoutes);
 app.get('/api/clients/:id/tickets', authenticate, checkPermission('tickets_read'), ticketController.getTicketsByClient);
 app.get('/api/parc-machines/:id/tickets', authenticate, checkPermission('tickets_read'), ticketController.getTicketsByMachine);
 app.use('/api/activity-logs', activityLogRoutes);

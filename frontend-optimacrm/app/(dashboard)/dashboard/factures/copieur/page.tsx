@@ -230,7 +230,19 @@ function GenerationCopieurTab() {
     }
   };
 
-  const contrats = contratsAFacturer;
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredContrats = contratsAFacturer.filter(c => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      c.numero_contrat.toLowerCase().includes(q) ||
+      c.client_raison_sociale.toLowerCase().includes(q) ||
+      (c.periodicite && c.periodicite.toLowerCase().includes(q))
+    );
+  });
+
+  const contrats = filteredContrats;
 
   if (lotResult) {
     return (
@@ -275,6 +287,35 @@ function GenerationCopieurTab() {
           </button>
         </div>
       </div>
+
+      {/* Barre de recherche */}
+      {contratsAFacturer.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-6">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Rechercher par n° contrat, client, périodicité..."
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 outline-none transition placeholder:text-gray-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <p className="mt-2 text-xs text-gray-400">
+              {contrats.length} résultat(s) sur {contratsAFacturer.length} contrat(s)
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       {contrats.length > 0 && (
@@ -340,8 +381,12 @@ function GenerationCopieurTab() {
                       <svg className="h-8 w-8 text-gray-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M9.75 8.25h.008v.008H9.75V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-500">Aucun contrat copieur à facturer</p>
-                      <p className="text-xs text-gray-400 mt-0.5">Cliquez sur &quot;Charger les contrats&quot; pour rechercher</p>
+                      <p className="text-sm font-medium text-gray-500">
+                        {searchQuery ? 'Aucun résultat pour cette recherche' : 'Aucun contrat copieur à facturer'}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {searchQuery ? 'Essayez avec un autre terme de recherche' : 'Cliquez sur "Charger les contrats" pour rechercher'}
+                      </p>
                     </div>
                   </div>
                 </td></tr>

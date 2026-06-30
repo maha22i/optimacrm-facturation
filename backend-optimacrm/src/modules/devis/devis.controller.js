@@ -120,7 +120,10 @@ export async function envoyerDevis(req, res, next) {
 
 export async function getDevisEmailTemplate(req, res, next) {
   try {
-    const devis = await devisService.getDevisById(parseInt(req.params.id));
+    const devisId = parseInt(req.params.id);
+    // Le token doit exister pour que {{lien_signature}} pointe vers le vrai lien
+    await devisService.ensureTokenPublic(devisId);
+    const devis = await devisService.getDevisById(devisId);
     const template = await getRenderedDevisTemplate(devis);
     sendSuccess(res, template);
   } catch (err) { next(err); }
@@ -128,7 +131,9 @@ export async function getDevisEmailTemplate(req, res, next) {
 
 export async function envoyerDevisEmail(req, res, next) {
   try {
-    const devis = await devisService.getDevisById(parseInt(req.params.id));
+    const devisId = parseInt(req.params.id);
+    await devisService.ensureTokenPublic(devisId);
+    const devis = await devisService.getDevisById(devisId);
     if (!['BROUILLON', 'ENVOYE'].includes(devis.statut)) {
       return res.status(400).json({
         success: false,
@@ -141,14 +146,23 @@ export async function envoyerDevisEmail(req, res, next) {
       return res.status(400).json({ success: false, message: 'Destinataire et sujet sont requis' });
     }
 
+    // Remplace {{lien_signature}} si le commercial a laissé la variable brute
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const lienSignature = `${frontendUrl}/devis/signer/${devis.token_public}`;
+    const sujetFinal = String(sujet).replaceAll('{{lien_signature}}', lienSignature);
+    const corpsFinal = String(corps || '').replaceAll('{{lien_signature}}', lienSignature);
+
     const { pdf } = await generateDevisPdf(devis.id);
 
     await sendDevisEmail({
       devis,
       pdfBuffer: pdf,
       destinataire,
-      sujet,
-      corps: corps || '',
+      sujet: sujetFinal,
+      corps: corpsFinal,
+      // Bouton de signature ajouté automatiquement (sauf si le commercial a déjà
+      // inséré le lien dans le corps via {{lien_signature}})
+      lienSignature: corpsFinal.includes(lienSignature) ? null : lienSignature,
     });
 
     await devisService.envoyerDevis(devis.id, req.user.id, { destinataire });

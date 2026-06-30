@@ -1,5 +1,7 @@
+import crypto from 'crypto';
 import { query, pool } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { genererDepuisDevis } from '../factures/facture.service.js';
 
 // ---------------------------------------------------------------------------
 // Numérotation
@@ -150,6 +152,8 @@ const DEVIS_FIELDS = `
   d.montant_tva, d.montant_ttc,
   d.notes_internes, d.conditions_generales, d.message_client,
   d.signature_client, d.date_signature, d.ip_signature,
+  d.token_public, d.signataire_nom, d.signataire_email, d.email_verifie,
+  d.date_envoi_signature, d.user_agent_signature,
   d.facture_id, d.bon_commande_id,
   d.created_at, d.updated_at
 `;
@@ -480,18 +484,57 @@ export async function deleteDevis(id, userId) {
 // Actions de workflow
 // ---------------------------------------------------------------------------
 
+/**
+ * Garantit la présence d'un token public de signature sur le devis.
+ * Retourne le token (existant ou nouvellement généré).
+ */
+export async function ensureTokenPublic(devisId) {
+  const devis = await getDevisOrFail(devisId);
+  if (devis.token_public) return devis.token_public;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  await query(
+    'UPDATE devis SET token_public = $1, updated_at = NOW() WHERE id = $2',
+    [token, devisId]
+  );
+  return token;
+}
+
 export async function envoyerDevis(id, userId, emailData) {
   const devis = await getDevisOrFail(id);
   if (devis.statut !== 'BROUILLON' && devis.statut !== 'ENVOYE') {
     throw ApiError.badRequest('Le devis doit être en BROUILLON ou ENVOYE pour être envoyé');
   }
 
+  await ensureTokenPublic(id);
+
   const now = new Date().toISOString().split('T')[0];
-  await query(
-    `UPDATE devis SET statut = 'ENVOYE', date_emission = COALESCE(date_emission, $1), updated_at = NOW()
-     WHERE id = $2`,
-    [now, id]
-  );
+  const destinataire = emailData?.destinataire || null;
+
+  if (destinataire) {
+    // L'adresse d'envoi devient la source de vérité pour la vérification.
+    // Si elle change, la vérification précédente n'est plus valable.
+    const emailChange = devis.signataire_email && devis.signataire_email !== destinataire;
+    await query(
+      `UPDATE devis SET
+        statut = 'ENVOYE',
+        date_emission = COALESCE(date_emission, $1),
+        signataire_email = $2,
+        email_verifie = CASE WHEN $3 THEN false ELSE email_verifie END,
+        code_verification = CASE WHEN $3 THEN NULL ELSE code_verification END,
+        code_expiration = CASE WHEN $3 THEN NULL ELSE code_expiration END,
+        date_envoi_signature = NOW(),
+        updated_at = NOW()
+       WHERE id = $4`,
+      [now, destinataire, emailChange, id]
+    );
+  } else {
+    await query(
+      `UPDATE devis SET statut = 'ENVOYE', date_emission = COALESCE(date_emission, $1), updated_at = NOW()
+       WHERE id = $2`,
+      [now, id]
+    );
+  }
 
   const dbClient = await pool.connect();
   try {
@@ -589,23 +632,27 @@ export async function transformerEnFacture(id, userId) {
   if (devis.statut !== 'ACCEPTE') {
     throw ApiError.badRequest('Seul un devis ACCEPTE peut être transformé en facture');
   }
+  if (devis.facture_id) {
+    throw ApiError.badRequest('Ce devis a déjà été transformé en facture');
+  }
 
-  // Pour l'instant, on marque le devis comme FACTURE
-  // La création effective de la facture sera implémentée avec le module Factures
-  const now = new Date().toISOString().split('T')[0];
+  // Crée la facture réelle (lignes incluses), passe le devis en FACTURE
+  // et renseigne devis.facture_id — le tout en transaction.
+  const facture = await genererDepuisDevis(id, userId);
+
   await query(
-    `UPDATE devis SET statut = 'FACTURE', date_transformation = $1, updated_at = NOW() WHERE id = $2`,
-    [now, id]
+    `UPDATE devis SET date_transformation = CURRENT_DATE, updated_at = NOW() WHERE id = $1`,
+    [id]
   );
 
   const dbClient = await pool.connect();
   try {
-    await ajouterHistorique(dbClient, id, userId, 'TRANSFORMATION_FACTURE', 'Devis transformé en facture');
+    await ajouterHistorique(dbClient, id, userId, 'TRANSFORMATION_FACTURE', `Devis transformé en facture ${facture.numero_facture}`);
   } finally {
     dbClient.release();
   }
 
-  return getDevisById(id);
+  return { devis: await getDevisById(id), facture };
 }
 
 export async function transformerEnBonCommande(id, userId) {
@@ -869,6 +916,102 @@ export async function ajouterChampDepuisTemplate(devisId, templateId) {
     type: t.type,
     afficher_sur_pdf: t.afficher_sur_pdf,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Signature publique (accès par token, sans authentification)
+// ---------------------------------------------------------------------------
+
+/**
+ * Récupère le devis complet (usage interne) via son token public.
+ * Inclut les colonnes sensibles du flux de vérification (code, expiration).
+ */
+export async function getDevisByTokenPublic(token) {
+  const res = await query(
+    `SELECT d.*, c.raison_sociale AS client_raison_sociale, c.email_principal AS client_email_principal
+     FROM devis d
+     LEFT JOIN clients c ON c.id = d.client_id
+     WHERE d.token_public = $1 AND d.deleted_at IS NULL`,
+    [token]
+  );
+  return res.rows[0] || null;
+}
+
+export async function getLignesDevis(devisId) {
+  const res = await query(
+    'SELECT * FROM devis_lignes WHERE devis_id = $1 ORDER BY ordre',
+    [devisId]
+  );
+  return res.rows;
+}
+
+export async function getContactDevis(contactId) {
+  if (!contactId) return null;
+  const res = await query('SELECT * FROM client_contacts WHERE id = $1', [contactId]);
+  return res.rows[0] || null;
+}
+
+export async function marquerDevisExpire(devisId) {
+  await query(
+    `UPDATE devis SET statut = 'EXPIRE', updated_at = NOW() WHERE id = $1 AND statut = 'ENVOYE'`,
+    [devisId]
+  );
+  const dbClient = await pool.connect();
+  try {
+    await ajouterHistorique(dbClient, devisId, null, 'EXPIRATION', 'Devis expiré (date de validité dépassée)');
+  } finally {
+    dbClient.release();
+  }
+}
+
+export async function enregistrerCodeVerification(devisId, code, expiration) {
+  await query(
+    `UPDATE devis SET code_verification = $1, code_expiration = $2, updated_at = NOW() WHERE id = $3`,
+    [code, expiration, devisId]
+  );
+}
+
+/**
+ * Vérifie le code saisi par le client. Retourne true si valide (et marque
+ * l'email comme vérifié), false sinon.
+ */
+export async function validerCodeVerification(devisId, code) {
+  const res = await query(
+    `UPDATE devis SET
+      email_verifie = true,
+      code_verification = NULL,
+      code_expiration = NULL,
+      updated_at = NOW()
+     WHERE id = $1
+       AND code_verification = $2
+       AND code_expiration > NOW()
+     RETURNING id`,
+    [devisId, String(code)]
+  );
+  return res.rows.length > 0;
+}
+
+export async function enregistrerSignature(devisId, { signataireNom, signatureBase64, ip, userAgent }) {
+  await query(
+    `UPDATE devis SET
+      signature_client = $1,
+      signataire_nom = $2,
+      date_signature = NOW(),
+      date_acceptation = NOW(),
+      ip_signature = $3,
+      user_agent_signature = $4,
+      statut = 'ACCEPTE',
+      updated_at = NOW()
+     WHERE id = $5`,
+    [signatureBase64, signataireNom, ip, userAgent, devisId]
+  );
+
+  const dbClient = await pool.connect();
+  try {
+    await ajouterHistorique(dbClient, devisId, null, 'SIGNATURE', `Devis signé en ligne par ${signataireNom}`);
+  } finally {
+    dbClient.release();
+  }
 }
 
 // ---------------------------------------------------------------------------

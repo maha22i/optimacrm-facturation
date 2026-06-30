@@ -13,12 +13,12 @@ export async function listTickets(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const {
       statut, priorite, categorie_id, client_id, technicien_id,
-      search, date_debut, date_fin, sla_depasse, sort_by, sort_order,
+      search, source, date_debut, date_fin, sla_depasse, sort_by, sort_order,
     } = req.query;
 
     const { tickets, pagination } = await ticketService.listTickets({
       page, limit, statut, priorite, categorie_id, client_id, technicien_id,
-      search, date_debut, date_fin, sla_depasse, sort_by, sort_order,
+      search, source, date_debut, date_fin, sla_depasse, sort_by, sort_order,
       currentUser: req.user,
     });
     sendPaginated(res, tickets, pagination);

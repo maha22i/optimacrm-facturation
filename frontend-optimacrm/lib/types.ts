@@ -292,6 +292,16 @@ export interface Devis {
   notes_internes: string | null;
   conditions_generales: string | null;
   message_client: string | null;
+  /** Signature électronique en ligne */
+  signature_client: string | null;
+  date_signature: string | null;
+  ip_signature: string | null;
+  token_public?: string | null;
+  signataire_nom?: string | null;
+  signataire_email?: string | null;
+  email_verifie?: boolean;
+  date_envoi_signature?: string | null;
+  user_agent_signature?: string | null;
   facture_id: number | null;
   bon_commande_id: number | null;
   /** Métadonnées import Excel (ligne de synthèse si pas de devis_lignes) */
@@ -698,6 +708,7 @@ export interface Contrat {
   ect: number;
   notes: string | null;
   devis_id: number | null;
+  terme_facturation: 'TAE' | 'TEC';
   created_at: string;
   updated_at: string;
   // Champs joints
@@ -1496,6 +1507,7 @@ export interface AvoirsFacture {
 export type StatutTicket = 'nouveau' | 'assigne' | 'en_cours' | 'en_attente' | 'resolu';
 export type PrioriteTicket = 'basse' | 'normale' | 'haute' | 'urgente';
 export type SlaStatus = 'ok' | 'warning' | 'depasse';
+export type SourceTicket = 'manuel' | 'email';
 
 export interface TicketCategorie {
   id: number;
@@ -1524,7 +1536,7 @@ export interface Ticket {
   categorie_id: number | null;
   priorite: PrioriteTicket;
   statut: StatutTicket;
-  client_id: number;
+  client_id: number | null;
   machine_id: number | null;
   cree_par_id: string | null;
   technicien_id: string | null;
@@ -1533,6 +1545,10 @@ export interface Ticket {
   sla_prise_en_charge_echeance: string | null;
   sla_resolution_echeance: string | null;
   pieces_jointes: string[];
+  source: SourceTicket;
+  email_message_id: string | null;
+  email_from: string | null;
+  email_received_at: string | null;
   created_at: string;
   updated_at: string;
   client_nom?: string;
@@ -1596,4 +1612,60 @@ export interface TicketSlaRule {
   couleur: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface TicketEmailConfig {
+  imap_host: string | null;
+  imap_port: number;
+  imap_user: string | null;
+  imap_tls: boolean;
+  folder: string;
+  actif: boolean;
+  derniere_synchro: string | null;
+  password_defini: boolean;
+}
+
+export interface TicketEmailSyncResult {
+  created: number;
+  skipped: number;
+  errors: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Planning des techniciens
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type StatutCreneau = 'planifie' | 'en_cours' | 'termine' | 'annule';
+
+export interface PlanningCreneau {
+  id: number;
+  ticket_id: number;
+  technicien_id: string;
+  date_debut: string;
+  date_fin: string;
+  statut_creneau: StatutCreneau;
+  cree_par: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  ticket_numero: string;
+  ticket_sujet: string;
+  ticket_priorite: PrioriteTicket;
+  ticket_statut: StatutTicket | 'cloture';
+  ticket_technicien_id: string | null;
+  client_nom: string | null;
+  technicien_prenom: string | null;
+  technicien_nom_famille: string | null;
+}
+
+export interface TicketPlanifiable {
+  id: number;
+  numero: string;
+  sujet: string;
+  priorite: PrioriteTicket;
+  statut: StatutTicket;
+  technicien_id: string | null;
+  client_nom: string | null;
+  technicien_prenom: string | null;
+  technicien_nom_famille: string | null;
 }

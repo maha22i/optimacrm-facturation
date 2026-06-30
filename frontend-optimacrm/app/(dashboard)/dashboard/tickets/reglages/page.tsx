@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import type { ApiResponse, PaginatedResponse, User, TicketCategorie, TicketSlaRule } from '@/lib/types';
+import type { ApiResponse, PaginatedResponse, User, TicketCategorie, TicketSlaRule, TicketEmailConfig, TicketEmailSyncResult } from '@/lib/types';
 
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
   useEffect(() => {
@@ -58,7 +58,7 @@ export default function TicketReglagesPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [activeTab, setActiveTab] = useState<'categories' | 'sla'>('categories');
+  const [activeTab, setActiveTab] = useState<'categories' | 'sla' | 'email'>('categories');
 
   const [categories, setCategories] = useState<TicketCategorie[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -85,6 +85,23 @@ export default function TicketReglagesPage() {
     delai_resolution_heures: 0,
   });
   const [slaErrors, setSlaErrors] = useState<Record<string, string>>({});
+
+  const [emailConfig, setEmailConfig] = useState<TicketEmailConfig | null>(null);
+  const [emailLoading, setEmailLoading] = useState(true);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailTesting, setEmailTesting] = useState(false);
+  const [emailSyncing, setEmailSyncing] = useState(false);
+  const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [emailForm, setEmailForm] = useState({
+    imap_host: '',
+    imap_port: 993,
+    imap_user: '',
+    imap_password: '',
+    imap_tls: true,
+    folder: 'INBOX',
+    actif: false,
+  });
+  const [emailErrors, setEmailErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (isLoading) return;
@@ -131,13 +148,109 @@ export default function TicketReglagesPage() {
     }
   }, [showToast]);
 
+  const loadEmailConfig = useCallback(async () => {
+    try {
+      setEmailLoading(true);
+      const res = await api.get<ApiResponse<TicketEmailConfig>>('/tickets/email-config');
+      setEmailConfig(res.data);
+      setEmailForm({
+        imap_host: res.data.imap_host || '',
+        imap_port: res.data.imap_port || 993,
+        imap_user: res.data.imap_user || '',
+        imap_password: '',
+        imap_tls: res.data.imap_tls ?? true,
+        folder: res.data.folder || 'INBOX',
+        actif: res.data.actif ?? false,
+      });
+    } catch {
+      showToast({ message: 'Erreur lors du chargement de la configuration email', type: 'error' });
+    } finally {
+      setEmailLoading(false);
+    }
+  }, [showToast]);
+
   useEffect(() => {
     if (!user) return;
     const isTicketAdmin = user.role === 'admin' || user.role === 'admin_technique';
     if (!isTicketAdmin) return;
     loadCategories();
     loadSlaRules();
-  }, [user, loadCategories, loadSlaRules]);
+    loadEmailConfig();
+  }, [user, loadCategories, loadSlaRules, loadEmailConfig]);
+
+  const validateEmailForm = () => {
+    const errors: Record<string, string> = {};
+    if (!emailForm.imap_host.trim()) errors.imap_host = "L'hôte IMAP est requis";
+    if (!emailForm.imap_user.trim()) errors.imap_user = "L'utilisateur IMAP est requis";
+    if (!emailForm.imap_port || emailForm.imap_port < 1 || emailForm.imap_port > 65535) errors.imap_port = 'Port invalide';
+    if (emailForm.actif && !emailForm.imap_password && !emailConfig?.password_defini) {
+      errors.imap_password = 'Un mot de passe est requis pour activer la synchronisation';
+    }
+    setEmailErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleEmailSave = async () => {
+    if (!validateEmailForm()) return;
+    setEmailSaving(true);
+    try {
+      const body: Record<string, unknown> = {
+        imap_host: emailForm.imap_host.trim(),
+        imap_port: emailForm.imap_port,
+        imap_user: emailForm.imap_user.trim(),
+        imap_tls: emailForm.imap_tls,
+        folder: emailForm.folder.trim() || 'INBOX',
+        actif: emailForm.actif,
+      };
+      if (emailForm.imap_password) body.imap_password = emailForm.imap_password;
+      const res = await api.put<ApiResponse<TicketEmailConfig>>('/tickets/email-config', body);
+      setEmailConfig(res.data);
+      setEmailForm((f) => ({ ...f, imap_password: '' }));
+      setEmailTestResult(null);
+      showToast({ message: 'Configuration email enregistrée', type: 'success' });
+    } catch (err) {
+      showToast({ message: err instanceof Error ? err.message : 'Erreur lors de la sauvegarde', type: 'error' });
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const handleEmailTest = async () => {
+    setEmailTesting(true);
+    setEmailTestResult(null);
+    try {
+      const body: Record<string, unknown> = {
+        imap_host: emailForm.imap_host.trim(),
+        imap_port: emailForm.imap_port,
+        imap_user: emailForm.imap_user.trim(),
+        imap_tls: emailForm.imap_tls,
+        folder: emailForm.folder.trim() || 'INBOX',
+      };
+      if (emailForm.imap_password) body.imap_password = emailForm.imap_password;
+      const res = await api.post<ApiResponse<{ success: boolean; message: string }>>('/tickets/email-config/test', body);
+      setEmailTestResult(res.data);
+    } catch (err) {
+      setEmailTestResult({ success: false, message: err instanceof Error ? err.message : 'Erreur lors du test' });
+    } finally {
+      setEmailTesting(false);
+    }
+  };
+
+  const handleEmailSync = async () => {
+    setEmailSyncing(true);
+    try {
+      const res = await api.post<ApiResponse<TicketEmailSyncResult>>('/tickets/email-config/sync', {});
+      showToast({
+        message: `Synchronisation terminée : ${res.data.created} ticket(s) créé(s)${res.data.errors ? `, ${res.data.errors} erreur(s)` : ''}`,
+        type: res.data.errors ? 'error' : 'success',
+      });
+      await loadEmailConfig();
+    } catch (err) {
+      showToast({ message: err instanceof Error ? err.message : 'Erreur lors de la synchronisation', type: 'error' });
+    } finally {
+      setEmailSyncing(false);
+    }
+  };
 
   const openNewCatModal = () => {
     setEditingCat(null);
@@ -329,6 +442,16 @@ export default function TicketReglagesPage() {
             }`}
           >
             Règles SLA
+          </button>
+          <button
+            onClick={() => setActiveTab('email')}
+            className={`flex-1 py-3.5 text-sm font-semibold text-center transition cursor-pointer ${
+              activeTab === 'email'
+                ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50/50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Boîte mail
           </button>
         </div>
       </div>
@@ -522,6 +645,198 @@ export default function TicketReglagesPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* EMAIL TAB */}
+      {activeTab === 'email' && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Boîte mail support (IMAP)</h2>
+                <p className="text-xs text-gray-400">Chaque mail entrant crée automatiquement un ticket &ldquo;Via mail&rdquo;</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-400">Dernière synchronisation</p>
+              <p className="text-sm font-semibold text-gray-700">
+                {emailConfig?.derniere_synchro
+                  ? new Date(emailConfig.derniere_synchro).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                  : 'Jamais'}
+              </p>
+            </div>
+          </div>
+
+          {emailLoading ? (
+            <div className="p-12 flex items-center justify-center">
+              <div className="h-8 w-8 border-3 border-violet-200 border-t-violet-600 rounded-full animate-spin" />
+            </div>
+          ) : (
+            <div className="p-6 space-y-5 max-w-2xl">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Hôte IMAP <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    value={emailForm.imap_host}
+                    onChange={(e) => setEmailForm({ ...emailForm, imap_host: e.target.value })}
+                    placeholder="imap.exemple.fr"
+                    className={inputCls('imap_host', emailErrors)}
+                  />
+                  <FieldError error={emailErrors.imap_host} />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Port <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={emailForm.imap_port}
+                    onChange={(e) => setEmailForm({ ...emailForm, imap_port: parseInt(e.target.value) || 0 })}
+                    className={inputCls('imap_port', emailErrors)}
+                  />
+                  <FieldError error={emailErrors.imap_port} />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Utilisateur <span className="text-red-500">*</span>
+                </label>
+                <input
+                  value={emailForm.imap_user}
+                  onChange={(e) => setEmailForm({ ...emailForm, imap_user: e.target.value })}
+                  placeholder="support@exemple.fr"
+                  autoComplete="off"
+                  className={inputCls('imap_user', emailErrors)}
+                />
+                <FieldError error={emailErrors.imap_user} />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Mot de passe {!emailConfig?.password_defini && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="password"
+                  value={emailForm.imap_password}
+                  onChange={(e) => setEmailForm({ ...emailForm, imap_password: e.target.value })}
+                  placeholder={emailConfig?.password_defini ? '•••••••• (inchangé)' : 'Mot de passe IMAP'}
+                  autoComplete="new-password"
+                  className={inputCls('imap_password', emailErrors)}
+                />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  {emailConfig?.password_defini
+                    ? 'Un mot de passe est déjà enregistré (chiffré). Laissez vide pour le conserver.'
+                    : 'Le mot de passe est chiffré avant stockage, il ne sera jamais affiché.'}
+                </p>
+                <FieldError error={emailErrors.imap_password} />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Dossier</label>
+                <input
+                  value={emailForm.folder}
+                  onChange={(e) => setEmailForm({ ...emailForm, folder: e.target.value })}
+                  placeholder="INBOX"
+                  className={inputCls('folder', emailErrors)}
+                />
+              </div>
+
+              <div className="flex items-center gap-8">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() => setEmailForm({ ...emailForm, imap_tls: !emailForm.imap_tls })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition cursor-pointer ${emailForm.imap_tls ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${emailForm.imap_tls ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  <span className="text-sm font-semibold text-gray-700">TLS / SSL</span>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() => setEmailForm({ ...emailForm, actif: !emailForm.actif })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition cursor-pointer ${emailForm.actif ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${emailForm.actif ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  <span className="text-sm font-semibold text-gray-700">Synchronisation active</span>
+                </label>
+              </div>
+
+              {emailTestResult && (
+                <div className={`rounded-xl px-4 py-3 text-sm font-medium flex items-center gap-2 ${
+                  emailTestResult.success ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  {emailTestResult.success ? (
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                  ) : (
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+                  )}
+                  {emailTestResult.message}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between flex-wrap gap-3 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleEmailTest}
+                    disabled={emailTesting || !emailForm.imap_host || !emailForm.imap_user}
+                    className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {emailTesting ? (
+                      <><div className="h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> Test…</>
+                    ) : (
+                      <>
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M8.288 15.038a5.25 5.25 0 0 1 7.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 0 1 1.06 0Z" /></svg>
+                        Tester la connexion
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleEmailSync}
+                    disabled={emailSyncing || !emailConfig?.actif}
+                    title={!emailConfig?.actif ? 'Activez et enregistrez la configuration pour synchroniser' : undefined}
+                    className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-700 hover:bg-violet-100 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {emailSyncing ? (
+                      <><div className="h-4 w-4 border-2 border-violet-300 border-t-violet-700 rounded-full animate-spin" /> Synchronisation…</>
+                    ) : (
+                      <>
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
+                        Synchroniser maintenant
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <button
+                  onClick={handleEmailSave}
+                  disabled={emailSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {emailSaving ? (
+                    <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Enregistrement…</>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                      Enregistrer
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           )}
         </div>

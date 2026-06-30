@@ -131,6 +131,7 @@ export default function GenerationAbonnementTab({ typeContrat, config }: Props) 
   const [simulationLoading, setSimulationLoading] = useState<number | null>(null);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [showSimulationModal, setShowSimulationModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const chargerContrats = useCallback(async () => {
     setLoading(true);
@@ -150,12 +151,23 @@ export default function GenerationAbonnementTab({ typeContrat, config }: Props) 
 
   useEffect(() => { chargerContrats(); }, [chargerContrats]);
 
+  const filteredContrats = contrats.filter(c => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      c.numero_contrat.toLowerCase().includes(q) ||
+      c.client_raison_sociale.toLowerCase().includes(q) ||
+      c.client_code.toLowerCase().includes(q) ||
+      c.rubriques.some(r => r.toLowerCase().includes(q))
+    );
+  });
+
   const toggleSelection = (id: number) => {
     setSelection(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const toutSelectionner = () => {
-    setSelection(selection.length === contrats.length ? [] : contrats.map(c => c.id));
+    setSelection(selection.length === filteredContrats.length ? [] : filteredContrats.map(c => c.id));
   };
 
   const selectedTotal = contrats.filter(c => selection.includes(c.id)).reduce((sum, c) => sum + c.total_ht, 0);
@@ -312,12 +324,41 @@ export default function GenerationAbonnementTab({ typeContrat, config }: Props) 
         </div>
       )}
 
-      {/* Actions */}
+      {/* Barre de recherche */}
       {contrats.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-6">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Rechercher par n° contrat, client, rubrique..."
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 outline-none transition placeholder:text-gray-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition cursor-pointer"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <p className="mt-2 text-xs text-gray-400">
+              {filteredContrats.length} résultat(s) sur {contrats.length} contrat(s)
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      {filteredContrats.length > 0 && (
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <button onClick={toutSelectionner} className="text-sm font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
-              {selection.length === contrats.length ? 'Tout désélectionner' : 'Tout sélectionner'}
+              {selection.length === filteredContrats.length ? 'Tout désélectionner' : 'Tout sélectionner'}
             </button>
             {selection.length > 0 && (
               <span className="text-sm text-gray-500">
@@ -352,7 +393,7 @@ export default function GenerationAbonnementTab({ typeContrat, config }: Props) 
             <thead>
               <tr className="bg-gray-50/80">
                 <th className="px-3 py-3.5 w-10">
-                  <input type="checkbox" checked={selection.length === contrats.length && contrats.length > 0} onChange={toutSelectionner}
+                  <input type="checkbox" checked={selection.length === filteredContrats.length && filteredContrats.length > 0} onChange={toutSelectionner}
                     className="h-4 w-4 rounded text-blue-600 border-gray-300 focus:ring-blue-500 cursor-pointer" />
                 </th>
                 <th className="px-4 py-3.5 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">N° Contrat</th>
@@ -373,19 +414,23 @@ export default function GenerationAbonnementTab({ typeContrat, config }: Props) 
                     <p className="text-sm text-gray-400">Recherche des contrats à facturer...</p>
                   </div>
                 </td></tr>
-              ) : contrats.length === 0 ? (
+              ) : filteredContrats.length === 0 ? (
                 <tr><td colSpan={9} className="py-20 text-center">
                   <div className="flex flex-col items-center gap-3">
                     <div className="h-16 w-16 rounded-2xl bg-gray-100 flex items-center justify-center">
                       <svg className="h-8 w-8 text-gray-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-500">Aucun contrat à facturer</p>
-                      <p className="text-xs text-gray-400 mt-0.5">Tous les contrats {typeContrat.toLowerCase()} sont à jour</p>
+                      <p className="text-sm font-medium text-gray-500">
+                        {searchQuery ? 'Aucun résultat pour cette recherche' : 'Aucun contrat à facturer'}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {searchQuery ? 'Essayez avec un autre terme de recherche' : `Tous les contrats ${typeContrat.toLowerCase()} sont à jour`}
+                      </p>
                     </div>
                   </div>
                 </td></tr>
-              ) : contrats.map(contrat => (
+              ) : filteredContrats.map(contrat => (
                 <tr key={contrat.id} className={`transition ${selection.includes(contrat.id) ? 'bg-blue-50/40' : 'hover:bg-gray-50/50'}`}>
                   <td className="px-3 py-3.5">
                     <input type="checkbox" checked={selection.includes(contrat.id)} onChange={() => toggleSelection(contrat.id)}

@@ -677,16 +677,20 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
     const snapshot = await getClientSnapshot(dbClient, contrat.client_id);
     const numero = await generateNumeroFacture(dbClient);
 
-    const periodiciteMap = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
-    const mois = periodiciteMap[contrat.periodicite] || 3;
+    const mois = getFrequencyMonths(contrat.periodicite);
+    const prochaineFacturation = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
+    const terme = contrat.terme_facturation || 'TEC';
 
     let periodeDebut, periodeFin;
     if (periode_debut && periode_fin) {
       periodeDebut = periode_debut;
       periodeFin = periode_fin;
+    } else if (terme === 'TEC') {
+      periodeDebut = addMonthsUTC(prochaineFacturation, -mois);
+      periodeFin = subDayUTC(prochaineFacturation);
     } else {
-      periodeDebut = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
-      periodeFin = periodEnd(periodeDebut, mois);
+      periodeDebut = prochaineFacturation;
+      periodeFin = periodEnd(prochaineFacturation, mois);
     }
     const dateEcheance = periodeFin;
 
@@ -1001,6 +1005,7 @@ export async function getContratsAFacturer(typeFilter) {
             COALESCE(c.prochaine_date_facturation, c.date_prochaine_facture) AS prochaine_date_facturation,
             COALESCE(c.derniere_date_facturation, c.derniere_facture_date) AS derniere_date_facturation,
             COALESCE(c.loyer_ht, 0) AS montant_mensuel_ht,
+            c.terme_facturation,
             CASE
               WHEN COALESCE(c.prochaine_date_facturation, c.date_prochaine_facture) IS NULL THEN true
               WHEN COALESCE(c.prochaine_date_facturation, c.date_prochaine_facture) < $${idx} THEN true
@@ -1595,6 +1600,11 @@ function formatDateFR(d) {
   return `${day}/${m}/${y}`;
 }
 
+function getFrequencyMonths(periodicite) {
+  const map = { Mensuel: 1, Bimestriel: 2, Trimestriel: 3, Semestriel: 6, Annuel: 12 };
+  return map[periodicite] || 1;
+}
+
 // ---------------------------------------------------------------------------
 // Rollback prochaine_facturation (suppression/annulation facture contrat)
 // ---------------------------------------------------------------------------
@@ -1711,15 +1721,8 @@ async function insertFactureFromContrat(dbClient, { numero, contrat, snapshot, p
 }
 
 async function updateContratApresFacturation(dbClient, contrat, facture, mois, periodeFin) {
-  let nextDate;
-  if (periodeFin) {
-    const pf = toDateStr(periodeFin);
-    const [y, m, d] = pf.split('-').map(Number);
-    nextDate = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
-  } else {
-    const base = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
-    nextDate = addMonthsUTC(base, mois);
-  }
+  const base = toDateStr(contrat.prochaine_date_facturation) || toDateStr(contrat.date_prochaine_facture) || new Date().toISOString().slice(0, 10);
+  const nextDate = addMonthsUTC(base, mois);
   const derniereDateFact = toDateStr(periodeFin) || new Date().toISOString().slice(0, 10);
 
   await dbClient.query(

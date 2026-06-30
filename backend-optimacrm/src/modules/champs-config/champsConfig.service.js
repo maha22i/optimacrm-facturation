@@ -62,7 +62,20 @@ export async function getConfigById(id) {
   return result.rows[0];
 }
 
+const NATIVE_CONTRAT_KEYS = new Set([
+  'numero_contrat', 'type_contrat', 'type_facturation', 'client_id',
+  'periodicite', 'date_signature', 'date_installation', 'date_debut',
+  'date_echeance', 'date_prochaine_facture', 'date_renouvellement',
+  'duree_contrat_mois', 'numero_dossier_financement', 'organisme_credit',
+  'montant_finance', 'loyer_ht', 'location_interne', 'statut',
+  'ftc', 'ect', 'notes', 'devis_id', 'terme_facturation',
+]);
+
 export async function createConfig(data) {
+  if (data.entite?.toUpperCase() === 'CONTRAT' && NATIVE_CONTRAT_KEYS.has(data.cle)) {
+    throw ApiError.conflict(`La clé "${data.cle}" est réservée (colonne native du contrat). Choisissez un autre identifiant.`);
+  }
+
   const dupCle = await query(
     'SELECT id FROM champs_personnalises_config WHERE entite = $1 AND cle = $2',
     [data.entite.toUpperCase(), data.cle]

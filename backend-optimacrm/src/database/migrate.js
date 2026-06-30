@@ -73,6 +73,14 @@ async function loadMigrations() {
   migrations.push(m37);
   const m38 = await import('./migrations/038_remove_categorie_check_add_mapping_type.js');
   migrations.push(m38);
+  const m39 = await import('./migrations/039_devis_signature_publique.js');
+  migrations.push(m39);
+  const m40 = await import('./migrations/040_create_planning_creneaux.js');
+  migrations.push(m40);
+  const m41 = await import('./migrations/041_add_ticket_email_source.js');
+  migrations.push(m41);
+  const m42 = await import('./migrations/042_add_terme_facturation.js');
+  migrations.push(m42);
 }
 
 async function ensureMigrationsTable(client) {

@@ -14,6 +14,7 @@ import type {
   Client,
   StatutTicket,
   PrioriteTicket,
+  SourceTicket,
   SlaStatus,
 } from '@/lib/types';
 
@@ -34,14 +35,6 @@ const PRIORITE_CONFIG: Record<PrioriteTicket, { label: string; bg: string; text:
   haute: { label: 'Haute', bg: 'bg-amber-50', text: 'text-amber-700' },
   urgente: { label: 'Urgente', bg: 'bg-red-50', text: 'text-red-700' },
 };
-
-const KANBAN_COLUMNS: { statut: StatutTicket; label: string; color: string }[] = [
-  { statut: 'nouveau', label: 'Nouveau', color: 'border-blue-400' },
-  { statut: 'assigne', label: 'Assigné', color: 'border-indigo-400' },
-  { statut: 'en_cours', label: 'En cours', color: 'border-yellow-400' },
-  { statut: 'en_attente', label: 'En attente', color: 'border-orange-400' },
-  { statut: 'resolu', label: 'Terminé', color: 'border-emerald-400' },
-];
 
 const AVATAR_GRADIENTS = [
   'from-blue-500 to-indigo-600',
@@ -73,6 +66,18 @@ function formatRelativeTime(dateStr: string) {
   if (diffDays === 1) return 'hier';
   if (diffDays < 7) return `il y a ${diffDays}j`;
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function SourceBadge({ source }: { source?: SourceTicket }) {
+  if (source !== 'email') return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700" title="Ticket créé depuis un email entrant">
+      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+      </svg>
+      Via mail
+    </span>
+  );
 }
 
 function SlaIndicator({ sla }: { sla?: { prise_en_charge: SlaStatus; resolution: SlaStatus } }) {
@@ -113,12 +118,16 @@ export default function TicketsPage() {
   const [categorieFilter, setCategorieFilter] = useState<string>('');
   const [technicienFilter, setTechnicienFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>('');
+  const [sourceFilter, setSourceFilter] = useState<SourceTicket | ''>('');
   const [slaDepasseFilter, setSlaDepasseFilter] = useState(false);
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC');
 
-  const [view, setView] = useState<'liste' | 'kanban'>('liste');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => {
     const clientIdParam = searchParams.get('client_id');
@@ -181,6 +190,7 @@ export default function TicketsPage() {
       if (categorieFilter) params.set('categorie_id', categorieFilter);
       if (technicienFilter) params.set('technicien_id', technicienFilter);
       if (clientFilter) params.set('client_id', clientFilter);
+      if (sourceFilter) params.set('source', sourceFilter);
       if (searchDebounce) params.set('search', searchDebounce);
       if (slaDepasseFilter) params.set('sla_depasse', 'true');
       params.set('sort_by', sortBy);
@@ -189,13 +199,14 @@ export default function TicketsPage() {
       const res = await api.get<PaginatedResponse<Ticket>>(`/tickets?${params}`);
       setTickets(res.data);
       setPagination(res.pagination);
+      setSelectedIds([]);
     } catch {
       setTickets([]);
       setToast({ message: 'Erreur lors du chargement des tickets', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [statutFilter, prioriteFilter, categorieFilter, technicienFilter, clientFilter, searchDebounce, slaDepasseFilter, sortBy, sortOrder]);
+  }, [statutFilter, prioriteFilter, categorieFilter, technicienFilter, clientFilter, sourceFilter, searchDebounce, slaDepasseFilter, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchTickets(1);
@@ -220,6 +231,39 @@ export default function TicketsPage() {
       // reset all
     } else {
       setStatutFilter(type as StatutTicket);
+    }
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]));
+  };
+
+  const allSelected = tickets.length > 0 && tickets.every(t => selectedIds.includes(t.id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? [] : tickets.map(t => t.id));
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true);
+    try {
+      const results = await Promise.allSettled(
+        selectedIds.map(id => api.delete(`/tickets/${id}`)),
+      );
+      const deleted = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.length - deleted;
+      setToast({
+        message: failed
+          ? `${deleted} ticket(s) supprimé(s), ${failed} échec(s)`
+          : `${deleted} ticket(s) supprimé(s)`,
+        type: failed ? 'error' : 'success',
+      });
+      setShowBulkDeleteConfirm(false);
+      setSelectedIds([]);
+      fetchTickets(pagination.page);
+      fetchStats();
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -424,10 +468,26 @@ export default function TicketsPage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
             </svg>
           </div>
+
+          {/* Source */}
+          <div className="relative">
+            <select
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value as SourceTicket | '')}
+              className="appearance-none rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-4 pr-10 text-sm font-medium text-gray-700 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 outline-none transition cursor-pointer"
+            >
+              <option value="">Source : Tous</option>
+              <option value="email">Via mail</option>
+              <option value="manuel">Manuel</option>
+            </select>
+            <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </div>
         </div>
 
         {/* Active filter chips */}
-        {(search || statutFilter || prioriteFilter || categorieFilter || technicienFilter || clientFilter || slaDepasseFilter) && (
+        {(search || statutFilter || prioriteFilter || categorieFilter || technicienFilter || clientFilter || sourceFilter || slaDepasseFilter) && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100 flex-wrap">
             <span className="text-xs text-gray-400 font-medium">Filtres actifs :</span>
             {search && (
@@ -478,6 +538,14 @@ export default function TicketsPage() {
                 </button>
               </span>
             )}
+            {sourceFilter && (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+                {sourceFilter === 'email' ? 'Via mail' : 'Manuel'}
+                <button onClick={() => setSourceFilter('')} className="hover:text-violet-900 cursor-pointer">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                </button>
+              </span>
+            )}
             {slaDepasseFilter && (
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
                 SLA dépassé
@@ -487,7 +555,7 @@ export default function TicketsPage() {
               </span>
             )}
             <button
-              onClick={() => { setSearch(''); setStatutFilter(''); setPrioriteFilter(''); setCategorieFilter(''); setTechnicienFilter(''); setClientFilter(''); setSlaDepasseFilter(false); }}
+              onClick={() => { setSearch(''); setStatutFilter(''); setPrioriteFilter(''); setCategorieFilter(''); setTechnicienFilter(''); setClientFilter(''); setSourceFilter(''); setSlaDepasseFilter(false); }}
               className="text-xs text-gray-400 hover:text-gray-600 font-medium ml-1 cursor-pointer"
             >
               Tout effacer
@@ -496,45 +564,56 @@ export default function TicketsPage() {
         )}
       </div>
 
-      {/* View Toggle + Results count */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Results count */}
+      <div className="flex items-center mb-4">
         <p className="text-sm text-gray-500">
           <span className="font-semibold text-gray-700">{pagination.total}</span> ticket{pagination.total > 1 ? 's' : ''} trouvé{pagination.total > 1 ? 's' : ''}
         </p>
-        <div className="flex items-center gap-1 bg-white rounded-xl border border-gray-200 p-1 shadow-sm">
-          <button
-            onClick={() => setView('liste')}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              view === 'liste' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-            </svg>
-            Liste
-          </button>
-          <button
-            onClick={() => setView('kanban')}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-              view === 'kanban' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125Z" />
-            </svg>
-            Kanban
-          </button>
-        </div>
       </div>
 
+      {/* Barre d'actions sélection */}
+      {selectedIds.length > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-2xl px-5 py-3 mb-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-blue-800">
+              {selectedIds.length} ticket{selectedIds.length > 1 ? 's' : ''} sélectionné{selectedIds.length > 1 ? 's' : ''}
+            </span>
+            <button
+              onClick={() => setSelectedIds([])}
+              className="text-xs font-medium text-blue-500 hover:text-blue-700 underline cursor-pointer"
+            >
+              Tout désélectionner
+            </button>
+          </div>
+          <button
+            onClick={() => setShowBulkDeleteConfirm(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 transition cursor-pointer"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+            </svg>
+            Supprimer la sélection
+          </button>
+        </div>
+      )}
+
       {/* Table View */}
-      {view === 'liste' && (
-        <>
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50">
+                    {canDeleteTicket && (
+                      <th className="pl-4 pr-1 py-3.5 w-10">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={toggleSelectAll}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          title="Tout sélectionner"
+                        />
+                      </th>
+                    )}
                     <th className="px-4 py-3.5 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none" onClick={() => handleSort('numero')}>
                       <span className="inline-flex items-center">N° Ticket <SortIcon column="numero" /></span>
                     </th>
@@ -559,7 +638,7 @@ export default function TicketsPage() {
                 <tbody className="divide-y divide-gray-50">
                   {loading ? (
                     <tr>
-                      <td colSpan={9} className="py-20 text-center">
+                      <td colSpan={canDeleteTicket ? 10 : 9} className="py-20 text-center">
                         <div className="flex flex-col items-center gap-3">
                           <div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" />
                           <p className="text-sm text-gray-400">Chargement des tickets...</p>
@@ -568,7 +647,7 @@ export default function TicketsPage() {
                     </tr>
                   ) : tickets.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-20 text-center">
+                      <td colSpan={canDeleteTicket ? 10 : 9} className="py-20 text-center">
                         <div className="flex flex-col items-center gap-4">
                           <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
                             <svg className="h-12 w-12 text-blue-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
@@ -595,15 +674,28 @@ export default function TicketsPage() {
                     <tr
                       key={ticket.id}
                       onClick={() => router.push(`/dashboard/tickets/${ticket.id}`)}
-                      className="group hover:bg-blue-50/30 cursor-pointer transition-colors"
+                      className={`group hover:bg-blue-50/30 cursor-pointer transition-colors ${selectedIds.includes(ticket.id) ? 'bg-blue-50/50' : ''}`}
                     >
+                      {canDeleteTicket && (
+                        <td className="pl-4 pr-1 py-3.5" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(ticket.id)}
+                            onChange={() => toggleSelect(ticket.id)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                        </td>
+                      )}
                       <td className="px-4 py-3.5">
                         <span className="text-xs font-bold text-blue-600 font-mono">{ticket.numero}</span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <p className="text-sm font-medium text-gray-900 truncate max-w-[200px] group-hover:text-blue-700 transition-colors">
-                          {ticket.sujet.length > 50 ? `${ticket.sujet.substring(0, 50)}…` : ticket.sujet}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900 truncate max-w-[200px] group-hover:text-blue-700 transition-colors">
+                            {ticket.sujet.length > 50 ? `${ticket.sujet.substring(0, 50)}…` : ticket.sujet}
+                          </p>
+                          <SourceBadge source={ticket.source} />
+                        </div>
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="text-sm text-gray-700">{ticket.client_nom || '—'}</span>
@@ -709,71 +801,43 @@ export default function TicketsPage() {
                 </div>
               </div>
             )}
-          </div>
-        </>
-      )}
+      </div>
 
-      {/* Kanban View */}
-      {view === 'kanban' && (
-        <div className="overflow-x-auto pb-4">
-          <div className="flex gap-4 min-w-max">
-            {KANBAN_COLUMNS.map(col => {
-              const colTickets = tickets.filter(t => t.statut === col.statut);
-              return (
-                <div key={col.statut} className={`w-72 flex-shrink-0 bg-gray-50/80 rounded-2xl border border-gray-100 border-t-4 ${col.color}`}>
-                  <div className="px-4 py-3 border-b border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-bold text-gray-700">{col.label}</h3>
-                      <span className="h-6 min-w-[24px] flex items-center justify-center rounded-full bg-white border border-gray-200 text-[11px] font-bold text-gray-500 px-1.5">
-                        {colTickets.length}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-3 space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto">
-                    {loading ? (
-                      <div className="flex flex-col items-center gap-2 py-8">
-                        <div className="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full" />
-                        <p className="text-xs text-gray-400">Chargement...</p>
-                      </div>
-                    ) : colTickets.length === 0 ? (
-                      <div className="py-8 text-center">
-                        <p className="text-xs text-gray-400">Aucun ticket</p>
-                      </div>
-                    ) : colTickets.map(ticket => (
-                      <div
-                        key={ticket.id}
-                        onClick={() => router.push(`/dashboard/tickets/${ticket.id}`)}
-                        className="bg-white rounded-xl border border-gray-100 p-3.5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[11px] font-bold text-blue-600 font-mono">{ticket.numero}</span>
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITE_CONFIG[ticket.priorite].bg} ${PRIORITE_CONFIG[ticket.priorite].text} ${ticket.priorite === 'urgente' ? 'animate-pulse' : ''}`}>
-                            {PRIORITE_CONFIG[ticket.priorite].label}
-                          </span>
-                        </div>
-                        <p className="text-sm font-medium text-gray-900 mb-2 line-clamp-2">
-                          {ticket.sujet.length > 50 ? `${ticket.sujet.substring(0, 50)}…` : ticket.sujet}
-                        </p>
-                        <p className="text-xs text-gray-500 mb-3">{ticket.client_nom || '—'}</p>
-                        <div className="flex items-center justify-between">
-                          {ticket.technicien_prenom && ticket.technicien_nom_famille ? (
-                            <div className="flex items-center gap-1.5">
-                              <div className={`h-5 w-5 rounded-md bg-gradient-to-br ${getGradient(ticket.technicien_prenom + ticket.technicien_nom_famille)} flex items-center justify-center text-white text-[8px] font-bold`}>
-                                {getInitials(ticket.technicien_prenom, ticket.technicien_nom_famille)}
-                              </div>
-                              <span className="text-[11px] text-gray-600">{ticket.technicien_prenom}</span>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-gray-400 italic">Non assigné</span>
-                          )}
-                          <SlaIndicator sla={ticket.sla} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+      {/* Modal confirmation suppression groupée */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="bg-gradient-to-r from-red-50 to-orange-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">
+                  Supprimer {selectedIds.length} ticket{selectedIds.length > 1 ? 's' : ''} ?
+                </h3>
+                <p className="text-sm text-gray-500 mt-0.5">Cette action est irréversible.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 p-6">
+              <button
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                disabled={bulkDeleting}
+                className="px-5 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-sm font-medium transition cursor-pointer disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {bulkDeleting ? (
+                  <><span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> Suppression…</>
+                ) : 'Supprimer'}
+              </button>
+            </div>
           </div>
         </div>
       )}

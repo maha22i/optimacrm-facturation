@@ -10,6 +10,7 @@ import type {
   CatalogueProduit,
 } from '@/lib/types';
 import { formatCout, toNumber } from '@/lib/utils/formatNumber';
+import ChampsPersonnalisesForm from '@/components/ChampsPersonnalisesForm';
 
 // ---------------------------------------------------------------------------
 // Types locaux
@@ -21,6 +22,7 @@ interface ContratFormData {
   type_facturation: 'Unique' | 'Periodique';
   client_id: number | '';
   periodicite: Periodicite;
+  terme_facturation: 'TAE' | 'TEC';
   date_signature: string;
   date_installation: string;
   date_debut: string;
@@ -71,6 +73,7 @@ const EMPTY_FORM: ContratFormData = {
   type_facturation: 'Periodique',
   client_id: '',
   periodicite: 'Trimestriel',
+  terme_facturation: 'TEC',
   date_signature: '',
   date_installation: '',
   date_debut: new Date().toISOString().split('T')[0],
@@ -92,6 +95,12 @@ const EMPTY_FORM: ContratFormData = {
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 
+function toDateInput(val: unknown): string {
+  if (!val) return '';
+  const s = String(val);
+  return s.includes('T') ? s.split('T')[0] : s;
+}
+
 function formatMoney(n: number) {
   return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
@@ -111,6 +120,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
   const [financementOpen, setFinancementOpen] = useState(false);
+  const [champsPersoValeurs, setChampsPersoValeurs] = useState<Record<string, string>>({});
 
   // Client search
   const [clientSearch, setClientSearch] = useState('');
@@ -169,12 +179,13 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
           type_facturation: c.type_facturation,
           client_id: c.client_id,
           periodicite: c.periodicite,
-          date_signature: c.date_signature || '',
-          date_installation: c.date_installation || '',
-          date_debut: c.date_debut || '',
-          date_echeance: c.date_echeance || '',
-          date_prochaine_facture: c.date_prochaine_facture || '',
-          date_renouvellement: c.date_renouvellement || '',
+          terme_facturation: c.terme_facturation === 'TAE' ? 'TAE' : 'TEC',
+          date_signature: toDateInput(c.date_signature),
+          date_installation: toDateInput(c.date_installation),
+          date_debut: toDateInput(c.date_debut),
+          date_echeance: toDateInput(c.date_echeance),
+          date_prochaine_facture: toDateInput(c.date_prochaine_facture),
+          date_renouvellement: toDateInput(c.date_renouvellement),
           duree_contrat_mois: c.duree_contrat_mois ?? 63,
           numero_dossier_financement: c.numero_dossier_financement || '',
           organisme_credit: c.organisme_credit || '',
@@ -422,6 +433,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
         date_prochaine_facture: form.date_prochaine_facture || null,
         date_renouvellement: form.date_renouvellement || null,
         numero_contrat: form.numero_contrat || undefined,
+        champs_personnalises: champsPersoValeurs,
         lignes: lignes.map((l, i) => ({
           ...l,
           ordre: i,
@@ -614,18 +626,31 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               )}
             </div>
 
-            {/* Périodicité */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Périodicité</label>
-              <select
-                value={form.periodicite}
-                onChange={e => updateField('periodicite', e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none cursor-pointer"
-              >
-                {(['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] as Periodicite[]).map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
+            {/* Périodicité + Terme de facturation */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Périodicité</label>
+                <select
+                  value={form.periodicite}
+                  onChange={e => updateField('periodicite', e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none cursor-pointer"
+                >
+                  {(['Mensuel', 'Bimestriel', 'Trimestriel', 'Semestriel', 'Annuel'] as Periodicite[]).map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Terme de facturation</label>
+                <select
+                  value={form.terme_facturation}
+                  onChange={e => updateField('terme_facturation', e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none cursor-pointer"
+                >
+                  <option value="TEC">TEC — Terme échu (période passée)</option>
+                  <option value="TAE">TAE — Terme à échoir (période à venir)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -903,6 +928,16 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               rows={3}
               placeholder="Notes internes sur ce contrat..."
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none resize-y"
+            />
+          </div>
+
+          {/* Section 8: Champs personnalisés */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Champs personnalisés</h2>
+            <ChampsPersonnalisesForm
+              entite="CONTRAT"
+              entiteId={isEdit && contratId ? contratId : null}
+              onChange={setChampsPersoValeurs}
             />
           </div>
         </div>
