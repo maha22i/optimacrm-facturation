@@ -1,6 +1,8 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { useSociete } from '@/lib/societe-context';
 import { api } from '@/lib/api';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useRef, useCallback } from 'react';
@@ -231,8 +233,25 @@ const ADMIN_NAV: NavItem = {
   ),
 };
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+function resolveLogoUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+  return `${BACKEND_URL}${url}`;
+}
+
+function hexToRgb(hex: string): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `${r} ${g} ${b}`;
+}
+
+function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, hasPermission } = useAuth();
+  const { config: societeConfig } = useSociete();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -315,6 +334,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
+  const primaryColor = societeConfig?.couleur_principale || '#3b82f6';
+  const primaryRgb = hexToRgb(primaryColor);
+
   const showUsers = user.role === 'admin' || user.role === 'admin_technique';
   const rawNav: NavItem[] = [...NAV_ITEMS, ...(showUsers ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
 
@@ -351,13 +373,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className={`flex items-center h-16 border-b border-white/[0.06] shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-5'}`}>
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
-            <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-            </svg>
-          </div>
+      <div className={`flex items-center h-16 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-5'}`}>
+        <div className="flex items-center gap-2.5 min-w-0">
+          {societeConfig?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={resolveLogoUrl(societeConfig.logo_url)}
+              alt={societeConfig.raison_sociale || 'Logo'}
+              className="h-8 max-w-[140px] w-auto object-contain shrink-0"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
+              <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+              </svg>
+            </div>
+          )}
           {!sidebarCollapsed && (
             <span className="text-[15px] font-bold text-white tracking-tight">OptimaCRM</span>
           )}
@@ -366,7 +397,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 sidebar-scroll">
-        <p className={`px-2 mb-3 text-[10px] uppercase tracking-[0.12em] font-semibold text-slate-500 ${sidebarCollapsed ? 'text-center' : ''}`}>
+        <p className={`px-2 mb-3 text-[10px] uppercase tracking-[0.12em] font-semibold text-white/40 ${sidebarCollapsed ? 'text-center' : ''}`}>
           {sidebarCollapsed ? '···' : 'Menu'}
         </p>
         <div className="space-y-0.5">
@@ -381,28 +412,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   href={item.href}
                   className={`group relative flex items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-all duration-200 ${
                     active
-                      ? 'bg-blue-500/10 text-blue-400'
-                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/70 hover:bg-white/10 hover:text-white'
                   } ${sidebarCollapsed ? 'justify-center' : ''}`}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
                   {active && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-blue-400" />
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-white" />
                   )}
-                  <span className={`shrink-0 transition-colors duration-200 ${active ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
+                  <span className={`shrink-0 transition-colors duration-200 ${active ? 'text-white' : 'text-white/60 group-hover:text-white'}`}>
                     {item.icon}
                   </span>
                   {!sidebarCollapsed && (
                     <>
                       <span>{item.label}</span>
                       {item.label === 'Tickets' && ticketsNouveaux > 0 && (
-                        <span className="ml-auto mr-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-bold text-white">
+                        <span className="ml-auto mr-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-white/25 px-1.5 text-[10px] font-bold text-white">
                           {ticketsNouveaux}
                         </span>
                       )}
                       {hasChildren && (
                         <svg
-                          className={`ml-auto h-3.5 w-3.5 transition-transform duration-200 ${childrenOpen ? 'rotate-180' : ''} ${active ? 'text-blue-400/60' : 'text-slate-600'}`}
+                          className={`ml-auto h-3.5 w-3.5 transition-transform duration-200 ${childrenOpen ? 'rotate-180' : ''} ${active ? 'text-white/80' : 'text-white/40'}`}
                           fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
                         >
                           <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -413,7 +444,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </Link>
 
                 {childrenOpen && !sidebarCollapsed && (
-                  <div className="mt-0.5 ml-[18px] pl-3 border-l border-white/[0.06] space-y-0.5">
+                  <div className="mt-0.5 ml-[18px] pl-3 border-l border-white/20 space-y-0.5">
                     {item.children!.map(child => {
                       const childPath = hrefPath(child.href);
                       const childQuery = child.href.includes('?') ? new URLSearchParams(child.href.split('?')[1]) : null;
@@ -426,8 +457,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           href={child.href}
                           className={`block rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-200 ${
                             childActive
-                              ? 'text-blue-400 bg-blue-500/[0.08]'
-                              : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                              ? 'text-white bg-white/15'
+                              : 'text-white/50 hover:text-white hover:bg-white/[0.06]'
                           }`}
                         >
                           {child.label}
@@ -443,23 +474,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </nav>
 
       {/* User Card */}
-      <div className={`shrink-0 border-t border-white/[0.06] ${sidebarCollapsed ? 'p-2' : 'p-3'}`}>
+      <div className={`shrink-0 border-t border-white/10 ${sidebarCollapsed ? 'p-2' : 'p-3'}`}>
         <div className={`rounded-lg ${sidebarCollapsed ? 'p-1.5' : 'p-2.5'}`}>
           <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-[11px] font-bold shrink-0 ring-2 ring-blue-500/20">
+            <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center text-white text-[11px] font-bold shrink-0 ring-2 ring-white/10">
               {user.first_name[0]}{user.last_name[0]}
             </div>
             {!sidebarCollapsed && (
               <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-semibold text-slate-200 truncate">{user.first_name} {user.last_name}</p>
-                <p className="text-[11px] text-slate-500 capitalize">{{ admin: 'Administrateur', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
+                <p className="text-[13px] font-semibold text-white truncate">{user.first_name} {user.last_name}</p>
+                <p className="text-[11px] text-white/50 capitalize">{{ admin: 'Administrateur', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
               </div>
             )}
           </div>
           {!sidebarCollapsed && (
             <button
               onClick={() => { logout(); router.push('/login'); }}
-              className="mt-2.5 w-full flex items-center justify-center gap-2 rounded-md bg-white/[0.04] hover:bg-red-500/10 px-3 py-1.5 text-[11px] font-medium text-slate-500 hover:text-red-400 transition-all duration-200 cursor-pointer"
+              className="mt-2.5 w-full flex items-center justify-center gap-2 rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-[11px] font-medium text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
@@ -484,16 +515,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 h-screen z-50 flex flex-col bg-[#0c1021] transition-all duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 h-screen z-50 flex flex-col transition-all duration-300 ease-in-out ${
           sidebarCollapsed ? 'w-[68px]' : 'w-[250px]'
         } ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+        style={{ backgroundColor: primaryColor }}
       >
         {sidebarContent}
 
         {/* Collapse toggle */}
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="hidden lg:flex absolute -right-3 top-[72px] h-6 w-6 rounded-full bg-[#0c1021] border border-white/10 items-center justify-center text-slate-500 hover:text-white hover:border-white/20 transition-all duration-200 cursor-pointer shadow-lg shadow-black/20"
+          className="hidden lg:flex absolute -right-3 top-[72px] h-6 w-6 rounded-full border border-white/10 items-center justify-center text-white/70 hover:text-white hover:border-white/20 transition-all duration-200 cursor-pointer shadow-lg shadow-black/20"
+          style={{ backgroundColor: primaryColor }}
         >
           <svg className={`h-3 w-3 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -517,17 +550,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </svg>
               </button>
 
-              {/* Search */}
-              <div className="relative hidden sm:block">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Rechercher..."
-                  className="w-64 lg:w-72 rounded-lg bg-gray-50 border border-gray-100 py-2 pl-10 pr-4 text-sm text-gray-700 placeholder-gray-400 focus:bg-white focus:border-blue-200 focus:ring-2 focus:ring-blue-500/10 outline-none transition-all duration-200"
-                />
-              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -536,7 +558,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
                 </svg>
-                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-blue-500 ring-2 ring-white" />
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full ring-2 ring-white" style={{ backgroundColor: primaryColor }} />
               </button>
 
               <div className="h-6 w-px bg-gray-100 mx-1" />
@@ -547,7 +569,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                   className="flex items-center gap-2.5 p-1.5 pr-3 rounded-lg hover:bg-gray-50 transition-all duration-200 cursor-pointer"
                 >
-                  <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-[11px] font-bold shadow-sm shadow-blue-500/20">
+                  <div className="h-8 w-8 rounded-lg flex items-center justify-center text-white text-[11px] font-bold" style={{ backgroundColor: primaryColor, boxShadow: `0 1px 3px rgb(${primaryRgb} / 0.2)` }}>
                     {user.first_name[0]}{user.last_name[0]}
                   </div>
                   <div className="text-left hidden sm:block">
@@ -602,5 +624,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </main>
       </div>
     </div>
+  );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center"><div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" /></div>}>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </Suspense>
   );
 }

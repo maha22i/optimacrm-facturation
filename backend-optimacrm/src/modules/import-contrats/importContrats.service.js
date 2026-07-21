@@ -742,7 +742,24 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     }
 
     // --- date_debut ---
-    parsed.date_debut = parsed.date_signature || parsed.date_installation || new Date().toISOString().split('T')[0];
+    if (data.date_debut) {
+      parsed.date_debut = parseDate(data.date_debut);
+    }
+    if (!parsed.date_debut) {
+      parsed.date_debut = parsed.date_signature || parsed.date_installation || new Date().toISOString().split('T')[0];
+    }
+
+    // --- terme_facturation ---
+    if (data.terme_facturation) {
+      const tt = normalize(cleanText(data.terme_facturation));
+      if (['echu', 'échu', 'a terme echu', 'à terme échu', 'terme echu', 'terme échu'].includes(tt)) {
+        parsed.terme_facturation = 'echu';
+      } else if (['echoir', 'échoir', 'a echoir', 'à échoir', 'terme a echoir', 'terme à échoir'].includes(tt)) {
+        parsed.terme_facturation = 'a_echoir';
+      } else {
+        parsed.terme_facturation = data.terme_facturation;
+      }
+    }
 
     // --- TVA ---
     const defaultTva = parsed.taux_tva != null ? parsed.taux_tva : 20;
@@ -950,6 +967,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               notes = COALESCE($13, notes),
               ftc = COALESCE($14, ftc),
               ect = COALESCE($15, ect),
+              terme_facturation = COALESCE($16, terme_facturation),
               updated_at = NOW()
             WHERE id = $1`,
             [
@@ -968,6 +986,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.notes || null,
               d.ftc || null,
               d.ect || null,
+              d.terme_facturation || null,
             ]
           );
 
@@ -1000,9 +1019,9 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               duree_contrat_mois, numero_dossier_financement, organisme_credit,
               montant_finance, loyer_ht, location_interne, statut,
               derniere_facture_date, derniere_facture_numero, derniere_facture_montant_ht,
-              notes, ftc, ect
+              notes, ftc, ect, terme_facturation
             ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
             ) RETURNING id`,
             [
               d.numero_contrat,
@@ -1029,6 +1048,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.notes || null,
               d.ftc || 0,
               d.ect || 0,
+              d.terme_facturation || null,
             ]
           );
           contratId = insertRes.rows[0].id;

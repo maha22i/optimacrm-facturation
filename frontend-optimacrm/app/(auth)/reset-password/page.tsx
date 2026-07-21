@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { Suspense, useState, useEffect, type FormEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
 
@@ -139,5 +139,13 @@ export default function ResetPasswordPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><div className="animate-spin h-8 w-8 border-[3px] border-blue-600 border-t-transparent rounded-full" /></div>}>
+      <ResetPasswordContent />
+    </Suspense>
   );
 }

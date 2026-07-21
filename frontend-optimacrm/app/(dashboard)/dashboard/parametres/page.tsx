@@ -485,7 +485,7 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" /></svg>
                 </div>
                 <h3 className="text-sm font-bold text-gray-800">Logo & Couleur</h3>
-                <span className="text-xs text-gray-400 ml-1">— Utilisés sur vos documents PDF</span>
+                <span className="text-xs text-gray-400 ml-1">— Utilisés sur vos documents PDF et l&apos;interface</span>
               </div>
 
               <div>
@@ -529,8 +529,9 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
               </div>
 
               <div>
-                <label className={labelCls}>Couleur des documents PDF</label>
-                <div className="flex items-center gap-4">
+                <label className={labelCls}>Couleur principale</label>
+                <p className="text-xs text-gray-400 mb-3">Appliquée au menu latéral, aux accents de l&apos;interface et aux documents PDF</p>
+                <div className="flex items-center gap-4 flex-wrap">
                   <input
                     type="color"
                     value={form.couleur_principale}
@@ -550,7 +551,19 @@ function SocieteSection({ toast, isAdmin }: SocieteSectionProps) {
                     readOnly={readOnly}
                   />
                   <div className="h-10 w-10 rounded-lg border border-gray-200 shrink-0" style={{ backgroundColor: form.couleur_principale }} />
-                  <span className="text-xs text-gray-400">En-têtes et accents des devis/factures</span>
+                  {isAdmin && (
+                    <button
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {saving ? (
+                        <><div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Enregistrement...</>
+                      ) : (
+                        <><svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>Appliquer</>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -74,6 +74,16 @@ export const CONTRATS_FIELD_GROUPS = [
         ],
       },
       {
+        key: 'terme_facturation',
+        label: 'Terme de facturation',
+        required: false,
+        type: 'text',
+        synonyms: [
+          'terme', 'terme facturation', 'terme_facturation',
+          'terme de facturation', 'tae', 'tec',
+        ],
+      },
+      {
         key: 'notes',
         label: 'Notes / Complément',
         required: false,
@@ -89,6 +99,16 @@ export const CONTRATS_FIELD_GROUPS = [
     group: 'Dates',
     icon: '📅',
     fields: [
+      {
+        key: 'date_debut',
+        label: 'Date de début',
+        required: false,
+        type: 'date',
+        synonyms: [
+          'date debut', 'date début', 'date de début', 'date de debut',
+          'début contrat', 'debut contrat', 'date début contrat',
+        ],
+      },
       {
         key: 'date_signature',
         label: 'Date de signature',
