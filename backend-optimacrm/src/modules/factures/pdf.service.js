@@ -73,7 +73,7 @@ function formatModeReglement(val) {
 // ─── Données ─────────────────────────────────────────────────────────────────
 
 async function getSocieteConfig() {
-  const { rows } = await query('SELECT * FROM societe_config WHERE id = 1');
+  const { rows } = await query('SELECT * FROM societe_config LIMIT 1');
   return rows[0] || {};
 }
 

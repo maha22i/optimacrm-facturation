@@ -115,7 +115,10 @@ export async function deleteAllClients(req, res, next) {
 
 export async function getClientStats(req, res, next) {
   try {
-    const stats = await clientService.getClientStats(parseInt(req.params.id));
+    // req.tenantModulesActifs posé par authenticate.js (LEFT JOIN tenants,
+    // cf. dashboard.controller.js) — "désactivé = invisible" jusque dans
+    // le calcul, pas seulement dans l'affichage.
+    const stats = await clientService.getClientStats(parseInt(req.params.id), req.tenantModulesActifs);
     sendSuccess(res, stats);
   } catch (err) { next(err); }
 }

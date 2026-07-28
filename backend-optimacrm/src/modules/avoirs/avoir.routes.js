@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import * as ctrl from './avoir.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { generateAvoirPdf } from './avoir.pdf.service.js';
 
 const router = Router();
 router.use(authenticate);
+router.use(tenantMiddleware);
 
 router.get('/', checkPermission('factures_read'), ctrl.listAvoirs);
 

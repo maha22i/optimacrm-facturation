@@ -3,32 +3,50 @@ import * as ctrl from './facture.controller.js';
 import * as ctrlTelephonie from './facturationTelephonie.controller.js';
 import * as ctrlAbonnement from './facturationAbonnement.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 import { generateFacturePdf } from './pdf.service.js';
 
 const router = Router();
 router.use(authenticate);
+// tenantMiddleware TOUJOURS avant le routing, y compris pour les routes
+// dépendant du module Contrats ci-dessous : un sous-routeur monté avant
+// tenantMiddleware traite lui-même les requêtes qui matchent (sans jamais
+// retomber sur le reste du routeur), donc sans aucun SET LOCAL
+// app.current_tenant_id posé — cassant la génération de factures depuis un
+// contrat/abonnement (INSERT/SELECT sans contexte RLS). Bug réel constaté
+// sur le même pattern dans champs-config/champs-templates (cf. leurs
+// commentaires) — corrigé ici de la même façon : tenantMiddleware en tête,
+// requireModule attaché route par route plus bas.
+router.use(tenantMiddleware);
+
+// Routes de facture.routes.js qui dépendent du module Contrats (génération
+// de factures depuis un contrat/abonnement/téléphonie). Les Factures
+// elles-mêmes restent socles : seule cette poignée de routes, qui n'ont pas
+// de sens sans le module Contrats, est gatée. requireModule attaché
+// directement à chaque route (pas via .use() sur un sous-routeur) pour ne
+// s'exécuter qu'une fois la route effectivement matchée par Express.
+// Déclarées avant les routes CRUD génériques (/:id etc.) pour éviter que
+// ces chemins à un seul segment (/contrats-a-facturer...) ne soient
+// interceptés par /:id si celui-ci était déclaré en premier.
+const requireContrats = requireModule('contrats');
+router.get('/contrats-a-facturer', requireContrats, checkPermission('factures_write'), ctrl.getContratsAFacturer);
+router.get('/releves-disponibles/:contratId', requireContrats, checkPermission('factures_read'), ctrl.getRelevesDisponibles);
+router.get('/contrats-abonnement-a-facturer', requireContrats, checkPermission('factures_write'), ctrlAbonnement.getContratsAbonnement);
+router.post('/generer-abonnement', requireContrats, checkPermission('factures_write'), ctrlAbonnement.genererFacturesAbonnement);
+router.get('/simuler-abonnement/:contratId', requireContrats, checkPermission('factures_read'), ctrlAbonnement.simulerFactureAbonnement);
+router.get('/contrats-telephonie-a-facturer', requireContrats, checkPermission('factures_write'), ctrlTelephonie.getContratsTelephonie);
+router.post('/generer-telephonie', requireContrats, checkPermission('factures_write'), ctrlTelephonie.genererFacturesTelephonie);
+router.get('/simuler-telephonie/:contratId', requireContrats, checkPermission('factures_read'), ctrlTelephonie.simulerFactureTelephonie);
+router.post('/generer-depuis-contrat/:contratId', requireContrats, checkPermission('factures_write'), ctrl.genererDepuisContrat);
 
 // ── Factures — CRUD ──────────────────────────────────────────────────────
 
 router.get('/', checkPermission('factures_read'), ctrl.listFactures);
 router.get('/stats', checkPermission('factures_read'), ctrl.getFacturesStats);
 router.get('/all-ids', checkPermission('factures_read'), ctrl.getAllIds);
-router.get('/contrats-a-facturer', checkPermission('factures_write'), ctrl.getContratsAFacturer);
-router.get('/releves-disponibles/:contratId', checkPermission('factures_read'), ctrl.getRelevesDisponibles);
-
-// ── Facturation périodique par abonnement (moteur générique) ─────────────
-
-router.get('/contrats-abonnement-a-facturer', checkPermission('factures_write'), ctrlAbonnement.getContratsAbonnement);
-router.post('/generer-abonnement', checkPermission('factures_write'), ctrlAbonnement.genererFacturesAbonnement);
-router.get('/simuler-abonnement/:contratId', checkPermission('factures_read'), ctrlAbonnement.simulerFactureAbonnement);
-
-// ── Rétrocompatibilité anciennes routes téléphonie ───────────────────────
-
-router.get('/contrats-telephonie-a-facturer', checkPermission('factures_write'), ctrlTelephonie.getContratsTelephonie);
-router.post('/generer-telephonie', checkPermission('factures_write'), ctrlTelephonie.genererFacturesTelephonie);
-router.get('/simuler-telephonie/:contratId', checkPermission('factures_read'), ctrlTelephonie.simulerFactureTelephonie);
 
 router.get('/:id/pdf', checkPermission('factures_read'), async (req, res, next) => {
   try {
@@ -68,8 +86,9 @@ router.post('/:id/annuler', checkPermission('factures_write'), ctrl.annulerFactu
 router.post('/:id/dupliquer', checkPermission('factures_write'), ctrl.dupliquerFacture);
 
 // ── Génération ───────────────────────────────────────────────────────────
+// (generer-depuis-contrat déplacé dans contratsRouter ci-dessus, gaté par
+// requireModule('contrats'))
 
-router.post('/generer-depuis-contrat/:contratId', checkPermission('factures_write'), ctrl.genererDepuisContrat);
 router.post('/generer-depuis-devis/:devisId', checkPermission('factures_write'), ctrl.genererDepuisDevis);
 router.post('/generer-lot', checkPermission('factures_write'), ctrl.executerGenerationLot);
 

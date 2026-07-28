@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import app from './src/app.js';
 import { pool } from './src/config/database.js';
-import { runMigrations } from './src/database/migrate.js';
 import { startExpirationJob } from './src/jobs/devisExpirationJob.js';
 import { startEmailPollingJob } from './src/modules/tickets/jobs/emailPollingJob.js';
 
@@ -12,8 +11,11 @@ async function start() {
     await pool.query('SELECT NOW()');
     console.log('✓ Database connected');
 
-    await runMigrations();
-    console.log('✓ Migrations completed');
+    // Les migrations ne tournent plus au boot de l'app (rôle applicatif
+    // optimacrm_app strictement DML, sans droit CREATE sur le schéma).
+    // Elles doivent être appliquées manuellement AVANT de démarrer/redémarrer
+    // l'app, avec un rôle propriétaire des tables :
+    //   DATABASE_URL="postgresql://postgres@<host>:5432/<db>" npm run migrate
 
     startExpirationJob();
     startEmailPollingJob();

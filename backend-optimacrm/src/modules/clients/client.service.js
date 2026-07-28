@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs/promises';
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { bucket, isFirebaseReady } from '../../config/firebase.js';
 
@@ -86,14 +86,12 @@ export async function listClients({ page = 1, limit = 10, statut, search }) {
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const [clientsRes, countRes] = await Promise.all([
-    query(
-      `SELECT ${CLIENT_FIELDS} FROM clients c ${where}
-       ORDER BY c.created_at DESC LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset],
-    ),
-    query(`SELECT COUNT(*)::int AS total FROM clients c ${where}`, params),
-  ]);
+  const clientsRes = await query(
+    `SELECT ${CLIENT_FIELDS} FROM clients c ${where}
+     ORDER BY c.created_at DESC LIMIT $${i} OFFSET $${i + 1}`,
+    [...params, limit, offset],
+  );
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM clients c ${where}`, params);
 
   return {
     clients: clientsRes.rows,
@@ -110,11 +108,9 @@ export async function getClientById(id) {
   const clientRes = await query(`SELECT ${CLIENT_FIELDS} FROM clients WHERE id = $1`, [id]);
   if (clientRes.rows.length === 0) throw ApiError.notFound('Client non trouvé');
 
-  const [adressesRes, contactsRes, documentsRes] = await Promise.all([
-    query('SELECT * FROM client_adresses WHERE client_id = $1 ORDER BY est_defaut DESC, type', [id]),
-    query('SELECT * FROM client_contacts WHERE client_id = $1 ORDER BY est_principal DESC, nom', [id]),
-    query('SELECT * FROM client_documents WHERE client_id = $1 ORDER BY created_at DESC', [id]),
-  ]);
+  const adressesRes = await query('SELECT * FROM client_adresses WHERE client_id = $1 ORDER BY est_defaut DESC, type', [id]);
+  const contactsRes = await query('SELECT * FROM client_contacts WHERE client_id = $1 ORDER BY est_principal DESC, nom', [id]);
+  const documentsRes = await query('SELECT * FROM client_documents WHERE client_id = $1 ORDER BY created_at DESC', [id]);
 
   return {
     ...clientRes.rows[0],
@@ -247,80 +243,87 @@ export async function deleteClient(id) {
 }
 
 export async function deleteAllClients() {
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
+
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     // SEPA (dépend de factures)
-    await client.query('DELETE FROM sepa_remise_lignes');
-    await client.query('DELETE FROM sepa_remises');
+    await dbClient.query('DELETE FROM sepa_remise_lignes');
+    await dbClient.query('DELETE FROM sepa_remises');
     // Avoirs (dépend de factures)
-    await client.query('DELETE FROM avoir_lignes');
-    await client.query('DELETE FROM avoirs');
+    await dbClient.query('DELETE FROM avoir_lignes');
+    await dbClient.query('DELETE FROM avoirs');
     // Factures et sous-tables
-    await client.query('DELETE FROM facture_reglements');
-    await client.query('DELETE FROM facture_historique');
-    await client.query('DELETE FROM facture_lignes');
-    await client.query('DELETE FROM factures');
+    await dbClient.query('DELETE FROM facture_reglements');
+    await dbClient.query('DELETE FROM facture_historique');
+    await dbClient.query('DELETE FROM facture_lignes');
+    await dbClient.query('DELETE FROM factures');
     // Contrats et sous-tables
-    await client.query('DELETE FROM contrat_machines');
-    await client.query('DELETE FROM contrat_lignes');
-    await client.query('DELETE FROM contrats');
+    await dbClient.query('DELETE FROM contrat_machines');
+    await dbClient.query('DELETE FROM contrat_lignes');
+    await dbClient.query('DELETE FROM contrats');
     // Devis et sous-tables
-    await client.query('DELETE FROM bons_commande');
-    await client.query('DELETE FROM devis_champs_personnalises');
-    await client.query('DELETE FROM devis_historique');
-    await client.query('DELETE FROM devis_lignes');
-    await client.query('DELETE FROM devis');
+    await dbClient.query('DELETE FROM bons_commande');
+    await dbClient.query('DELETE FROM devis_champs_personnalises');
+    await dbClient.query('DELETE FROM devis_historique');
+    await dbClient.query('DELETE FROM devis_lignes');
+    await dbClient.query('DELETE FROM devis');
     // Parc machines et sous-tables
-    await client.query('DELETE FROM releves_compteurs');
-    await client.query('DELETE FROM parc_machines');
+    await dbClient.query('DELETE FROM releves_compteurs');
+    await dbClient.query('DELETE FROM parc_machines');
     // Tarifs spécifiques clients
-    await client.query('DELETE FROM produit_tarifs_clients');
+    await dbClient.query('DELETE FROM produit_tarifs_clients');
     // Sous-tables clients
-    await client.query('DELETE FROM client_documents');
-    await client.query('DELETE FROM client_contacts');
-    await client.query('DELETE FROM client_adresses');
+    await dbClient.query('DELETE FROM client_documents');
+    await dbClient.query('DELETE FROM client_contacts');
+    await dbClient.query('DELETE FROM client_adresses');
     // Champs personnalisés valeurs
-    await client.query('DELETE FROM champs_personnalises_valeurs');
+    await dbClient.query('DELETE FROM champs_personnalises_valeurs');
     // Clients
-    const result = await client.query('DELETE FROM clients RETURNING id');
-    await client.query("ALTER SEQUENCE client_numero_seq RESTART WITH 1");
+    const result = await dbClient.query('DELETE FROM clients RETURNING id');
+    await dbClient.query("ALTER SEQUENCE client_numero_seq RESTART WITH 1");
 
-    await client.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return { deletedCount: result.rowCount };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
-export async function getClientStats(id) {
+export async function getClientStats(id, modulesActifs) {
   const clientCheck = await query('SELECT id FROM clients WHERE id = $1', [id]);
   if (clientCheck.rows.length === 0) throw ApiError.notFound('Client non trouvé');
 
-  const [facturesRes, contratsRes] = await Promise.all([
-    query(
-      `SELECT
-         COUNT(*)::int AS nb_factures,
-         COALESCE(SUM(total_ttc), 0) AS ca_total,
-         COUNT(*) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0)::int AS factures_en_attente,
-         COALESCE(SUM(net_a_payer) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0), 0) AS montant_en_attente,
-         COALESCE(SUM(net_a_payer) FILTER (WHERE statut NOT IN ('Annulée') AND net_a_payer > 0), 0) AS solde_du
-       FROM factures WHERE client_id = $1 AND statut != 'Annulée'`,
-      [id],
-    ),
-    query(
-      `SELECT COUNT(*)::int AS nb_contrats_actifs
-       FROM contrats WHERE client_id = $1 AND statut = 'Actif'`,
-      [id],
-    ),
-  ]);
+  const contratsActive = modulesActifs?.contrats !== false;
+
+  const facturesRes = await query(
+    `SELECT
+       COUNT(*)::int AS nb_factures,
+       COALESCE(SUM(total_ttc), 0) AS ca_total,
+       COUNT(*) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0)::int AS factures_en_attente,
+       COALESCE(SUM(net_a_payer) FILTER (WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0), 0) AS montant_en_attente,
+       COALESCE(SUM(net_a_payer) FILTER (WHERE statut NOT IN ('Annulée') AND net_a_payer > 0), 0) AS solde_du
+     FROM factures WHERE client_id = $1 AND statut != 'Annulée'`,
+    [id],
+  );
+  // "désactivé = invisible" jusque dans le calcul : pas de requête sur
+  // `contrats` du tout si le module est désactivé pour ce tenant (cf.
+  // dashboard.service.js pour le même principe sur parc_machines/catalogue).
+  const contratsRes = contratsActive
+    ? await query(
+        `SELECT COUNT(*)::int AS nb_contrats_actifs
+         FROM contrats WHERE client_id = $1 AND statut = 'Actif'`,
+        [id],
+      )
+    : null;
 
   const f = facturesRes.rows[0];
-  const c = contratsRes.rows[0];
 
   return {
     ca_total: parseFloat(f.ca_total) || 0,
@@ -328,7 +331,7 @@ export async function getClientStats(id) {
     factures_en_attente: f.factures_en_attente,
     montant_en_attente: parseFloat(f.montant_en_attente) || 0,
     solde_du: parseFloat(f.solde_du) || 0,
-    nb_contrats_actifs: c.nb_contrats_actifs,
+    nb_contrats_actifs: contratsActive ? contratsRes.rows[0].nb_contrats_actifs : 0,
   };
 }
 

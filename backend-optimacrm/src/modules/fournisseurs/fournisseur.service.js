@@ -27,10 +27,8 @@ export async function list({ page = 1, limit = 20, type, search, actif }) {
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const [rows, countRes] = await Promise.all([
-    query(`SELECT ${FIELDS} FROM fournisseurs ${where} ORDER BY nom LIMIT $${i} OFFSET $${i + 1}`, [...params, limit, offset]),
-    query(`SELECT COUNT(*)::int AS total FROM fournisseurs ${where}`, params),
-  ]);
+  const rows = await query(`SELECT ${FIELDS} FROM fournisseurs ${where} ORDER BY nom LIMIT $${i} OFFSET $${i + 1}`, [...params, limit, offset]);
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM fournisseurs ${where}`, params);
 
   return {
     fournisseurs: rows.rows,

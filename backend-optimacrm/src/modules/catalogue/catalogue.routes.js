@@ -2,12 +2,16 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './catalogue.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 const router = Router();
 router.use(authenticate);
+router.use(requireModule('catalogue'));
+router.use(tenantMiddleware);
 
 router.get('/export', checkPermission('catalogue_read'), ctrl.exportProduits);
 

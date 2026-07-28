@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { genererDepuisDevis } from '../factures/facture.service.js';
 
@@ -217,21 +217,19 @@ export async function listDevis({ page = 1, limit = 10, statut, client_id, comme
 
   const where = `WHERE ${conditions.join(' AND ')}`;
 
-  const [devisRes, countRes] = await Promise.all([
-    query(
-      `SELECT ${DEVIS_FIELDS},
-        c.raison_sociale AS client_raison_sociale_fiche,
-        c.numero_client,
-        COALESCE(NULLIF(TRIM(d.nom_client_libre), ''), c.raison_sociale) AS client_nom
-       FROM devis d
-       LEFT JOIN clients c ON c.id = d.client_id
-       ${where}
-       ORDER BY d.created_at DESC
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset]
-    ),
-    query(`SELECT COUNT(*)::int AS total FROM devis d LEFT JOIN clients c ON c.id = d.client_id ${where}`, params),
-  ]);
+  const devisRes = await query(
+    `SELECT ${DEVIS_FIELDS},
+      c.raison_sociale AS client_raison_sociale_fiche,
+      c.numero_client,
+      COALESCE(NULLIF(TRIM(d.nom_client_libre), ''), c.raison_sociale) AS client_nom
+     FROM devis d
+     LEFT JOIN clients c ON c.id = d.client_id
+     ${where}
+     ORDER BY d.created_at DESC
+     LIMIT $${i} OFFSET $${i + 1}`,
+    [...params, limit, offset]
+  );
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM devis d LEFT JOIN clients c ON c.id = d.client_id ${where}`, params);
 
   return {
     devis: devisRes.rows,
@@ -248,28 +246,26 @@ export async function getDevisStats() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
 
-  const [totalMois, enAttente, acceptesMois, conversion] = await Promise.all([
-    query(
-      `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
-       FROM devis WHERE deleted_at IS NULL AND date_creation >= $1`,
-      [startOfMonth]
-    ),
-    query(
-      `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
-       FROM devis WHERE deleted_at IS NULL AND statut = 'ENVOYE'`
-    ),
-    query(
-      `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
-       FROM devis WHERE deleted_at IS NULL AND statut = 'ACCEPTE' AND date_acceptation >= $1`,
-      [startOfMonth]
-    ),
-    query(
-      `SELECT
-         COUNT(*) FILTER (WHERE statut IN ('ACCEPTE','FACTURE'))::int AS acceptes,
-         COUNT(*) FILTER (WHERE statut IN ('ACCEPTE','FACTURE','ENVOYE','REFUSE','EXPIRE'))::int AS total
-       FROM devis WHERE deleted_at IS NULL`
-    ),
-  ]);
+  const totalMois = await query(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
+     FROM devis WHERE deleted_at IS NULL AND date_creation >= $1`,
+    [startOfMonth]
+  );
+  const enAttente = await query(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
+     FROM devis WHERE deleted_at IS NULL AND statut = 'ENVOYE'`
+  );
+  const acceptesMois = await query(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(montant_ttc), 0)::decimal AS montant
+     FROM devis WHERE deleted_at IS NULL AND statut = 'ACCEPTE' AND date_acceptation >= $1`,
+    [startOfMonth]
+  );
+  const conversion = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE statut IN ('ACCEPTE','FACTURE'))::int AS acceptes,
+       COUNT(*) FILTER (WHERE statut IN ('ACCEPTE','FACTURE','ENVOYE','REFUSE','EXPIRE'))::int AS total
+     FROM devis WHERE deleted_at IS NULL`
+  );
 
   const convRow = conversion.rows[0];
   const taux = convRow.total > 0 ? Math.round((convRow.acceptes / convRow.total) * 10000) / 100 : 0;
@@ -285,15 +281,13 @@ export async function getDevisStats() {
 export async function getDevisById(id) {
   const devis = await getDevisOrFail(id);
 
-  const [lignesRes, champsRes, historiqueRes, clientRes, contactRes, adresseFactRes, adrLivRes] = await Promise.all([
-    query('SELECT * FROM devis_lignes WHERE devis_id = $1 ORDER BY ordre', [id]),
-    query('SELECT * FROM devis_champs_personnalises WHERE devis_id = $1 ORDER BY ordre', [id]),
-    query('SELECT h.*, u.first_name, u.last_name FROM devis_historique h LEFT JOIN users u ON u.id = h.user_id WHERE h.devis_id = $1 ORDER BY h.created_at DESC', [id]),
-    query('SELECT id, numero_client, raison_sociale, email_principal, telephone_principal, siret, tva_intracommunautaire FROM clients WHERE id = $1', [devis.client_id]),
-    devis.contact_id ? query('SELECT * FROM client_contacts WHERE id = $1', [devis.contact_id]) : { rows: [] },
-    devis.adresse_facturation_id ? query('SELECT * FROM client_adresses WHERE id = $1', [devis.adresse_facturation_id]) : { rows: [] },
-    devis.adresse_livraison_id ? query('SELECT * FROM client_adresses WHERE id = $1', [devis.adresse_livraison_id]) : { rows: [] },
-  ]);
+  const lignesRes = await query('SELECT * FROM devis_lignes WHERE devis_id = $1 ORDER BY ordre', [id]);
+  const champsRes = await query('SELECT * FROM devis_champs_personnalises WHERE devis_id = $1 ORDER BY ordre', [id]);
+  const historiqueRes = await query('SELECT h.*, u.first_name, u.last_name FROM devis_historique h LEFT JOIN users u ON u.id = h.user_id WHERE h.devis_id = $1 ORDER BY h.created_at DESC', [id]);
+  const clientRes = await query('SELECT id, numero_client, raison_sociale, email_principal, telephone_principal, siret, tva_intracommunautaire FROM clients WHERE id = $1', [devis.client_id]);
+  const contactRes = devis.contact_id ? await query('SELECT * FROM client_contacts WHERE id = $1', [devis.contact_id]) : { rows: [] };
+  const adresseFactRes = devis.adresse_facturation_id ? await query('SELECT * FROM client_adresses WHERE id = $1', [devis.adresse_facturation_id]) : { rows: [] };
+  const adrLivRes = devis.adresse_livraison_id ? await query('SELECT * FROM client_adresses WHERE id = $1', [devis.adresse_livraison_id]) : { rows: [] };
 
   return {
     ...devis,
@@ -308,9 +302,11 @@ export async function getDevisById(id) {
 }
 
 export async function createDevis(data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const numero = await generateNumeroDevis(dbClient);
     const dateValidite = data.date_validite || (() => {
@@ -378,13 +374,13 @@ export async function createDevis(data, userId) {
     await recalculerDevis(dbClient, devis.id);
     await ajouterHistorique(dbClient, devis.id, userId, 'CREATION', `Devis ${numero} créé`);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getDevisById(devis.id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -416,9 +412,11 @@ export async function updateDevis(id, data, userId) {
     throw ApiError.badRequest('Aucun champ à mettre à jour');
   }
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     if (sets.length > 0) {
       sets.push('updated_at = NOW()');
@@ -454,14 +452,14 @@ export async function updateDevis(id, data, userId) {
 
     await recalculerDevis(dbClient, id);
     await ajouterHistorique(dbClient, id, userId, 'MODIFICATION', 'Devis modifié');
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
 
     return getDevisById(id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -472,12 +470,10 @@ export async function deleteDevis(id, userId) {
   }
 
   await query('UPDATE devis SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1', [id]);
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, id, userId, 'SUPPRESSION', 'Devis supprimé');
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [id, userId, 'SUPPRESSION', 'Devis supprimé']
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -536,12 +532,10 @@ export async function envoyerDevis(id, userId, emailData) {
     );
   }
 
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, id, userId, 'ENVOI', `Devis envoyé par email à ${emailData?.destinataire || 'client'}`);
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [id, userId, 'ENVOI', `Devis envoyé par email à ${emailData?.destinataire || 'client'}`]
+  );
 
   return getDevisById(id);
 }
@@ -558,12 +552,10 @@ export async function accepterDevis(id, userId) {
     [now, id]
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, id, userId, 'ACCEPTATION', 'Devis accepté');
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [id, userId, 'ACCEPTATION', 'Devis accepté']
+  );
 
   return getDevisById(id);
 }
@@ -579,12 +571,10 @@ export async function refuserDevis(id, userId, motif) {
     [id]
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, id, userId, 'REFUS', motif || 'Devis refusé');
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [id, userId, 'REFUS', motif || 'Devis refusé']
+  );
 
   return getDevisById(id);
 }
@@ -645,12 +635,10 @@ export async function transformerEnFacture(id, userId) {
     [id]
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, id, userId, 'TRANSFORMATION_FACTURE', `Devis transformé en facture ${facture.numero_facture}`);
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [id, userId, 'TRANSFORMATION_FACTURE', `Devis transformé en facture ${facture.numero_facture}`]
+  );
 
   return { devis: await getDevisById(id), facture };
 }
@@ -661,9 +649,11 @@ export async function transformerEnBonCommande(id, userId) {
     throw ApiError.badRequest('Le devis doit être ENVOYE ou ACCEPTE pour créer un bon de commande');
   }
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const numeroBC = await generateNumeroBonCommande(dbClient);
 
@@ -683,13 +673,13 @@ export async function transformerEnBonCommande(id, userId) {
 
     await ajouterHistorique(dbClient, id, userId, 'CREATION_BON_COMMANDE', `Bon de commande ${numeroBC} créé`);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return bc;
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -725,12 +715,7 @@ export async function ajouterLigne(devisId, data, userId) {
     ]
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await recalculerDevis(dbClient, devisId);
-  } finally {
-    dbClient.release();
-  }
+  await recalculerDevis({ query }, devisId);
 
   return result.rows[0];
 }
@@ -777,12 +762,7 @@ export async function modifierLigne(devisId, ligneId, data, userId) {
     vals
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await recalculerDevis(dbClient, devisId);
-  } finally {
-    dbClient.release();
-  }
+  await recalculerDevis({ query }, devisId);
 
   return result.rows[0];
 }
@@ -797,33 +777,30 @@ export async function supprimerLigne(devisId, ligneId, userId) {
   );
   if (result.rows.length === 0) throw ApiError.notFound('Ligne non trouvée');
 
-  const dbClient = await pool.connect();
-  try {
-    await recalculerDevis(dbClient, devisId);
-  } finally {
-    dbClient.release();
-  }
+  await recalculerDevis({ query }, devisId);
 }
 
 export async function reorderLignes(devisId, ordreIds, userId) {
   const devis = await getDevisOrFail(devisId);
   ensureModifiable(devis);
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
     for (let idx = 0; idx < ordreIds.length; idx++) {
       await dbClient.query(
         'UPDATE devis_lignes SET ordre = $1 WHERE id = $2 AND devis_id = $3',
         [idx, ordreIds[idx], devisId]
       );
     }
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -956,12 +933,10 @@ export async function marquerDevisExpire(devisId) {
     `UPDATE devis SET statut = 'EXPIRE', updated_at = NOW() WHERE id = $1 AND statut = 'ENVOYE'`,
     [devisId]
   );
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, devisId, null, 'EXPIRATION', 'Devis expiré (date de validité dépassée)');
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [devisId, null, 'EXPIRATION', 'Devis expiré (date de validité dépassée)']
+  );
 }
 
 export async function enregistrerCodeVerification(devisId, code, expiration) {
@@ -1006,12 +981,10 @@ export async function enregistrerSignature(devisId, { signataireNom, signatureBa
     [signatureBase64, signataireNom, ip, userAgent, devisId]
   );
 
-  const dbClient = await pool.connect();
-  try {
-    await ajouterHistorique(dbClient, devisId, null, 'SIGNATURE', `Devis signé en ligne par ${signataireNom}`);
-  } finally {
-    dbClient.release();
-  }
+  await query(
+    'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+    [devisId, null, 'SIGNATURE', `Devis signé en ligne par ${signataireNom}`]
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,12 +999,10 @@ export async function expirerDevisObsoletes() {
   );
 
   for (const row of result.rows) {
-    const dbClient = await pool.connect();
-    try {
-      await ajouterHistorique(dbClient, row.id, null, 'EXPIRATION', 'Devis expiré automatiquement');
-    } finally {
-      dbClient.release();
-    }
+    await query(
+      'INSERT INTO devis_historique (devis_id, user_id, action, detail) VALUES ($1, $2, $3, $4)',
+      [row.id, null, 'EXPIRATION', 'Devis expiré automatiquement'],
+    );
   }
 
   return result.rows.length;

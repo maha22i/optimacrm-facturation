@@ -4,9 +4,11 @@ import { useState, useEffect, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { TENANT_SUSPENDED_MESSAGE } from '@/lib/api';
 import type { UserRole } from '@/lib/types';
 
 function getLoginRedirect(role: UserRole): string {
+  if (role === 'super_admin') return '/super-admin';
   if (role === 'admin_technique' || role === 'technicien') return '/dashboard/tickets';
   return '/dashboard';
 }
@@ -34,7 +36,16 @@ export default function LoginPage() {
     try {
       await login(email, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+      const message = err instanceof Error ? err.message : 'Une erreur est survenue';
+      // Le backend renvoie ce message exact (auth.service.js#login) quand le
+      // tenant de l'utilisateur est suspendu — on l'affiche avec la même
+      // formulation que l'écran dédié (SuspendedScreen) plutôt que le
+      // message brut, pour un message cohérent partout dans l'app.
+      setError(
+        message === TENANT_SUSPENDED_MESSAGE
+          ? "Votre accès est suspendu. Contactez votre administrateur pour plus d'informations."
+          : message,
+      );
       setLoading(false);
     }
   }

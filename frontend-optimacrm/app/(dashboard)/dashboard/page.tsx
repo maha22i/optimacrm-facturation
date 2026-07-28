@@ -754,6 +754,10 @@ export default function DashboardPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const isAdminTechnique = user?.role === 'admin_technique';
+  const parcModuleActive = user?.modules_actifs?.parc_machines !== false;
+  const contratsModuleActive = user?.modules_actifs?.contrats !== false;
+  const catalogueModuleActive = user?.modules_actifs?.catalogue !== false;
+  const journalModuleActive = user?.modules_actifs?.journal !== false;
 
   const fetchData = useCallback(async () => {
     try {
@@ -797,7 +801,10 @@ export default function DashboardPage() {
   }, [fetchData, user, hasPermission, isAdminTechnique]);
 
   useEffect(() => {
-    if (user && hasPermission('tickets_read')) {
+    // modules_actifs?.tickets === false : widget de stats tickets sur le
+    // dashboard principal, hors de la page dédiée /dashboard/tickets — ne
+    // jamais appeler /tickets/stats pour un tenant qui a désactivé ce module.
+    if (user && hasPermission('tickets_read') && user.modules_actifs?.tickets !== false) {
       fetchTicketStats();
     }
   }, [user, hasPermission, fetchTicketStats]);
@@ -1057,7 +1064,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Row: Devis + Contrats + Top Clients */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${contratsModuleActive ? 'lg:grid-cols-3' : ''}`}>
         {/* Devis */}
         <SectionCard
           title="Devis"
@@ -1108,6 +1115,7 @@ export default function DashboardPage() {
         </SectionCard>
 
         {/* Contrats */}
+        {contratsModuleActive && (
         <SectionCard
           title="Contrats"
           icon={<div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center"><svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>}
@@ -1157,6 +1165,7 @@ export default function DashboardPage() {
             )}
           </div>
         </SectionCard>
+        )}
 
         {/* Top Clients */}
         <SectionCard
@@ -1204,8 +1213,18 @@ export default function DashboardPage() {
       </div>
 
       {/* Row: Parc Machines + Avoirs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/*
+        Note : data.parc provient de /api/dashboard/stats, un endpoint
+        agrégateur non couvert par requireModule('parc_machines') (ce
+        middleware ne s'applique qu'aux routes propres au module). On masque
+        donc la carte ici pour respecter "désactivé = invisible" côté UI,
+        mais la donnée elle-même continue de transiter dans la réponse JSON
+        du dashboard — un fix complet nécessiterait de faire sauter ce bloc
+        côté dashboard.service.js (backend, hors périmètre de cette étape).
+      */}
+      <div className={`grid grid-cols-1 gap-4 ${parcModuleActive ? 'md:grid-cols-2' : ''}`}>
         {/* Parc Machines */}
+        {parcModuleActive && (
         <SectionCard
           title="Parc Machines"
           icon={<div className="h-8 w-8 rounded-lg bg-cyan-50 flex items-center justify-center"><svg className="h-4 w-4 text-cyan-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M9.75 8.25h.008v.008H9.75V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>}
@@ -1254,12 +1273,15 @@ export default function DashboardPage() {
                 </p>
               </div>
             )}
-            <div className="pt-2 border-t border-gray-50 flex items-center justify-between">
-              <span className="text-[11px] text-gray-400">Produits au catalogue</span>
-              <span className="text-xs font-bold text-gray-700">{data.catalogue.produits_actifs}</span>
-            </div>
+            {catalogueModuleActive && (
+              <div className="pt-2 border-t border-gray-50 flex items-center justify-between">
+                <span className="text-[11px] text-gray-400">Produits au catalogue</span>
+                <span className="text-xs font-bold text-gray-700">{data.catalogue.produits_actifs}</span>
+              </div>
+            )}
           </div>
         </SectionCard>
+        )}
 
         {/* Synthèse financière */}
         <SectionCard
@@ -1267,17 +1289,19 @@ export default function DashboardPage() {
           icon={<div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center"><svg className="h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg></div>}
         >
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className={`grid gap-3 ${contratsModuleActive ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100/50">
                 <p className="text-[10px] text-emerald-600 font-medium mb-1">CA annuel</p>
                 <p className="text-lg font-bold text-emerald-700">{fmt(data.factures.ca_annuel)}</p>
                 <p className="text-[10px] text-emerald-500">{fmtNum(data.factures.nb_factures_annuel)} factures</p>
               </div>
-              <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-100/50">
-                <p className="text-[10px] text-blue-600 font-medium mb-1">CA récurrent</p>
-                <p className="text-lg font-bold text-blue-700">{fmt(data.contrats.ca_recurrent_mensuel)}</p>
-                <p className="text-[10px] text-blue-500">{data.contrats.total_actifs} contrats actifs</p>
-              </div>
+              {contratsModuleActive && (
+                <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-100/50">
+                  <p className="text-[10px] text-blue-600 font-medium mb-1">CA récurrent</p>
+                  <p className="text-lg font-bold text-blue-700">{fmt(data.contrats.ca_recurrent_mensuel)}</p>
+                  <p className="text-[10px] text-blue-500">{data.contrats.total_actifs} contrats actifs</p>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-100/50">
@@ -1323,11 +1347,11 @@ export default function DashboardPage() {
       </div>
 
       {/* Row: Factures récentes + Activité récente */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${journalModuleActive ? 'lg:grid-cols-3' : ''}`}>
         {/* Factures récentes */}
         <SectionCard
           title="Dernières factures"
-          className="lg:col-span-2"
+          className={journalModuleActive ? 'lg:col-span-2' : ''}
           icon={<div className="h-8 w-8 rounded-lg bg-amber-50 flex items-center justify-center"><svg className="h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>}
           href="/dashboard/factures"
         >
@@ -1390,6 +1414,7 @@ export default function DashboardPage() {
         </SectionCard>
 
         {/* Activité récente */}
+        {journalModuleActive && (
         <SectionCard
           title="Activité récente"
           icon={<div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center"><svg className="h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg></div>}
@@ -1430,6 +1455,7 @@ export default function DashboardPage() {
             </div>
           )}
         </SectionCard>
+        )}
       </div>
 
       {/* Actions rapides */}
@@ -1447,9 +1473,9 @@ export default function DashboardPage() {
             { label: 'Nouveau client', href: '/dashboard/clients/nouveau', icon: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z', color: 'text-blue-600 bg-blue-50 hover:bg-blue-100' },
             { label: 'Nouveau devis', href: '/dashboard/devis/nouveau', icon: 'M12 4.5v15m7.5-7.5h-15', color: 'text-violet-600 bg-violet-50 hover:bg-violet-100' },
             { label: 'Nouvelle facture', href: '/dashboard/factures/nouveau', icon: 'M12 4.5v15m7.5-7.5h-15', color: 'text-amber-600 bg-amber-50 hover:bg-amber-100' },
-            { label: 'Nouveau contrat', href: '/dashboard/contrats/nouveau', icon: 'M12 4.5v15m7.5-7.5h-15', color: 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' },
+            ...(contratsModuleActive ? [{ label: 'Nouveau contrat', href: '/dashboard/contrats/nouveau', icon: 'M12 4.5v15m7.5-7.5h-15', color: 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' }] : []),
             { label: 'Nouvelle machine', href: '/dashboard/parc-machines/nouveau', icon: 'M12 4.5v15m7.5-7.5h-15', color: 'text-cyan-600 bg-cyan-50 hover:bg-cyan-100' },
-            { label: 'Catalogue', href: '/dashboard/catalogue', icon: 'M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z', color: 'text-orange-600 bg-orange-50 hover:bg-orange-100' },
+            ...(catalogueModuleActive ? [{ label: 'Catalogue', href: '/dashboard/catalogue', icon: 'M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z', color: 'text-orange-600 bg-orange-50 hover:bg-orange-100' }] : []),
           ].map(action => (
             <Link
               key={action.href}

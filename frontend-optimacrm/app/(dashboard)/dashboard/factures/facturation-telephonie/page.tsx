@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth } from '@/lib/auth-context';
 import FacturesTypeListTab from '@/components/factures/FacturesTypeListTab';
 import GenerationAbonnementTab from '@/components/factures/GenerationAbonnementTab';
 
@@ -13,6 +14,11 @@ const CONFIG = {
 };
 
 export default function FacturationTelephoniePage() {
+  const { user } = useAuth();
+  // La génération d'abonnements dépend des contrats (backend gated par
+  // requireModule('contrats') sur /factures/contrats-abonnement-a-facturer
+  // et /factures/generer-abonnement) : sans ce module, seule la liste reste utile.
+  const contratsModuleActive = user?.modules_actifs?.contrats !== false;
   const [activeTab, setActiveTab] = useState<'liste' | 'generation'>('liste');
 
   return (
@@ -43,20 +49,22 @@ export default function FacturationTelephoniePage() {
             Factures
           </span>
         </button>
-        <button
-          onClick={() => setActiveTab('generation')}
-          className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'generation' ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-        >
-          <span className="flex items-center gap-2">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
-            Générer
-          </span>
-        </button>
+        {contratsModuleActive && (
+          <button
+            onClick={() => setActiveTab('generation')}
+            className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'generation' ? 'bg-amber-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+          >
+            <span className="flex items-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
+              Générer
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Content */}
       {activeTab === 'liste' && <FacturesTypeListTab typeContrat="Telephonie" />}
-      {activeTab === 'generation' && <GenerationAbonnementTab typeContrat="Telephonie" config={CONFIG} />}
+      {activeTab === 'generation' && contratsModuleActive && <GenerationAbonnementTab typeContrat="Telephonie" config={CONFIG} />}
     </div>
   );
 }

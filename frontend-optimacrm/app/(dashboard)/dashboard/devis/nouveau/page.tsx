@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import type {
   ApiResponse,
@@ -196,6 +197,10 @@ const DEVIS_DRAFT_KEY = 'optimacrm_devis_nouveau_draft';
 export default function NouveauDevisPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+  // Le sélecteur dégrade déjà proprement (403 → liste vide + saisie libre),
+  // mais on masque le bouton pour éviter un modal vide sans explication.
+  const catalogueModuleActive = user?.modules_actifs?.catalogue !== false;
 
   // --- État du devis ---
   const [dateEmission, setDateEmission] = useState(today());
@@ -1050,13 +1055,15 @@ export default function NouveauDevisPage() {
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 Ajouter une ligne
               </button>
-              <button
-                onClick={openCatalogue}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-white border border-gray-200 px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 hover:border-blue-200 shadow-sm transition cursor-pointer"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>
-                Depuis le catalogue
-              </button>
+              {catalogueModuleActive && (
+                <button
+                  onClick={openCatalogue}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-white border border-gray-200 px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 hover:border-blue-200 shadow-sm transition cursor-pointer"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>
+                  Depuis le catalogue
+                </button>
+              )}
               <button
                 onClick={() => addLigne('COMMENTAIRE')}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-white border border-gray-200 px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition cursor-pointer"

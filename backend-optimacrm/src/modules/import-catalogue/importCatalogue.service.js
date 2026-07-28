@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CATALOGUE_FIELD_GROUPS, getAllStandardFields } from '../../config/catalogueFieldSynonyms.js';
 import fs from 'fs/promises';
@@ -357,12 +357,10 @@ export async function validateData({ file_id, mappings, options = {} }) {
   }
 
   // Load lookups from DB
-  const [fournisseursRes, marquesRes, famillesRes, existingRefsRes] = await Promise.all([
-    query('SELECT id, LOWER(nom) as nom_lower, nom FROM fournisseurs WHERE actif = true'),
-    query('SELECT id, LOWER(nom) as nom_lower, nom FROM marques WHERE actif = true'),
-    query('SELECT id, LOWER(nom) as nom_lower, nom FROM familles_produits WHERE actif = true'),
-    query('SELECT reference FROM catalogue_produits'),
-  ]);
+  const fournisseursRes = await query('SELECT id, LOWER(nom) as nom_lower, nom FROM fournisseurs WHERE actif = true');
+  const marquesRes = await query('SELECT id, LOWER(nom) as nom_lower, nom FROM marques WHERE actif = true');
+  const famillesRes = await query('SELECT id, LOWER(nom) as nom_lower, nom FROM familles_produits WHERE actif = true');
+  const existingRefsRes = await query('SELECT reference FROM catalogue_produits');
 
   const fournisseurMap = new Map(fournisseursRes.rows.map(r => [r.nom_lower, r]));
   const marqueMap = new Map(marquesRes.rows.map(r => [r.nom_lower, r]));
@@ -636,10 +634,12 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
     update_existing = false,
   } = options;
 
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
 
     // Create missing fournisseurs
     const fournisseurIdMap = new Map();
@@ -831,7 +831,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
       ]
     );
 
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
 
     // Cleanup temp file
     await fs.unlink(tempPath).catch(() => {});
@@ -848,10 +848,10 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
       error_details: importErrors,
     };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 

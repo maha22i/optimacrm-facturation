@@ -2,7 +2,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './contrat.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 import { ALL_CATEGORIES } from '../../config/contratCategories.js';
 
@@ -14,6 +16,8 @@ const uploadMulti = multer({ storage: multer.memoryStorage(), limits: { fileSize
 ]);
 
 router.use(authenticate);
+router.use(requireModule('contrats'));
+router.use(tenantMiddleware);
 
 // ── Catégories de lignes par type ─────────────────────────────────────────
 router.get('/categories', ctrl.getCategories);

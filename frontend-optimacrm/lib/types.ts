@@ -11,7 +11,7 @@ export type PermissionKey =
   | 'tickets_read' | 'tickets_write' | 'tickets_admin' | 'techniciens_manage'
   | 'parametres_societe';
 
-export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien';
+export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien' | 'super_admin';
 
 export interface User {
   id: string;
@@ -21,6 +21,13 @@ export interface User {
   role: UserRole;
   is_active: boolean;
   permissions?: PermissionKey[];
+  /**
+   * Modules optionnels désactivés pour le tenant de cet utilisateur.
+   * Sémantique opt-out : une clé absente ou différente de `false` = module
+   * actif. Ne jamais tester `=== true`, toujours `!== false`. `null`/`undefined`
+   * pour un super_admin (pas de tenant).
+   */
+  modules_actifs?: Record<string, boolean> | null;
   created_at: string;
   updated_at: string;
 }
@@ -1668,4 +1675,43 @@ export interface TicketPlanifiable {
   client_nom: string | null;
   technicien_prenom: string | null;
   technicien_nom_famille: string | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Super-admin — Portail plateforme (multi-tenant)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type TenantStatut = 'actif' | 'suspendu' | 'inactif';
+
+export interface TenantStats {
+  users: number;
+  clients: number;
+  factures: number;
+}
+
+export interface Tenant {
+  id: string;
+  nom: string;
+  slug: string;
+  statut: TenantStatut;
+  modules_actifs: Record<string, boolean>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantWithStats extends Tenant {
+  stats: TenantStats;
+}
+
+export interface TenantUser {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: UserRole;
+  is_active: boolean;
+}
+
+export interface TenantDetail extends TenantWithStats {
+  users: TenantUser[];
 }

@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CLIENTS_FIELD_GROUPS, getAllClientStandardFields } from '../../config/clientsFieldSynonyms.js';
 import fs from 'fs/promises';
@@ -685,10 +685,12 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
 
   const { update_existing = false } = options;
 
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
 
     const customConfigRes = await client.query(
       "SELECT id, cle FROM champs_personnalises_config WHERE entite = 'CLIENT' AND actif = true"
@@ -920,7 +922,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
       ]
     );
 
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
 
     await fs.unlink(tempPath).catch(() => {});
 
@@ -935,10 +937,10 @@ export async function executeImport({ file_id, mappings, options = {}, user_id }
       error_details: importErrors,
     };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 
@@ -1104,9 +1106,11 @@ export async function retryImportRows({ rows, update_existing = false }) {
     throw ApiError.badRequest('Aucune ligne à réimporter');
   }
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const customConfigRes = await dbClient.query(
       "SELECT id, cle FROM champs_personnalises_config WHERE entite = 'CLIENT' AND actif = true"
@@ -1139,7 +1143,7 @@ export async function retryImportRows({ rows, update_existing = false }) {
       }
     }
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
 
     return {
       total: rows.length,
@@ -1150,10 +1154,10 @@ export async function retryImportRows({ rows, update_existing = false }) {
       results,
     };
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 

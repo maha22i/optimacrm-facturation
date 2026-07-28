@@ -74,8 +74,26 @@ export async function createUser(req, res, next) {
     if (req.user.role === 'admin_technique' && req.body.role !== 'technicien') {
       return next(ApiError.forbidden('Vous ne pouvez créer que des comptes technicien'));
     }
-    
-    const user = await authService.createUser(req.body);
+
+    // Le nouvel utilisateur est rattaché au tenant de l'admin qui le crée.
+    // Un super_admin (tenant_id NULL) n'a pas de tenant "par défaut" : il
+    // doit le préciser explicitement dans le body. On affinera ça avec le
+    // portail super-admin (sélection de tenant dédiée) ; pour l'instant,
+    // erreur claire si rien n'est fourni.
+    //
+    // Le spread `{ ...req.body, tenant_id }` écrase volontairement un
+    // éventuel tenant_id fourni par un admin normal dans le body : on force
+    // toujours son propre tenant, pour empêcher qu'un admin crée un compte
+    // dans un autre tenant en le passant simplement dans la requête.
+    let tenant_id = req.user.tenant_id;
+    if (!tenant_id) {
+      if (!req.body.tenant_id) {
+        return next(ApiError.badRequest('Un super_admin doit spécifier le tenant cible (tenant_id) pour créer un utilisateur'));
+      }
+      tenant_id = req.body.tenant_id;
+    }
+
+    const user = await authService.createUser({ ...req.body, tenant_id });
     try {
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),

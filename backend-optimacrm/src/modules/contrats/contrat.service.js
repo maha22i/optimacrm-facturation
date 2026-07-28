@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CONTRAT_CATEGORIES, getCategoriesForType } from '../../config/contratCategories.js';
 import { getValeurs as getChampsPersoValeurs, saveValeurs as saveChampsPersoValeurs } from '../champs-config/champsConfig.service.js';
@@ -105,28 +105,26 @@ export async function listContrats({ page = 1, limit = 20, type_contrat, statut,
 
   const where = `WHERE ${conditions.join(' AND ')}`;
 
-  const [contratsRes, countRes] = await Promise.all([
-    query(
-      `SELECT ${CONTRAT_FIELDS},
-        cl.raison_sociale AS client_raison_sociale,
-        cl.numero_client AS client_code,
-        (SELECT COALESCE(SUM(
-          CASE WHEN lg.actif THEN lg.quantite * lg.prix_unitaire_ht * (1 - lg.remise_pourcentage / 100) ELSE 0 END
-        ), 0) FROM contrat_lignes lg WHERE lg.contrat_id = c.id) AS montant_ht,
-        (SELECT string_agg(DISTINCT cm2.modele || ' (' || cm2.numero_serie || ')', ', ')
-         FROM contrat_machines cm2 WHERE cm2.contrat_id = c.id AND cm2.actif = true) AS machines_resume
-       FROM contrats c
-       JOIN clients cl ON cl.id = c.client_id
-       ${where}
-       ORDER BY c.created_at DESC
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset],
-    ),
-    query(
-      `SELECT COUNT(*)::int AS total FROM contrats c JOIN clients cl ON cl.id = c.client_id ${where}`,
-      params,
-    ),
-  ]);
+  const contratsRes = await query(
+    `SELECT ${CONTRAT_FIELDS},
+      cl.raison_sociale AS client_raison_sociale,
+      cl.numero_client AS client_code,
+      (SELECT COALESCE(SUM(
+        CASE WHEN lg.actif THEN lg.quantite * lg.prix_unitaire_ht * (1 - lg.remise_pourcentage / 100) ELSE 0 END
+      ), 0) FROM contrat_lignes lg WHERE lg.contrat_id = c.id) AS montant_ht,
+      (SELECT string_agg(DISTINCT cm2.modele || ' (' || cm2.numero_serie || ')', ', ')
+       FROM contrat_machines cm2 WHERE cm2.contrat_id = c.id AND cm2.actif = true) AS machines_resume
+     FROM contrats c
+     JOIN clients cl ON cl.id = c.client_id
+     ${where}
+     ORDER BY c.created_at DESC
+     LIMIT $${i} OFFSET $${i + 1}`,
+    [...params, limit, offset],
+  );
+  const countRes = await query(
+    `SELECT COUNT(*)::int AS total FROM contrats c JOIN clients cl ON cl.id = c.client_id ${where}`,
+    params,
+  );
 
   return {
     contrats: contratsRes.rows,
@@ -154,11 +152,9 @@ export async function getContratById(id) {
   );
   if (contratRes.rows.length === 0) throw ApiError.notFound('Contrat non trouvé');
 
-  const [lignesRes, machinesRes, champsPerso] = await Promise.all([
-    query('SELECT * FROM contrat_lignes WHERE contrat_id = $1 ORDER BY ordre, id', [id]),
-    query('SELECT * FROM contrat_machines WHERE contrat_id = $1 ORDER BY id', [id]),
-    getChampsPersoValeurs('CONTRAT', id).catch(() => []),
-  ]);
+  const lignesRes = await query('SELECT * FROM contrat_lignes WHERE contrat_id = $1 ORDER BY ordre, id', [id]);
+  const machinesRes = await query('SELECT * FROM contrat_machines WHERE contrat_id = $1 ORDER BY id', [id]);
+  const champsPerso = await getChampsPersoValeurs('CONTRAT', id).catch(() => []);
 
   return {
     ...contratRes.rows[0],
@@ -169,9 +165,11 @@ export async function getContratById(id) {
 }
 
 export async function createContrat(data) {
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
 
     const clientCheck = await client.query('SELECT id FROM clients WHERE id = $1', [data.client_id]);
     if (clientCheck.rows.length === 0) throw ApiError.badRequest('Client non trouvé');
@@ -287,7 +285,7 @@ export async function createContrat(data) {
       }
     }
 
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
 
     if (data.champs_personnalises && Object.keys(data.champs_personnalises).length > 0) {
       await saveChampsPersoValeurs('CONTRAT', contrat.id, data.champs_personnalises);
@@ -295,10 +293,10 @@ export async function createContrat(data) {
 
     return getContratById(contrat.id);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 
@@ -538,32 +536,30 @@ export async function getStats() {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const in3Months = new Date(now.getFullYear(), now.getMonth() + 3, now.getDate());
 
-  const [totalRes, parTypeRes, factureRes, echeanceRes, caRes] = await Promise.all([
-    query(`SELECT COUNT(*)::int AS total FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL`),
-    query(`
-      SELECT type_contrat, COUNT(*)::int AS count
-      FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL
-      GROUP BY type_contrat
-    `),
-    query(
-      `SELECT COUNT(*)::int AS total FROM contrats
-       WHERE statut = 'Actif' AND deleted_at IS NULL AND date_prochaine_facture <= $1`,
-      [endOfMonth.toISOString().split('T')[0]],
-    ),
-    query(
-      `SELECT COUNT(*)::int AS total FROM contrats
-       WHERE statut = 'Actif' AND deleted_at IS NULL AND date_echeance <= $1`,
-      [in3Months.toISOString().split('T')[0]],
-    ),
-    query(`
-      SELECT COALESCE(SUM(
-        CASE WHEN lg.actif THEN lg.quantite * lg.prix_unitaire_ht * (1 - lg.remise_pourcentage / 100) ELSE 0 END
-      ), 0) AS total_ht
-      FROM contrat_lignes lg
-      JOIN contrats c ON c.id = lg.contrat_id
-      WHERE c.statut = 'Actif' AND c.deleted_at IS NULL
-    `),
-  ]);
+  const totalRes = await query(`SELECT COUNT(*)::int AS total FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL`);
+  const parTypeRes = await query(`
+    SELECT type_contrat, COUNT(*)::int AS count
+    FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL
+    GROUP BY type_contrat
+  `);
+  const factureRes = await query(
+    `SELECT COUNT(*)::int AS total FROM contrats
+     WHERE statut = 'Actif' AND deleted_at IS NULL AND date_prochaine_facture <= $1`,
+    [endOfMonth.toISOString().split('T')[0]],
+  );
+  const echeanceRes = await query(
+    `SELECT COUNT(*)::int AS total FROM contrats
+     WHERE statut = 'Actif' AND deleted_at IS NULL AND date_echeance <= $1`,
+    [in3Months.toISOString().split('T')[0]],
+  );
+  const caRes = await query(`
+    SELECT COALESCE(SUM(
+      CASE WHEN lg.actif THEN lg.quantite * lg.prix_unitaire_ht * (1 - lg.remise_pourcentage / 100) ELSE 0 END
+    ), 0) AS total_ht
+    FROM contrat_lignes lg
+    JOIN contrats c ON c.id = lg.contrat_id
+    WHERE c.statut = 'Actif' AND c.deleted_at IS NULL
+  `);
 
   const par_type = { Copieur: 0, Telephonie: 0, Informatique: 0, Securite: 0 };
   for (const row of parTypeRes.rows) {
@@ -730,22 +726,24 @@ export async function getContratsForExport({ type_contrat, statut, search, inclu
 // ---------------------------------------------------------------------------
 
 export async function deleteAllContrats() {
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
     await client.query('DELETE FROM facture_lignes WHERE facture_id IN (SELECT id FROM factures WHERE contrat_id IS NOT NULL)');
     await client.query('DELETE FROM factures WHERE contrat_id IS NOT NULL');
     await client.query('DELETE FROM contrat_machines');
     await client.query('DELETE FROM contrat_lignes');
     await client.query("DELETE FROM champs_personnalises_valeurs WHERE config_id IN (SELECT id FROM champs_personnalises_config WHERE entite = 'CONTRAT')");
     const result = await client.query('DELETE FROM contrats RETURNING id');
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
     return { deletedCount: result.rowCount };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 

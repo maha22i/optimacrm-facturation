@@ -17,10 +17,10 @@ const FIELDS = `
 `;
 
 export async function getConfig() {
-  const result = await query(`SELECT ${FIELDS} FROM societe_config WHERE id = 1`);
+  const result = await query(`SELECT ${FIELDS} FROM societe_config LIMIT 1`);
   if (result.rows.length === 0) {
-    await query('INSERT INTO societe_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING');
-    const fresh = await query(`SELECT ${FIELDS} FROM societe_config WHERE id = 1`);
+    await query('INSERT INTO societe_config DEFAULT VALUES');
+    const fresh = await query(`SELECT ${FIELDS} FROM societe_config LIMIT 1`);
     return fresh.rows[0];
   }
   return result.rows[0];
@@ -59,7 +59,7 @@ export async function updateConfig(data, userId) {
   params.push(userId);
 
   const result = await query(
-    `UPDATE societe_config SET ${setClauses.join(', ')} WHERE id = 1 RETURNING ${FIELDS}`,
+    `UPDATE societe_config SET ${setClauses.join(', ')} RETURNING ${FIELDS}`,
     params,
   );
 
@@ -112,7 +112,7 @@ export async function uploadLogo(file) {
     throw ApiError.badRequest('Le fichier ne doit pas dépasser 2 Mo');
   }
 
-  const current = await query('SELECT logo_url FROM societe_config WHERE id = 1');
+  const current = await query('SELECT logo_url FROM societe_config LIMIT 1');
   await deleteOldLogo(current.rows[0]?.logo_url);
 
   const filename = `logo-${Date.now()}${ext}`;
@@ -131,12 +131,12 @@ export async function uploadLogo(file) {
     logoUrl = `/uploads/logos/${filename}`;
   }
 
-  await query('UPDATE societe_config SET logo_url = $1, updated_at = NOW() WHERE id = 1', [logoUrl]);
+  await query('UPDATE societe_config SET logo_url = $1, updated_at = NOW()', [logoUrl]);
   return { logo_url: logoUrl };
 }
 
 export async function deleteLogo() {
-  const current = await query('SELECT logo_url FROM societe_config WHERE id = 1');
+  const current = await query('SELECT logo_url FROM societe_config LIMIT 1');
   await deleteOldLogo(current.rows[0]?.logo_url);
-  await query('UPDATE societe_config SET logo_url = NULL, updated_at = NOW() WHERE id = 1');
+  await query('UPDATE societe_config SET logo_url = NULL, updated_at = NOW()');
 }

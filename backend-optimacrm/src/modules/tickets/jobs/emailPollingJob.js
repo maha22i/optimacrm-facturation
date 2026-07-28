@@ -1,5 +1,6 @@
 import cron from 'node-cron';
-import { fetchAndCreateTicketsAllTenants } from '../services/emailIngestService.js';
+import { pool, runWithTenantContext } from '../../../config/database.js';
+import { fetchAndCreateTickets } from '../services/emailIngestService.js';
 import { getEncryptionKey } from '../utils/cryptoImap.js';
 
 const LOG_PREFIX = '[EMAIL-INGEST]';
@@ -15,7 +16,28 @@ async function runPolling() {
   }
   isRunning = true;
   try {
-    await fetchAndCreateTicketsAllTenants();
+    // IS DISTINCT FROM 'false' (et pas != 'false') : sémantique opt-out —
+    // une clé "tickets" absente (modules_actifs->>'tickets' vaut NULL) doit
+    // rester éligible. != avec NULL renvoie NULL (donc exclu par le WHERE),
+    // ce qui casserait le polling pour tous les tenants à modules_actifs = {}.
+    const { rows: tenants } = await pool.query(
+      `SELECT id FROM tenants
+       WHERE statut = 'actif'
+         AND modules_actifs ->> 'tickets' IS DISTINCT FROM 'false'`,
+    );
+
+    for (const tenant of tenants) {
+      try {
+        const stats = await runWithTenantContext(tenant.id, () => fetchAndCreateTickets());
+        if (stats.created > 0 || stats.errors > 0) {
+          console.log(
+            `${LOG_PREFIX} Synchro tenant ${tenant.id} : ${stats.created} créé(s), ${stats.skipped} ignoré(s), ${stats.errors} erreur(s)`,
+          );
+        }
+      } catch (err) {
+        console.error(`${LOG_PREFIX} Erreur (tenant ${tenant.id}):`, err.message);
+      }
+    }
   } catch (err) {
     console.error(`${LOG_PREFIX} Erreur inattendue du job :`, err.message);
   } finally {
@@ -29,7 +51,6 @@ export function startEmailPollingJob() {
     return;
   }
 
-  // Fail fast : la clé de chiffrement doit être valide avant de démarrer
   getEncryptionKey();
 
   const expression = process.env.EMAIL_POLL_CRON || DEFAULT_CRON;

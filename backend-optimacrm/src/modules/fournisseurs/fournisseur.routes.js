@@ -1,11 +1,15 @@
 import { Router } from 'express';
 import * as ctrl from './fournisseur.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 
 const router = Router();
 router.use(authenticate);
+router.use(requireModule('catalogue'));
+router.use(tenantMiddleware);
 
 router.get('/', checkPermission('fournisseurs'), ctrl.list);
 router.get('/:id', checkPermission('fournisseurs'), ctrl.getById);

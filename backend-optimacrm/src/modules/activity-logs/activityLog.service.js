@@ -3,6 +3,18 @@ import { query } from '../../config/database.js';
 /**
  * Log une activité. Ne doit JAMAIS bloquer l'action appelante.
  * Toujours envelopper l'appel dans un try/catch côté appelant.
+ *
+ * @param {string|null} tenantId - À fournir UNIQUEMENT pour les actions
+ *   effectuées sans contexte tenant posé sur la connexion (super-admin,
+ *   cf. module super-admin). Dans ce cas, la colonne tenant_id est incluse
+ *   explicitement dans l'INSERT pour contourner son DEFAULT
+ *   (current_setting('app.current_tenant_id')::uuid, cf. migration 056) :
+ *   ce DEFAULT lève une erreur "unrecognized configuration parameter" sur
+ *   une connexion où aucun SET LOCAL n'a jamais été fait — exactement le
+ *   cas du super-admin (pas de tenantMiddleware). Pour tout appel normal
+ *   (dans le contexte d'un tenant), ne pas passer ce paramètre : le
+ *   comportement reste identique à avant (colonne omise, DEFAULT résolu
+ *   par le contexte de la requête).
  */
 export async function log({
   userId = null,
@@ -16,25 +28,21 @@ export async function log({
   details = {},
   statut = 'succes',
   ipAddress = null,
+  tenantId = null,
 }) {
   try {
+    const columns = ['user_id', 'user_nom', 'action', 'module', 'description', 'entity_type', 'entity_id', 'entity_label', 'details', 'statut', 'ip_address'];
+    const values = [userId, userNom, action, moduleName, description, entityType, entityId, entityLabel, JSON.stringify(details), statut, ipAddress];
+
+    if (tenantId) {
+      columns.push('tenant_id');
+      values.push(tenantId);
+    }
+
+    const placeholders = values.map((_, i) => `$${i + 1}`).join(',');
     await query(
-      `INSERT INTO activity_logs
-        (user_id, user_nom, action, module, description, entity_type, entity_id, entity_label, details, statut, ip_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        userId,
-        userNom,
-        action,
-        moduleName,
-        description,
-        entityType,
-        entityId,
-        entityLabel,
-        JSON.stringify(details),
-        statut,
-        ipAddress,
-      ],
+      `INSERT INTO activity_logs (${columns.join(', ')}) VALUES (${placeholders})`,
+      values,
     );
   } catch (err) {
     console.error('[ActivityLog] Échec écriture log :', err.message, '| Action:', action, '| Module:', moduleName, '| UserId:', userId);

@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import * as ctrl from './email.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 
 const router = Router();
 router.use(authenticate);
+router.use(tenantMiddleware);
 
 router.get('/config', checkPermission('parametres_societe'), ctrl.getConfig);
 router.put('/config', checkPermission('parametres_societe'), ctrl.updateConfig);

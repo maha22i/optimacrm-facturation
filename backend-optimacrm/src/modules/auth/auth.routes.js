@@ -3,6 +3,7 @@ import * as ctrl from './auth.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 
 const router = Router();
 
@@ -55,10 +56,26 @@ router.put(
 );
 
 // ── Admin & Admin Technique ─────────────────────────────────────────────────
+//
+// tenantMiddleware AJOUTÉ ici volontairement : ces routes gèrent la liste
+// d'utilisateurs d'un tenant (écran "Utilisateurs"). Sans ce middleware,
+// la policy RLS de `users` (069_rls_users) tombe systématiquement dans son
+// escape clause (aucun contexte posé) et renvoie TOUS les utilisateurs,
+// tous tenants confondus — exactement le problème signalé.
+//
+// Placé APRÈS `authenticate` (qui a besoin de charger req.user sans contexte,
+// cf. authenticate.js) et AVANT `authorize`/la validation, pour que le
+// contexte tenant soit actif pendant tout le traitement de la requête.
+//
+// Pour un super_admin (tenant_id NULL), tenantMiddleware fait next() sans
+// poser de contexte (cf. tenantMiddleware) : il continue donc de voir tous
+// les utilisateurs de tous les tenants via l'escape clause — comportement
+// voulu pour un rôle cross-tenant.
 
 router.post(
   '/users',
   authenticate,
+  tenantMiddleware,
   authorize('admin', 'admin_technique'),
   validate({
     email:      { required: true, type: 'email', label: 'Email' },
@@ -70,12 +87,13 @@ router.post(
   ctrl.createUser,
 );
 
-router.get('/users',     authenticate, authorize('admin', 'admin_technique'), ctrl.getAllUsers);
-router.get('/users/:id', authenticate, authorize('admin', 'admin_technique'), ctrl.getUserById);
+router.get('/users',     authenticate, tenantMiddleware, authorize('admin', 'admin_technique'), ctrl.getAllUsers);
+router.get('/users/:id', authenticate, tenantMiddleware, authorize('admin', 'admin_technique'), ctrl.getUserById);
 
 router.put(
   '/users/:id',
   authenticate,
+  tenantMiddleware,
   authorize('admin', 'admin_technique'),
   validate({
     first_name: { minLength: 2, maxLength: 100 },
@@ -87,9 +105,9 @@ router.put(
   ctrl.updateUser,
 );
 
-router.delete('/users/:id', authenticate, authorize('admin'), ctrl.deleteUser);
+router.delete('/users/:id', authenticate, tenantMiddleware, authorize('admin'), ctrl.deleteUser);
 
-router.post('/users/:id/reset-password-link', authenticate, authorize('admin', 'admin_technique'), ctrl.sendResetPasswordLink);
+router.post('/users/:id/reset-password-link', authenticate, tenantMiddleware, authorize('admin', 'admin_technique'), ctrl.sendResetPasswordLink);
 
 router.post(
   '/reset-password',

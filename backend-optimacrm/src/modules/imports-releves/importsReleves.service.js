@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 // ---------------------------------------------------------------------------
@@ -157,16 +157,14 @@ export async function getImportsStats() {
   const moisDebut = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
     .toISOString().slice(0, 10);
 
-  const [totalRes, moisRes, nonFacturesRes, annulesRes] = await Promise.all([
-    query(`SELECT COUNT(*) FROM imports_releves`),
-    query(`SELECT COUNT(*) FROM imports_releves WHERE date_import >= $1`, [moisDebut]),
-    query(
-      `SELECT COUNT(*) FROM releves_compteurs rc
-       JOIN imports_releves ir ON ir.id = rc.import_id
-       WHERE rc.import_id IS NOT NULL AND rc.est_facture = false AND ir.statut = 'Actif'`
-    ),
-    query(`SELECT COUNT(*) FROM imports_releves WHERE statut = 'Annule'`),
-  ]);
+  const totalRes = await query(`SELECT COUNT(*) FROM imports_releves`);
+  const moisRes = await query(`SELECT COUNT(*) FROM imports_releves WHERE date_import >= $1`, [moisDebut]);
+  const nonFacturesRes = await query(
+    `SELECT COUNT(*) FROM releves_compteurs rc
+     JOIN imports_releves ir ON ir.id = rc.import_id
+     WHERE rc.import_id IS NOT NULL AND rc.est_facture = false AND ir.statut = 'Actif'`
+  );
+  const annulesRes = await query(`SELECT COUNT(*) FROM imports_releves WHERE statut = 'Annule'`);
 
   return {
     total_imports: parseInt(totalRes.rows[0].count),
@@ -181,11 +179,14 @@ export async function getImportsStats() {
 // ---------------------------------------------------------------------------
 
 export async function annulerImport(importId, motif, userId) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
-    const { rows: [importRow] } = await client.query(
+  try {
+    if (ownConnection) await dbClient.query('BEGIN');
+
+    const { rows: [importRow] } = await dbClient.query(
       `SELECT * FROM imports_releves WHERE id = $1`, [importId]
     );
     if (!importRow) throw ApiError.notFound('Import introuvable');
@@ -194,7 +195,7 @@ export async function annulerImport(importId, motif, userId) {
       throw ApiError.badRequest('Cet import est déjà annulé');
     }
 
-    const { rows: [facCheck] } = await client.query(
+    const { rows: [facCheck] } = await dbClient.query(
       `SELECT COUNT(*)::int as nb, ARRAY_AGG(DISTINCT facture_numero) as factures
        FROM releves_compteurs WHERE import_id = $1 AND est_facture = true`,
       [importId]
@@ -209,11 +210,11 @@ export async function annulerImport(importId, motif, userId) {
       throw err;
     }
 
-    await client.query(
+    await dbClient.query(
       `DELETE FROM releves_compteurs WHERE import_id = $1`, [importId]
     );
 
-    const { rows: [updated] } = await client.query(
+    const { rows: [updated] } = await dbClient.query(
       `UPDATE imports_releves
        SET statut = 'Annule',
            date_annulation = NOW(),
@@ -225,13 +226,13 @@ export async function annulerImport(importId, motif, userId) {
       [importId, userId, motif]
     );
 
-    await client.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return updated;
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) dbClient.release();
   }
 }
 

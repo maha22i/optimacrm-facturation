@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './societe.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
 
@@ -9,6 +10,7 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 router.use(authenticate);
+router.use(tenantMiddleware);
 
 router.get('/', checkPermission('parametres_societe'), ctrl.getConfig);
 

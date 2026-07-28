@@ -37,7 +37,7 @@ export default function PrelevementsSepaPage() {
 
   // ── Créancier ───────────────────────────────────────────────────────────
   const [creancier, setCreancier] = useState<SepaCreancier | null>(null);
-  const [creancierForm, setCreancierForm] = useState({ nom: 'GROUPE INNOV', ics: '', iban: '', bic: '' });
+  const [creancierForm, setCreancierForm] = useState({ nom: '', ics: '', iban: '', bic: '' });
   const [creancierSaving, setCreancierSaving] = useState(false);
 
   // ── Factures éligibles ──────────────────────────────────────────────────
@@ -66,6 +66,9 @@ export default function PrelevementsSepaPage() {
       if (res.data) {
         setCreancier(res.data);
         setCreancierForm({ nom: res.data.nom, ics: res.data.ics, iban: res.data.iban, bic: res.data.bic });
+      } else {
+        setCreancier(null);
+        setCreancierForm({ nom: '', ics: '', iban: '', bic: '' });
       }
     } catch { /* noop */ }
   }, []);
@@ -413,7 +416,7 @@ export default function PrelevementsSepaPage() {
                 value={creancierForm.nom}
                 onChange={e => setCreancierForm(f => ({ ...f, nom: e.target.value }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                placeholder="GROUPE INNOV"
+                placeholder="Netlink solutions"
               />
             </div>
             <div>

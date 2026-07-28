@@ -14,7 +14,7 @@ const CONNECT_TIMEOUT_MS = 30000;
 // ---------------------------------------------------------------------------
 
 export async function getEmailConfig() {
-  const result = await query('SELECT * FROM tenant_email_config WHERE id = 1');
+  const result = await query('SELECT * FROM tenant_email_config LIMIT 1');
   return result.rows[0] || null;
 }
 
@@ -179,7 +179,7 @@ export async function fetchAndCreateTickets() {
       lock.release();
     }
 
-    await query('UPDATE tenant_email_config SET derniere_synchro = NOW(), updated_at = NOW() WHERE id = 1');
+    await query('UPDATE tenant_email_config SET derniere_synchro = NOW(), updated_at = NOW()');
   } finally {
     try {
       await client.logout();

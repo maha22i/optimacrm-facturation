@@ -2,7 +2,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './importCatalogue.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -11,6 +13,8 @@ const upload = multer({
 
 const router = Router();
 router.use(authenticate);
+router.use(requireModule('catalogue'));
+router.use(tenantMiddleware);
 router.use(checkPermission('catalogue_import'));
 
 router.post('/parse', upload.single('file'), ctrl.parse);

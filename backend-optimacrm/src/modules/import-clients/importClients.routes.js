@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './importClients.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 
 const upload = multer({
@@ -11,6 +12,7 @@ const upload = multer({
 
 const router = Router();
 router.use(authenticate);
+router.use(tenantMiddleware);
 router.use(checkPermission('clients_import'));
 
 router.post('/parse', upload.single('file'), ctrl.parse);

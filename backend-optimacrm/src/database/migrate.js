@@ -81,6 +81,68 @@ async function loadMigrations() {
   migrations.push(m41);
   const m42 = await import('./migrations/042_add_terme_facturation.js');
   migrations.push(m42);
+  const m43 = await import('./migrations/043_create_tenants.js');
+  migrations.push(m43);
+  const m44 = await import('./migrations/044_add_super_admin_role.js');
+  migrations.push(m44);
+  const m45 = await import('./migrations/045_add_tenant_id_to_users.js');
+  migrations.push(m45);
+  const m46 = await import('./migrations/046_add_tenant_id_transverse.js');
+  migrations.push(m46);
+  const m47 = await import('./migrations/047_add_tenant_id_referentiels_catalogue.js');
+  migrations.push(m47);
+  const m48 = await import('./migrations/048_add_tenant_id_clients.js');
+  migrations.push(m48);
+  const m49 = await import('./migrations/049_add_tenant_id_devis.js');
+  migrations.push(m49);
+  const m50 = await import('./migrations/050_add_tenant_id_contrats.js');
+  migrations.push(m50);
+  const m51 = await import('./migrations/051_add_tenant_id_parc_releves.js');
+  migrations.push(m51);
+  const m52 = await import('./migrations/052_add_tenant_id_factures_avoirs.js');
+  migrations.push(m52);
+  const m53 = await import('./migrations/053_add_tenant_id_sepa.js');
+  migrations.push(m53);
+  const m54 = await import('./migrations/054_add_tenant_id_tickets.js');
+  migrations.push(m54);
+  const m55 = await import('./migrations/055_users_tenant_id_check.js');
+  migrations.push(m55);
+  const m56 = await import('./migrations/056_add_tenant_id_defaults.js');
+  migrations.push(m56);
+  const m57 = await import('./migrations/057_rls_marques.js');
+  migrations.push(m57);
+  const m58 = await import('./migrations/058_rls_referentiels.js');
+  migrations.push(m58);
+  const m59 = await import('./migrations/059_rls_catalogue.js');
+  migrations.push(m59);
+  const m60 = await import('./migrations/060_rls_clients.js');
+  migrations.push(m60);
+  const m61 = await import('./migrations/061_rls_devis.js');
+  migrations.push(m61);
+  const m62 = await import('./migrations/062_rls_contrats.js');
+  migrations.push(m62);
+  const m63 = await import('./migrations/063_rls_parc.js');
+  migrations.push(m63);
+  const m64 = await import('./migrations/064_rls_factures.js');
+  migrations.push(m64);
+  const m65 = await import('./migrations/065_rls_sepa.js');
+  migrations.push(m65);
+  const m66 = await import('./migrations/066_rls_tickets.js');
+  migrations.push(m66);
+  const m67 = await import('./migrations/067_rls_transverse.js');
+  migrations.push(m67);
+  const m68 = await import('./migrations/068_fix_rls_policies_nullif.js');
+  migrations.push(m68);
+  const m69 = await import('./migrations/069_rls_users.js');
+  migrations.push(m69);
+  const m70 = await import('./migrations/070_multitenant_sepa_creancier.js');
+  migrations.push(m70);
+  const m71 = await import('./migrations/071_multitenant_tenant_email_config.js');
+  migrations.push(m71);
+  const m72 = await import('./migrations/072_multitenant_email_config.js');
+  migrations.push(m72);
+  const m73 = await import('./migrations/073_multitenant_societe_config.js');
+  migrations.push(m73);
 }
 
 async function ensureMigrationsTable(client) {
@@ -120,4 +182,23 @@ export async function runMigrations() {
   } finally {
     client.release();
   }
+}
+
+// Permet de lancer les migrations manuellement via `npm run migrate`
+// (node src/database/migrate.js), sans effet lorsque ce fichier est
+// simplement importé par server.js.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runMigrations()
+    .then(() => {
+      console.log('✓ All migrations applied');
+      return pool.end();
+    })
+    .then(() => {
+      process.exit(0);
+    })
+    .catch(async (error) => {
+      console.error('✗ Migration run failed:', error.message);
+      await pool.end();
+      process.exit(1);
+    });
 }

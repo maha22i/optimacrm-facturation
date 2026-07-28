@@ -1,5 +1,5 @@
 import XLSX from 'xlsx';
-import { pool } from '../../config/database.js';
+import { pool, getClient } from '../../config/database.js';
 import { calculerMontantsLigne, recalculerDevis } from './devis.service.js';
 
 const COLUMN_MAP = {
@@ -199,7 +199,9 @@ export function parseDevisFile(buffer, originalName) {
 
 export async function executeDevisImport(rows, options = {}) {
   const { updateExisting = true, linkClients = true } = options;
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
   const results = { imported: 0, updated: 0, errors: [] };
 
@@ -214,7 +216,7 @@ export async function executeDevisImport(rows, options = {}) {
   }
 
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     for (const row of rows) {
       try {
@@ -317,12 +319,12 @@ export async function executeDevisImport(rows, options = {}) {
       }
     }
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 
   return results;

@@ -55,9 +55,9 @@ export async function upsertConfig(data) {
   }
 
   await query(
-    `INSERT INTO tenant_email_config (id, imap_host, imap_port, imap_user, imap_password_encrypted, imap_tls, folder, actif, updated_at)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO tenant_email_config (imap_host, imap_port, imap_user, imap_password_encrypted, imap_tls, folder, actif, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     ON CONFLICT (tenant_id) DO UPDATE SET
        imap_host = EXCLUDED.imap_host,
        imap_port = EXCLUDED.imap_port,
        imap_user = EXCLUDED.imap_user,

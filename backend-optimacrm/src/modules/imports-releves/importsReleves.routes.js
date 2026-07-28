@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import * as ctrl from './importsReleves.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 
 const router = Router();
 router.use(authenticate);
+router.use(requireModule('parc_machines'));
+router.use(tenantMiddleware);
 
 router.get('/stats', checkPermission('parc_read'), ctrl.getImportsStats);
 router.get('/', checkPermission('parc_read'), ctrl.listImports);

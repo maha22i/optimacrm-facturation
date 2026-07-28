@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { bucket, isFirebaseReady } from '../../config/firebase.js';
 import fs from 'fs/promises';
@@ -74,21 +74,19 @@ export async function listProduits({ page = 1, limit = 20, categorie, search, ac
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const [prodRes, countRes] = await Promise.all([
-    query(
-      `SELECT ${LIST_FIELDS},
-              f.nom AS fournisseur_nom,
-              m.nom AS marque_nom
-       FROM catalogue_produits p
-       LEFT JOIN fournisseurs f ON f.id = p.fournisseur_id
-       LEFT JOIN marques m ON m.id = p.marque_id
-       ${where}
-       ORDER BY p.categorie, p.designation
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset]
-    ),
-    query(`SELECT COUNT(*)::int AS total FROM catalogue_produits p LEFT JOIN marques m ON m.id = p.marque_id ${where}`, params),
-  ]);
+  const prodRes = await query(
+    `SELECT ${LIST_FIELDS},
+            f.nom AS fournisseur_nom,
+            m.nom AS marque_nom
+     FROM catalogue_produits p
+     LEFT JOIN fournisseurs f ON f.id = p.fournisseur_id
+     LEFT JOIN marques m ON m.id = p.marque_id
+     ${where}
+     ORDER BY p.categorie, p.designation
+     LIMIT $${i} OFFSET $${i + 1}`,
+    [...params, limit, offset]
+  );
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM catalogue_produits p LEFT JOIN marques m ON m.id = p.marque_id ${where}`, params);
 
   return {
     produits: prodRes.rows,
@@ -166,11 +164,14 @@ export async function createProduit(data) {
   const prix_revient = computePrixRevient(data);
   const prix_public = computePrixPublic(data);
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
-    const prodResult = await client.query(
+  try {
+    if (ownConnection) await dbClient.query('BEGIN');
+
+    const prodResult = await dbClient.query(
       `INSERT INTO catalogue_produits (
         reference, designation, description, categorie, unite,
         prix_unitaire_ht, taux_tva, type_document,
@@ -215,20 +216,20 @@ export async function createProduit(data) {
     const produitId = prodResult.rows[0].id;
 
     if (data.categorie && DETAIL_TABLES[data.categorie] && data.details) {
-      await upsertDetails(client, produitId, data.categorie, data.details);
+      await upsertDetails(dbClient, produitId, data.categorie, data.details);
     }
 
     if (data.comptabilite) {
-      await upsertComptabilite(client, produitId, data.comptabilite);
+      await upsertComptabilite(dbClient, produitId, data.comptabilite);
     }
 
-    await client.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getProduitById(produitId);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -246,9 +247,12 @@ export async function updateProduit(id, data) {
   const prix_revient = computePrixRevient(data);
   const prix_public = computePrixPublic(data);
 
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
+
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const allowedFields = [
       'reference', 'designation', 'description', 'categorie', 'unite',
@@ -280,7 +284,7 @@ export async function updateProduit(id, data) {
     sets.push('updated_at = NOW()');
     vals.push(id);
 
-    await client.query(
+    await dbClient.query(
       `UPDATE catalogue_produits SET ${sets.join(', ')} WHERE id = $${i}`,
       vals
     );
@@ -289,24 +293,24 @@ export async function updateProduit(id, data) {
     const newCat = data.categorie !== undefined ? data.categorie : oldCat;
 
     if (oldCat && oldCat !== newCat && DETAIL_TABLES[oldCat]) {
-      await client.query(`DELETE FROM ${DETAIL_TABLES[oldCat]} WHERE produit_id = $1`, [id]);
+      await dbClient.query(`DELETE FROM ${DETAIL_TABLES[oldCat]} WHERE produit_id = $1`, [id]);
     }
 
     if (newCat && DETAIL_TABLES[newCat] && data.details) {
-      await upsertDetails(client, id, newCat, data.details);
+      await upsertDetails(dbClient, id, newCat, data.details);
     }
 
     if (data.comptabilite) {
-      await upsertComptabilite(client, id, data.comptabilite);
+      await upsertComptabilite(dbClient, id, data.comptabilite);
     }
 
-    await client.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getProduitById(id);
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -325,21 +329,24 @@ export async function deleteProduit(id) {
 // ── DELETE ALL ──────────────────────────────────────────────────────────────────
 
 export async function deleteAllProduits() {
-  const conn = await pool.connect();
+  const alsClient = getClient();
+  const conn = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
+
   try {
-    await conn.query('BEGIN');
+    if (ownConnection) await conn.query('BEGIN');
     await conn.query('UPDATE devis_lignes SET catalogue_id = NULL');
     await conn.query('UPDATE contrat_lignes SET catalogue_produit_id = NULL');
     await conn.query('UPDATE contrat_machines SET catalogue_produit_id = NULL');
     // CASCADE supprime : détails catégorie, tarifs clients, comptabilité
     const result = await conn.query('DELETE FROM catalogue_produits RETURNING id');
-    await conn.query('COMMIT');
+    if (ownConnection) await conn.query('COMMIT');
     return { deletedCount: result.rowCount };
   } catch (err) {
-    await conn.query('ROLLBACK');
+    if (ownConnection) await conn.query('ROLLBACK');
     throw err;
   } finally {
-    conn.release();
+    if (ownConnection) conn.release();
   }
 }
 

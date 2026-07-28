@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { validateIBAN, validateBIC, validateMandatClient, formatAmount } from './sepa.validators.js';
 import { generateSepaXml } from './sepa.xmlGenerator.js';
@@ -167,9 +167,12 @@ export async function genererRemiseSepa({ facture_ids, date_prelevement, user })
   }
 
   // Générer le XML
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
+
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     // Créer la remise
     const msgId = `OPTIMACRM-${Date.now()}`;
@@ -210,7 +213,7 @@ export async function genererRemiseSepa({ facture_ids, date_prelevement, user })
       [xml, remise.id]
     );
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
 
     return {
       remise_id: remise.id,
@@ -222,10 +225,10 @@ export async function genererRemiseSepa({ facture_ids, date_prelevement, user })
       xml,
     };
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 

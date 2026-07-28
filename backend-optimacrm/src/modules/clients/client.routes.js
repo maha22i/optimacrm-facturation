@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './client.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
 
@@ -13,6 +14,7 @@ const uploadDoc = multer({
 const router = Router();
 
 router.use(authenticate);
+router.use(tenantMiddleware);
 
 // ── Clients ────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 // ---------------------------------------------------------------------------
@@ -208,9 +208,11 @@ export async function getAvoirsPossibles(factureId) {
 // ---------------------------------------------------------------------------
 
 export async function createAvoir(data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [facture] } = await dbClient.query(
       'SELECT * FROM factures WHERE id = $1', [data.facture_id]
@@ -289,13 +291,13 @@ export async function createAvoir(data, userId) {
       );
     }
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getAvoirById(avoir.id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -304,9 +306,11 @@ export async function createAvoir(data, userId) {
 // ---------------------------------------------------------------------------
 
 export async function updateAvoir(id, data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [avoir] } = await dbClient.query('SELECT * FROM avoirs WHERE id = $1', [id]);
     if (!avoir) throw new ApiError(404, 'Avoir introuvable');
@@ -359,13 +363,13 @@ export async function updateAvoir(id, data, userId) {
       );
     }
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getAvoirById(id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -387,9 +391,11 @@ export async function validerAvoir(id, userId) {
 // ---------------------------------------------------------------------------
 
 export async function utiliserAvoir(id, data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [avoir] } = await dbClient.query('SELECT * FROM avoirs WHERE id = $1', [id]);
     if (!avoir) throw new ApiError(404, 'Avoir introuvable');
@@ -455,13 +461,13 @@ export async function utiliserAvoir(id, data, userId) {
       throw new ApiError(400, 'mode doit être REMBOURSEMENT ou IMPUTATION');
     }
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getAvoirById(id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 

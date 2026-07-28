@@ -1,12 +1,16 @@
 import { Router } from 'express';
 import * as ctrl from './parcMachine.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 
 const router = Router();
 
 router.use(authenticate);
+router.use(requireModule('parc_machines'));
+router.use(tenantMiddleware);
 
 // ── Stats ─────────────────────────────────────────────────────────────────
 router.get('/stats', checkPermission('parc_read'), ctrl.getStats);

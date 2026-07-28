@@ -2,13 +2,17 @@ import { Router } from 'express';
 import * as ctrl from './ticket.controller.js';
 import * as emailConfigCtrl from './emailConfig.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { authorize } from '../../middleware/authorize.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
 
 const router = Router();
 
 router.use(authenticate);
+router.use(requireModule('tickets'));
+router.use(tenantMiddleware);
 
 // ── Stats (avant /:id pour éviter conflit) ──────────────────────────────────
 router.get('/stats', checkPermission('tickets_read'), ctrl.getStats);

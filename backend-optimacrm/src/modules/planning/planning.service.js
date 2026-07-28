@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { toDateStr } from '../../utils/dateUtils.js';
 
@@ -175,9 +175,11 @@ export async function createCreneau(data, currentUser) {
   }
   if (!technicienId) throw ApiError.badRequest('technicien_id est requis');
 
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
 
     const ticketRes = await client.query(
       'SELECT * FROM tickets WHERE id = $1 FOR UPDATE',
@@ -247,15 +249,15 @@ export async function createCreneau(data, currentUser) {
       [ticket.id, technicienId, debut.toISOString(), fin.toISOString(), currentUser.id, data.notes || null],
     );
 
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
 
     const creneau = await getCreneauById(creneauRes.rows[0].id);
     return { creneau, autoAssigne, ticket };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 

@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ABONNEMENT_TYPES } from '../../config/contratCategories.js';
 import { toDateStr, addMonthsUTC as addMonths, subDayUTC as subDay } from '../../utils/dateUtils.js';
@@ -152,10 +152,12 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
   }
 
   const dateFact = dateFacturation || new Date().toISOString().slice(0, 10);
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
 
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const rapport = {
       factures_creees: 0,
@@ -426,14 +428,14 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
     rapport.montant_total_ht = Math.round(rapport.montant_total_ht * 100) / 100;
     rapport.montant_total_ttc = Math.round(rapport.montant_total_ttc * 100) / 100;
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return rapport;
 
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 

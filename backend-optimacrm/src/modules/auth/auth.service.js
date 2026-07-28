@@ -43,7 +43,19 @@ export async function register({ email, password, first_name, last_name }) {
 }
 
 export async function login(email, password) {
-  const result = await query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+  // LEFT JOIN (pas INNER) : tenant_id est NULL pour un super_admin — même
+  // raisonnement que authenticate.js. tenant_statut vaut NULL pour lui, ce
+  // qui désactive naturellement le contrôle de suspension ci-dessous.
+  // modules_actifs n'est pas aliasé : `users` n'a pas de colonne de ce nom,
+  // donc pas de collision avec le `u.*` — le champ atterrit directement
+  // dans safeUser sous la clé attendue par le frontend (User.modules_actifs).
+  const result = await query(
+    `SELECT u.*, t.statut AS tenant_statut, t.modules_actifs
+     FROM users u
+     LEFT JOIN tenants t ON t.id = u.tenant_id
+     WHERE u.email = $1`,
+    [email.toLowerCase()],
+  );
   if (result.rows.length === 0) {
     throw ApiError.unauthorized('Invalid credentials');
   }
@@ -59,6 +71,19 @@ export async function login(email, password) {
     throw ApiError.unauthorized('Invalid credentials');
   }
 
+  // Avant login() ce contrôle n'existait qu'au niveau de authenticate.js :
+  // la connexion réussissait (token émis) puis le tout premier appel
+  // authentifié suivant échouait en 403. Corrigé ici pour ne jamais émettre
+  // de token/cookie pour un compte dont le tenant est suspendu.
+  //
+  // Message EXACT identique à authenticate.js ('Compte suspendu') : c'est le
+  // contrat de détection utilisé par le frontend (lib/api.ts) pour déclencher
+  // l'écran de suspension dédié — ne jamais faire diverger ce texte entre les
+  // deux emplacements.
+  if (user.tenant_id && user.tenant_statut === 'suspendu') {
+    throw ApiError.forbidden('Compte suspendu');
+  }
+
   const permResult = await query(
     'SELECT permission FROM user_permissions WHERE user_id = $1',
     [user.id],
@@ -66,6 +91,7 @@ export async function login(email, password) {
 
   const token = generateToken(user.id, user.role);
   const safeUser = omitPassword(user);
+  delete safeUser.tenant_statut; // champ de jointure, pas une colonne de `users`
   safeUser.permissions = permResult.rows.map(r => r.permission);
   return { user: safeUser, token };
 }
@@ -75,8 +101,17 @@ export async function login(email, password) {
 // ---------------------------------------------------------------------------
 
 export async function getProfile(userId) {
+  // LEFT JOIN tenants pour exposer modules_actifs (filtrage de menu côté
+  // frontend) — NULL pour un super_admin (tenant_id NULL), sans incidence.
   const [userResult, permResult] = await Promise.all([
-    query(`SELECT ${USER_FIELDS} FROM users WHERE id = $1`, [userId]),
+    query(
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.is_active,
+              u.created_at, u.updated_at, t.modules_actifs
+       FROM users u
+       LEFT JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = $1`,
+      [userId],
+    ),
     query('SELECT permission FROM user_permissions WHERE user_id = $1', [userId]),
   ]);
   if (userResult.rows.length === 0) throw ApiError.notFound('User not found');
@@ -130,19 +165,28 @@ export async function changePassword(userId, oldPassword, newPassword) {
 // Admin — user management
 // ---------------------------------------------------------------------------
 
-export async function createUser({ email, password, first_name, last_name, role = 'user' }) {
+export async function createUser({ email, password, first_name, last_name, role = 'user', tenant_id }) {
   const existing = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
   if (existing.rows.length > 0) {
     throw ApiError.conflict('Email already registered');
   }
 
+  // Cohérence avec la contrainte users_tenant_id_required_check
+  // (role = 'super_admin' OR tenant_id IS NOT NULL) : on refuse ici plutôt
+  // que de laisser Postgres renvoyer une erreur de contrainte opaque.
+  // Défensif : le controller impose déjà cette règle côté acteur (req.user),
+  // mais createUser() peut être appelé depuis d'autres call sites futurs.
+  if (role !== 'super_admin' && !tenant_id) {
+    throw ApiError.badRequest('tenant_id est requis pour créer un utilisateur non super_admin');
+  }
+
   const hashed = await bcrypt.hash(password, SALT_ROUNDS);
 
   const result = await query(
-    `INSERT INTO users (email, password, first_name, last_name, role)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO users (email, password, first_name, last_name, role, tenant_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING ${USER_FIELDS}`,
-    [email.toLowerCase(), hashed, first_name, last_name, role],
+    [email.toLowerCase(), hashed, first_name, last_name, role, tenant_id ?? null],
   );
 
   const newUser = result.rows[0];
@@ -183,10 +227,8 @@ export async function getAllUsers(page = 1, limit = 20, roleFilter = null) {
     params.push(roleFilter);
   }
 
-  const [usersRes, countRes] = await Promise.all([
-    query(`SELECT ${USER_FIELDS} FROM users ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`, params),
-    query(`SELECT COUNT(*)::int AS total FROM users ${countWhereClause}`, roleFilter ? [roleFilter] : []),
-  ]);
+  const usersRes = await query(`SELECT ${USER_FIELDS} FROM users ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`, params);
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM users ${countWhereClause}`, roleFilter ? [roleFilter] : []);
 
   return {
     users: usersRes.rows,

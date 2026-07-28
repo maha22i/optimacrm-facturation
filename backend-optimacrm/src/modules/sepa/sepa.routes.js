@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import * as ctrl from './sepa.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
+import { requireModule } from '../../middleware/requireModule.js';
 
 const router = Router();
 router.use(authenticate);
+router.use(requireModule('sepa'));
+router.use(tenantMiddleware);
 
 // ── Créancier ─────────────────────────────────────────────────────────────────
 router.get('/creancier', checkPermission('factures_read'), ctrl.getCreancier);

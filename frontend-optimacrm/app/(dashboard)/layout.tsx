@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import SuspendedScreen from '@/components/SuspendedScreen';
 
 import type { PermissionKey, ApiResponse, TicketStats, UserRole } from '@/lib/types';
 
@@ -14,6 +15,8 @@ interface NavChild {
   label: string;
   href: string;
   requiredPermission?: PermissionKey;
+  /** Clé de module optionnel (tickets, sepa, parc_machines, contrats, catalogue, champs_perso, journal) — voir moduleAllowed(). */
+  moduleKey?: string;
 }
 
 interface NavItem {
@@ -23,6 +26,14 @@ interface NavItem {
   icon: React.ReactNode;
   children?: NavChild[];
   requiredPermission?: PermissionKey;
+  /** Clé de module optionnel (tickets, sepa, parc_machines, contrats, catalogue, champs_perso, journal) — voir moduleAllowed(). */
+  moduleKey?: string;
+}
+
+// Sémantique opt-out : une clé absente ou différente de `false` = module
+// actif (cf. lib/types.ts#User.modules_actifs). Ne jamais tester `=== true`.
+function moduleAllowed(moduleKey: string | undefined, modulesActifs: Record<string, boolean> | null | undefined): boolean {
+  return !moduleKey || modulesActifs?.[moduleKey] !== false;
 }
 
 const MENU_KEYS_BY_ROLE: Record<UserRole, string[] | null> = {
@@ -30,6 +41,11 @@ const MENU_KEYS_BY_ROLE: Record<UserRole, string[] | null> = {
   user: null,
   admin_technique: ['dashboard', 'tickets', 'planning', 'users', 'parametres'],
   technicien: ['tickets', 'planning'],
+  // super_admin n'a jamais de menu ici : il est immédiatement redirigé vers
+  // /super-admin (cf. useEffect ci-dessous) — ce dashboard est structurellement
+  // pensé pour un tenant (sidebar métier, useSociete(), permissions liées à
+  // un tenant), un super_admin (tenant_id NULL) n'y a rien à faire.
+  super_admin: [],
 };
 
 const ALLOWED_PATHS_BY_ROLE: Record<UserRole, RegExp[] | null> = {
@@ -41,10 +57,51 @@ const ALLOWED_PATHS_BY_ROLE: Record<UserRole, RegExp[] | null> = {
     /^\/dashboard\/planning(\/|$)/,
     /^\/dashboard\/clients\/\d+(\/|$)/,
   ],
+  // Tableau vide (pas null) : aucun chemin de ce groupe de routes n'est
+  // autorisé pour un super_admin, quel que soit le pathname → déclenche
+  // systématiquement la redirection vers getRedirectForRole() ci-dessous.
+  super_admin: [],
+};
+
+// Blocage de l'accès direct par URL à un module désactivé (le filtrage du
+// menu ne suffit pas : rien n'empêche de taper l'URL directement, ou de
+// suivre un lien favori/partagé). Une seule entrée par module — pas besoin
+// de coller 1:1 aux entrées de menu, seulement aux préfixes de route.
+const MODULE_PATH_PATTERNS: Record<string, RegExp[]> = {
+  tickets: [
+    /^\/dashboard\/tickets(\/|$)/,
+    /^\/dashboard\/planning(\/|$)/,
+  ],
+  sepa: [
+    /^\/dashboard\/factures\/prelevements-sepa(\/|$)/,
+  ],
+  parc_machines: [
+    /^\/dashboard\/parc-machines(\/|$)/,
+  ],
+  contrats: [
+    /^\/dashboard\/contrats(\/|$)/,
+    // Page orpheline (non liée dans le menu) mais entièrement dépendante de
+    // la facturation récurrente par contrat — accessible par URL directe.
+    /^\/dashboard\/factures\/facturation-abonnement(\/|$)/,
+  ],
+  catalogue: [
+    /^\/dashboard\/catalogue(\/|$)/,
+  ],
+  champs_perso: [
+    /^\/dashboard\/champs-personnalises(\/|$)/,
+    // Gestion des templates de champs devis (CRUD) — cf. requireModule('champs_perso')
+    // côté backend, la lecture des templates reste ouverte pour le formulaire
+    // devis lui-même, seule cette page d'admin est concernée.
+    /^\/dashboard\/devis\/champs-devis(\/|$)/,
+  ],
+  journal: [
+    /^\/dashboard\/journal(\/|$)/,
+  ],
 };
 
 function getRedirectForRole(role: UserRole): string {
   if (role === 'technicien') return '/dashboard/tickets';
+  if (role === 'super_admin') return '/super-admin';
   return '/dashboard';
 }
 
@@ -65,6 +122,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Journal',
     href: '/dashboard/journal',
     requiredPermission: 'activity_logs',
+    moduleKey: 'journal',
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -76,13 +134,14 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Tickets',
     href: '/dashboard/tickets',
     requiredPermission: 'tickets_read',
+    moduleKey: 'tickets',
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
       </svg>
     ),
     children: [
-      { label: 'Réglages', href: '/dashboard/tickets/reglages', requiredPermission: 'tickets_admin' },
+      { label: 'Réglages', href: '/dashboard/tickets/reglages', requiredPermission: 'tickets_admin', moduleKey: 'tickets' },
     ],
   },
   {
@@ -90,6 +149,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Planning',
     href: '/dashboard/planning',
     requiredPermission: 'tickets_read',
+    moduleKey: 'tickets', // Planning fait partie du module "tickets" (menu Tickets & Planning)
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z" />
@@ -121,7 +181,7 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
     children: [
-      { label: 'Champs devis', href: '/dashboard/devis/champs-devis', requiredPermission: 'champs_templates' },
+      { label: 'Champs devis', href: '/dashboard/devis/champs-devis', requiredPermission: 'champs_templates', moduleKey: 'champs_perso' },
     ],
   },
   {
@@ -140,7 +200,7 @@ const NAV_ITEMS: NavItem[] = [
       { label: 'Fact. téléphonie', href: '/dashboard/factures/facturation-telephonie', requiredPermission: 'factures_read' },
       { label: 'Fact. informatique', href: '/dashboard/factures/facturation-informatique', requiredPermission: 'factures_read' },
       { label: 'Avoirs', href: '/dashboard/factures/avoirs', requiredPermission: 'factures_read' },
-      { label: 'Prélèvements SEPA', href: '/dashboard/factures/prelevements-sepa', requiredPermission: 'factures_write' },
+      { label: 'Prélèvements SEPA', href: '/dashboard/factures/prelevements-sepa', requiredPermission: 'factures_write', moduleKey: 'sepa' },
     ],
   },
   {
@@ -148,6 +208,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Contrats',
     href: '/dashboard/contrats',
     requiredPermission: 'contrats_read',
+    moduleKey: 'contrats',
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
@@ -155,9 +216,9 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
     children: [
-      { label: 'Importer (Capasoft)', href: '/dashboard/contrats/import', requiredPermission: 'contrats_import' },
-      { label: 'Import Téléphonie', href: '/dashboard/contrats/import-telephonie', requiredPermission: 'contrats_write' },
-      { label: 'Import Informatique', href: '/dashboard/contrats/import-informatique', requiredPermission: 'contrats_write' },
+      { label: 'Importer (Capasoft)', href: '/dashboard/contrats/import', requiredPermission: 'contrats_import', moduleKey: 'contrats' },
+      { label: 'Import Téléphonie', href: '/dashboard/contrats/import-telephonie', requiredPermission: 'contrats_write', moduleKey: 'contrats' },
+      { label: 'Import Informatique', href: '/dashboard/contrats/import-informatique', requiredPermission: 'contrats_write', moduleKey: 'contrats' },
     ],
   },
   {
@@ -165,14 +226,15 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Parc Machine',
     href: '/dashboard/parc-machines',
     requiredPermission: 'parc_read',
+    moduleKey: 'parc_machines',
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M9.75 8.25h.008v.008H9.75V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
       </svg>
     ),
     children: [
-      { label: 'Importer relevés', href: '/dashboard/parc-machines/import-releves', requiredPermission: 'parc_import' },
-      { label: 'Historique imports', href: '/dashboard/parc-machines/imports', requiredPermission: 'parc_read' },
+      { label: 'Importer relevés', href: '/dashboard/parc-machines/import-releves', requiredPermission: 'parc_import', moduleKey: 'parc_machines' },
+      { label: 'Historique imports', href: '/dashboard/parc-machines/imports', requiredPermission: 'parc_read', moduleKey: 'parc_machines' },
     ],
   },
   {
@@ -180,16 +242,17 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Catalogue',
     href: '/dashboard/catalogue',
     requiredPermission: 'catalogue_read',
+    moduleKey: 'catalogue',
     icon: (
       <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
       </svg>
     ),
     children: [
-      { label: 'Importer', href: '/dashboard/catalogue/import', requiredPermission: 'catalogue_import' },
-      { label: 'Fournisseurs', href: '/dashboard/catalogue/fournisseurs', requiredPermission: 'fournisseurs' },
-      { label: 'Marques', href: '/dashboard/catalogue/marques', requiredPermission: 'marques' },
-      { label: 'Familles & Unités', href: '/dashboard/catalogue/familles-unites', requiredPermission: 'familles_unites' },
+      { label: 'Importer', href: '/dashboard/catalogue/import', requiredPermission: 'catalogue_import', moduleKey: 'catalogue' },
+      { label: 'Fournisseurs', href: '/dashboard/catalogue/fournisseurs', requiredPermission: 'fournisseurs', moduleKey: 'catalogue' },
+      { label: 'Marques', href: '/dashboard/catalogue/marques', requiredPermission: 'marques', moduleKey: 'catalogue' },
+      { label: 'Familles & Unités', href: '/dashboard/catalogue/familles-unites', requiredPermission: 'familles_unites', moduleKey: 'catalogue' },
     ],
   },
 ];
@@ -199,6 +262,7 @@ const CHAMPS_PERSO_NAV: NavItem = {
   label: 'Champs perso',
   href: '/dashboard/champs-personnalises',
   requiredPermission: 'champs_personnalises',
+  moduleKey: 'champs_perso',
   icon: (
     <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" />
@@ -250,7 +314,7 @@ function hexToRgb(hex: string): string {
 }
 
 function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout, hasPermission } = useAuth();
+  const { user, isLoading, logout, hasPermission, tenantSuspended } = useAuth();
   const { config: societeConfig } = useSociete();
   const router = useRouter();
   const pathname = usePathname();
@@ -269,7 +333,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!user || !hasPermission('tickets_read')) return;
+    // modules_actifs?.tickets === false : ne jamais démarrer le polling pour
+    // un tenant qui a désactivé les tickets — sinon on recrée exactement le
+    // problème de boucle de 403 rencontré avec la suspension de tenant.
+    if (!user || !hasPermission('tickets_read') || user.modules_actifs?.tickets === false) return;
     fetchTicketsBadge();
     const interval = setInterval(fetchTicketsBadge, 60000);
     return () => clearInterval(interval);
@@ -277,12 +344,28 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!user) { router.push('/login'); return; }
+    if (!user) {
+      // Un tenant suspendu peut ne jamais avoir de `user` chargé (le tout
+      // premier /auth/profile a pu échouer en 403 dès un reload) : dans ce
+      // cas on reste sur place pour laisser le rendu afficher l'écran dédié
+      // au lieu de rediriger vers /login.
+      if (!tenantSuspended) router.push('/login');
+      return;
+    }
 
     const allowedPaths = ALLOWED_PATHS_BY_ROLE[user.role as UserRole];
     if (allowedPaths && !allowedPaths.some(re => re.test(pathname))) {
       router.replace(getRedirectForRole(user.role as UserRole));
       return;
+    }
+
+    // Blocage de l'accès direct par URL à un module désactivé pour ce
+    // tenant — "désactivé = invisible", pas seulement absent du menu.
+    for (const [moduleKey, patterns] of Object.entries(MODULE_PATH_PATTERNS)) {
+      if (user.modules_actifs?.[moduleKey] === false && patterns.some(re => re.test(pathname))) {
+        router.replace('/dashboard');
+        return;
+      }
     }
 
     if (pathname === '/dashboard') {
@@ -302,7 +385,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         }
       }
     }
-  }, [user, isLoading, router, pathname, hasPermission]);
+  }, [user, isLoading, router, pathname, hasPermission, tenantSuspended]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -332,6 +415,11 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // Avant le check `!user` : un tenant suspendu peut ne jamais avoir eu de
+  // `user` chargé (cf. useEffect ci-dessus) — l'écran dédié doit s'afficher
+  // dans les deux cas, sans dépendre de la présence de `user`.
+  if (tenantSuspended) return <SuspendedScreen />;
+
   if (!user) return null;
 
   const primaryColor = societeConfig?.couleur_principale || '#3b82f6';
@@ -345,12 +433,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const allNav: NavItem[] = rawNav
     .filter((item) => {
       if (allowedKeys && item.key && !allowedKeys.includes(item.key)) return false;
+      if (!moduleAllowed(item.moduleKey, user.modules_actifs)) return false;
       return !item.requiredPermission || hasPermission(item.requiredPermission);
     })
     .map((item) => ({
       ...item,
       children: item.children?.filter(
-        (child) => !child.requiredPermission || hasPermission(child.requiredPermission),
+        (child) =>
+          moduleAllowed(child.moduleKey, user.modules_actifs) &&
+          (!child.requiredPermission || hasPermission(child.requiredPermission)),
       ),
     }));
 

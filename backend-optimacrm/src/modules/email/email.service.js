@@ -5,17 +5,17 @@ import { ApiError } from '../../utils/ApiError.js';
 // ── Config CRUD ──────────────────────────────────────────────────────────────
 
 export async function getEmailConfig() {
-  const result = await query('SELECT * FROM email_config WHERE id = 1');
+  const result = await query('SELECT * FROM email_config LIMIT 1');
   if (result.rows.length === 0) {
-    await query('INSERT INTO email_config (id) VALUES (1) ON CONFLICT DO NOTHING');
-    const fresh = await query('SELECT * FROM email_config WHERE id = 1');
+    await query('INSERT INTO email_config DEFAULT VALUES');
+    const fresh = await query('SELECT * FROM email_config LIMIT 1');
     return sanitizeConfig(fresh.rows[0]);
   }
   return sanitizeConfig(result.rows[0]);
 }
 
 export async function getEmailConfigRaw() {
-  const result = await query('SELECT * FROM email_config WHERE id = 1');
+  const result = await query('SELECT * FROM email_config LIMIT 1');
   return result.rows[0] || null;
 }
 
@@ -63,7 +63,7 @@ export async function updateEmailConfig(data) {
   setClauses.push('updated_at = NOW()');
 
   const result = await query(
-    `UPDATE email_config SET ${setClauses.join(', ')} WHERE id = 1 RETURNING *`,
+    `UPDATE email_config SET ${setClauses.join(', ')} RETURNING *`,
     params,
   );
 
@@ -83,12 +83,12 @@ export async function verifySmtpConnection() {
   try {
     await transporter.verify();
     await query(
-      'UPDATE email_config SET est_configure = true, derniere_verification = NOW(), updated_at = NOW() WHERE id = 1'
+      'UPDATE email_config SET est_configure = true, derniere_verification = NOW(), updated_at = NOW()'
     );
     return { success: true, message: 'Connexion SMTP vérifiée avec succès' };
   } catch (err) {
     await query(
-      'UPDATE email_config SET est_configure = false, updated_at = NOW() WHERE id = 1'
+      'UPDATE email_config SET est_configure = false, updated_at = NOW()'
     );
     throw ApiError.badRequest(`Échec de connexion SMTP : ${err.message}`);
   }
@@ -298,7 +298,7 @@ function renderTemplate(template, vars) {
 }
 
 async function getSocieteNom() {
-  const societe = await query('SELECT raison_sociale FROM societe_config WHERE id = 1');
+  const societe = await query('SELECT raison_sociale FROM societe_config LIMIT 1');
   return societe.rows[0]?.raison_sociale || '';
 }
 
@@ -462,7 +462,7 @@ export async function sendDevisSignatureConfirmationEmail({ devis, destinataire,
 
 export async function getRenderedTemplate(facture) {
   const config = await getEmailConfigRaw();
-  const societe = await query('SELECT * FROM societe_config WHERE id = 1');
+  const societe = await query('SELECT * FROM societe_config LIMIT 1');
   const s = societe.rows[0] || {};
 
   const sujetTemplate = config?.template_facture_sujet || 'Votre facture {{numero}} - {{societe}}';
@@ -490,7 +490,7 @@ export async function getRenderedTemplate(facture) {
 
 export async function getRenderedDevisTemplate(devis) {
   const config = await getEmailConfigRaw();
-  const societe = await query('SELECT * FROM societe_config WHERE id = 1');
+  const societe = await query('SELECT * FROM societe_config LIMIT 1');
   const s = societe.rows[0] || {};
 
   const sujetTemplate = config?.template_devis_sujet || 'Votre devis {{numero}} - {{societe}}';

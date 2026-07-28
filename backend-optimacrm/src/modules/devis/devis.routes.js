@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './devis.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
+import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { validate } from '../../middleware/validate.js';
 import { generateDevisPdf } from './pdf.service.js';
@@ -9,6 +10,7 @@ import { generateDevisPdf } from './pdf.service.js';
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const router = Router();
 router.use(authenticate);
+router.use(tenantMiddleware);
 
 const STATUT_ENUM = ['BROUILLON', 'ENVOYE', 'ACCEPTE', 'REFUSE', 'EXPIRE', 'FACTURE'];
 const CONDITIONS_ENUM = ['COMPTANT', '15_JOURS', '30_JOURS', '45_JOURS_FIN_MOIS', '60_JOURS'];

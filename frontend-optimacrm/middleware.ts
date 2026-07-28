@@ -10,7 +10,7 @@ export function middleware(request: NextRequest) {
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/register');
   const token = request.cookies.get('token')?.value;
 
-  if (pathname.startsWith('/dashboard') && !token) {
+  if ((pathname.startsWith('/dashboard') || pathname.startsWith('/super-admin')) && !token) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 

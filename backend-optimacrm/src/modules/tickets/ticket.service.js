@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 // ---------------------------------------------------------------------------
@@ -173,26 +173,24 @@ export async function listTickets({
   const safeSort = allowedSorts.includes(sort_by) ? `t.${sort_by}` : 't.created_at';
   const safeOrder = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-  const [ticketsRes, countRes] = await Promise.all([
-    query(
-      `SELECT t.*,
-              c.raison_sociale AS client_nom,
-              c.numero_client,
-              cat.nom AS categorie_nom,
-              cat.couleur AS categorie_couleur,
-              tech.first_name AS technicien_prenom,
-              tech.last_name AS technicien_nom_famille
-       FROM tickets t
-       LEFT JOIN clients c ON c.id = t.client_id
-       LEFT JOIN ticket_categories cat ON cat.id = t.categorie_id
-       LEFT JOIN users tech ON tech.id = t.technicien_id
-       ${where}
-       ORDER BY ${safeSort} ${safeOrder}
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset],
-    ),
-    query(`SELECT COUNT(*)::int AS total FROM tickets t ${where}`, params),
-  ]);
+  const ticketsRes = await query(
+    `SELECT t.*,
+            c.raison_sociale AS client_nom,
+            c.numero_client,
+            cat.nom AS categorie_nom,
+            cat.couleur AS categorie_couleur,
+            tech.first_name AS technicien_prenom,
+            tech.last_name AS technicien_nom_famille
+     FROM tickets t
+     LEFT JOIN clients c ON c.id = t.client_id
+     LEFT JOIN ticket_categories cat ON cat.id = t.categorie_id
+     LEFT JOIN users tech ON tech.id = t.technicien_id
+     ${where}
+     ORDER BY ${safeSort} ${safeOrder}
+     LIMIT $${i} OFFSET $${i + 1}`,
+    [...params, limit, offset],
+  );
+  const countRes = await query(`SELECT COUNT(*)::int AS total FROM tickets t ${where}`, params);
 
   const tickets = ticketsRes.rows.map(t => ({ ...t, sla: checkSla(t) }));
 
@@ -242,16 +240,14 @@ export async function getTicketById(id, currentUser = null) {
     }
   }
 
-  const [commentairesRes, historiqueRes] = await Promise.all([
-    query(
-      `SELECT * FROM ticket_commentaires WHERE ticket_id = $1 ORDER BY created_at ASC`,
-      [id],
-    ),
-    query(
-      `SELECT * FROM ticket_historique_statuts WHERE ticket_id = $1 ORDER BY created_at ASC`,
-      [id],
-    ),
-  ]);
+  const commentairesRes = await query(
+    `SELECT * FROM ticket_commentaires WHERE ticket_id = $1 ORDER BY created_at ASC`,
+    [id],
+  );
+  const historiqueRes = await query(
+    `SELECT * FROM ticket_historique_statuts WHERE ticket_id = $1 ORDER BY created_at ASC`,
+    [id],
+  );
 
   return {
     ...ticket,
@@ -344,9 +340,15 @@ export async function createTicketFromEmail({
   const now = new Date();
   const sla = await computeSlaDeadlines(priorite, now);
 
-  const dbClient = await pool.connect();
+  // Si un client ALS existe (runWithTenantContext ou middleware HTTP),
+  // on le réutilise — sa transaction et son SET LOCAL sont déjà actifs.
+  // Sinon, on ouvre notre propre connexion + transaction (fallback défensif).
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
+
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const result = await dbClient.query(
       `INSERT INTO tickets (
@@ -378,13 +380,13 @@ export async function createTicketFromEmail({
       [ticket.id],
     );
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return ticket;
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -732,55 +734,44 @@ export async function getStats(currentUser = null, { date_debut, date_fin } = {}
   const techJoinFilter = conditions.length ? `WHERE ${conditions.map(c => `t.${c}`).join(' AND ')}` : '';
   const catJoinAnd = conditions.length ? conditions.map(c => `AND t.${c}`).join(' ') : '';
 
-  const [
-    totalRes,
-    parStatutRes,
-    parPrioriteRes,
-    slaDepasseRes,
-    tempsResolutionRes,
-    tempsPriseEnChargeRes,
-    parTechnicienRes,
-    parCategorieRes,
-  ] = await Promise.all([
-    query(`SELECT COUNT(*)::int AS total FROM tickets ${where}`, params),
-    query(`SELECT statut, COUNT(*)::int AS count FROM tickets ${where} GROUP BY statut`, params),
-    query(`SELECT priorite, COUNT(*)::int AS count FROM tickets ${where} GROUP BY priorite`, params),
-    query(`
-      SELECT COUNT(*)::int AS count FROM tickets
-      WHERE (
-        (sla_prise_en_charge_echeance IS NOT NULL AND date_prise_en_charge IS NULL AND sla_prise_en_charge_echeance < NOW())
-        OR
-        (sla_resolution_echeance IS NOT NULL AND date_resolution IS NULL AND sla_resolution_echeance < NOW())
-      ) AND statut != 'resolu'
-      ${andClauses}
-    `, params),
-    query(`
-      SELECT AVG(EXTRACT(EPOCH FROM (date_resolution - created_at)) / 3600)::numeric(10,1) AS heures
-      FROM tickets WHERE date_resolution IS NOT NULL ${andClauses}
-    `, params),
-    query(`
-      SELECT AVG(EXTRACT(EPOCH FROM (date_prise_en_charge - created_at)) / 3600)::numeric(10,1) AS heures
-      FROM tickets WHERE date_prise_en_charge IS NOT NULL ${andClauses}
-    `, params),
-    query(`
-      SELECT u.id, CONCAT(u.first_name, ' ', u.last_name) AS nom,
-             COUNT(*) FILTER (WHERE t.statut != 'resolu')::int AS ouverts,
-             COUNT(*) FILTER (WHERE t.statut = 'resolu' AND t.date_resolution >= date_trunc('month', CURRENT_DATE))::int AS resolus_ce_mois
-      FROM tickets t
-      JOIN users u ON u.id = t.technicien_id
-      ${techJoinFilter}
-      GROUP BY u.id, u.first_name, u.last_name
-      ORDER BY ouverts DESC
-    `, params),
-    query(`
-      SELECT cat.id, cat.nom, cat.couleur, COUNT(t.id)::int AS count
-      FROM ticket_categories cat
-      LEFT JOIN tickets t ON t.categorie_id = cat.id ${catJoinAnd}
-      WHERE cat.actif = true
-      GROUP BY cat.id, cat.nom, cat.couleur
-      ORDER BY count DESC
-    `, params),
-  ]);
+  const totalRes = await query(`SELECT COUNT(*)::int AS total FROM tickets ${where}`, params);
+  const parStatutRes = await query(`SELECT statut, COUNT(*)::int AS count FROM tickets ${where} GROUP BY statut`, params);
+  const parPrioriteRes = await query(`SELECT priorite, COUNT(*)::int AS count FROM tickets ${where} GROUP BY priorite`, params);
+  const slaDepasseRes = await query(`
+    SELECT COUNT(*)::int AS count FROM tickets
+    WHERE (
+      (sla_prise_en_charge_echeance IS NOT NULL AND date_prise_en_charge IS NULL AND sla_prise_en_charge_echeance < NOW())
+      OR
+      (sla_resolution_echeance IS NOT NULL AND date_resolution IS NULL AND sla_resolution_echeance < NOW())
+    ) AND statut != 'resolu'
+    ${andClauses}
+  `, params);
+  const tempsResolutionRes = await query(`
+    SELECT AVG(EXTRACT(EPOCH FROM (date_resolution - created_at)) / 3600)::numeric(10,1) AS heures
+    FROM tickets WHERE date_resolution IS NOT NULL ${andClauses}
+  `, params);
+  const tempsPriseEnChargeRes = await query(`
+    SELECT AVG(EXTRACT(EPOCH FROM (date_prise_en_charge - created_at)) / 3600)::numeric(10,1) AS heures
+    FROM tickets WHERE date_prise_en_charge IS NOT NULL ${andClauses}
+  `, params);
+  const parTechnicienRes = await query(`
+    SELECT u.id, CONCAT(u.first_name, ' ', u.last_name) AS nom,
+           COUNT(*) FILTER (WHERE t.statut != 'resolu')::int AS ouverts,
+           COUNT(*) FILTER (WHERE t.statut = 'resolu' AND t.date_resolution >= date_trunc('month', CURRENT_DATE))::int AS resolus_ce_mois
+    FROM tickets t
+    JOIN users u ON u.id = t.technicien_id
+    ${techJoinFilter}
+    GROUP BY u.id, u.first_name, u.last_name
+    ORDER BY ouverts DESC
+  `, params);
+  const parCategorieRes = await query(`
+    SELECT cat.id, cat.nom, cat.couleur, COUNT(t.id)::int AS count
+    FROM ticket_categories cat
+    LEFT JOIN tickets t ON t.categorie_id = cat.id ${catJoinAnd}
+    WHERE cat.actif = true
+    GROUP BY cat.id, cat.nom, cat.couleur
+    ORDER BY count DESC
+  `, params);
 
   const par_statut = {};
   for (const r of parStatutRes.rows) par_statut[r.statut] = r.count;

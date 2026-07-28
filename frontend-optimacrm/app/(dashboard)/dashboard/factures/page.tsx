@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { Facture, FactureStats, ContratAFacturer, PaginatedResponse, ApiResponse, StatutFacture, TypeOrigineFacture, GenerationLotResult, GenerationLotErreur, ImportReleve, EmailTemplate } from '@/lib/types';
 
 const STATUT_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -328,6 +329,16 @@ function LotResultDisplay({ lotResult, router, setShowLotModal }: {
 
 export default function FacturesListPage() {
   const router = useRouter();
+  const { user } = useAuth();
+  // Onglet "Imports récents" : appelle /imports-releves (module parc_machines)
+  // depuis la page Factures (module socle) — hors de la page dédiée
+  // /dashboard/parc-machines/imports. Ne jamais l'afficher ni l'interroger
+  // pour un tenant qui a désactivé ce module.
+  const parcModuleActive = user?.modules_actifs?.parc_machines !== false;
+  // Bouton "Générer par période" : génération en lot des factures copieur
+  // depuis les contrats actifs, appelle /factures/contrats-a-facturer
+  // (gated par requireModule('contrats')). Sans ce module, plus de sens.
+  const contratsModuleActive = user?.modules_actifs?.contrats !== false;
   const [factures, setFactures] = useState<Facture[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [stats, setStats] = useState<FactureStats | null>(null);
@@ -498,6 +509,7 @@ export default function FacturesListPage() {
   };
 
   const loadRecentImports = useCallback(async () => {
+    if (!parcModuleActive) return;
     setImportsLoading(true);
     try {
       const res = await api.get<ApiResponse<{ imports: ImportReleve[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>>('/imports-releves?limit=10&page=1');
@@ -507,7 +519,7 @@ export default function FacturesListPage() {
     } finally {
       setImportsLoading(false);
     }
-  }, []);
+  }, [parcModuleActive]);
 
   useEffect(() => { setSelectedIds([]); setAllIdsSelected(false); }, [factures]);
 
@@ -700,13 +712,15 @@ export default function FacturesListPage() {
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" /></svg>
             Facturation téléphonie
           </button>
-          <button
-            onClick={openLotModal}
-            className="inline-flex items-center gap-2 rounded-xl border-2 border-orange-300 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100 transition cursor-pointer"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
-            Générer par période
-          </button>
+          {contratsModuleActive && (
+            <button
+              onClick={openLotModal}
+              className="inline-flex items-center gap-2 rounded-xl border-2 border-orange-300 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100 transition cursor-pointer"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
+              Générer par période
+            </button>
+          )}
           <button
             onClick={() => router.push('/dashboard/factures/nouveau')}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:from-blue-700 hover:to-indigo-700 transition-all cursor-pointer"
@@ -747,12 +761,14 @@ export default function FacturesListPage() {
         >
           Factures
         </button>
-        <button
-          onClick={() => { setActiveTab('imports'); loadRecentImports(); }}
-          className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'imports' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-        >
-          Imports récents
-        </button>
+        {parcModuleActive && (
+          <button
+            onClick={() => { setActiveTab('imports'); loadRecentImports(); }}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'imports' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+          >
+            Imports récents
+          </button>
+        )}
       </div>
 
       {activeTab === 'factures' && (<>

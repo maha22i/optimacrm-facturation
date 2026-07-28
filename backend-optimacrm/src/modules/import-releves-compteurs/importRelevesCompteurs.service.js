@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -587,7 +587,9 @@ export async function executeImport(lignes, periode = {}, fileMeta = {}, user = 
 
   if (toImport.length === 0) throw ApiError.badRequest('Aucune ligne valide à importer');
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   let imported = 0, ignoredCount = 0, errorCount = 0;
   const errorDetails = [];
   const rapportErreurs = [];
@@ -597,7 +599,7 @@ export async function executeImport(lignes, periode = {}, fileMeta = {}, user = 
   let importRecordId = null;
 
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     // Generate batch number IMP-YYYY-NNNN
     const year = new Date().getFullYear();
@@ -723,12 +725,12 @@ export async function executeImport(lignes, periode = {}, fileMeta = {}, user = 
       ],
     );
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 
   return {

@@ -1,4 +1,4 @@
-import { pool, query } from '../../config/database.js';
+import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CONTRATS_FIELD_GROUPS, getAllContratFields, RUBRIQUE_FIELD_TO_CATEGORIE } from '../../config/contratsFieldSynonyms.js';
 import { getCategoriesForType } from '../../config/contratCategories.js';
@@ -916,7 +916,9 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
     throw ApiError.badRequest('Aucune ligne valide à importer');
   }
 
-  const client = await pool.connect();
+  const alsClient = getClient();
+  const client = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   let contratsCreated = 0;
   let contratsUpdated = 0;
   let machinesCreated = 0;
@@ -926,7 +928,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
   const createdContratsMap = new Map();
 
   try {
-    await client.query('BEGIN');
+    if (ownConnection) await client.query('BEGIN');
 
     const customConfigRes = await client.query(
       "SELECT id, cle FROM champs_personnalises_config WHERE entite = 'CONTRAT' AND actif = true"
@@ -1179,7 +1181,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
       ]
     );
 
-    await client.query('COMMIT');
+    if (ownConnection) await client.query('COMMIT');
     await fs.unlink(tempPath).catch(() => {});
 
     return {
@@ -1198,10 +1200,10 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
       error_details: importErrors,
     };
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownConnection) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownConnection) client.release();
   }
 }
 

@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import type { ApiResponse, ContratAFacturer, GenerationLotResult, GenerationLotErreur } from '@/lib/types';
 import FacturesTypeListTab from '@/components/factures/FacturesTypeListTab';
@@ -422,6 +423,11 @@ function GenerationCopieurTab() {
 }
 
 export default function FacturesCopieurPage() {
+  const { user } = useAuth();
+  // La génération en lot dépend des contrats copieur (backend gated par
+  // requireModule('contrats') sur /factures/contrats-a-facturer) : sans ce
+  // module, l'onglet "Générer" n'a plus de sens, seule la liste reste utile.
+  const contratsModuleActive = user?.modules_actifs?.contrats !== false;
   const [activeTab, setActiveTab] = useState<'liste' | 'generation'>('liste');
 
   return (
@@ -452,20 +458,22 @@ export default function FacturesCopieurPage() {
             Factures
           </span>
         </button>
-        <button
-          onClick={() => setActiveTab('generation')}
-          className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'generation' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-        >
-          <span className="flex items-center gap-2">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
-            Générer
-          </span>
-        </button>
+        {contratsModuleActive && (
+          <button
+            onClick={() => setActiveTab('generation')}
+            className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition cursor-pointer ${activeTab === 'generation' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+          >
+            <span className="flex items-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
+              Générer
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Content */}
       {activeTab === 'liste' && <FacturesTypeListTab typeContrat="Copieur" />}
-      {activeTab === 'generation' && <GenerationCopieurTab />}
+      {activeTab === 'generation' && contratsModuleActive && <GenerationCopieurTab />}
     </div>
   );
 }

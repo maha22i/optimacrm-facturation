@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
 import { api, ApiError } from '@/lib/api';
 import type {
   ContratDetail, ContratLigne, ContratMachine, Client,
@@ -112,6 +113,11 @@ function formatMoney(n: number) {
 export default function ContratForm({ contratId }: { contratId?: number }) {
   const router = useRouter();
   const isEdit = !!contratId;
+  const { user } = useAuth();
+  // Le champ de recherche dégrade déjà proprement (403 → aucun résultat),
+  // mais on le masque quand le catalogue est désactivé pour éviter une
+  // recherche qui ne renverra jamais rien sans explication.
+  const catalogueModuleActive = user?.modules_actifs?.catalogue !== false;
 
   const [form, setForm] = useState<ContratFormData>({ ...EMPTY_FORM });
   const [lignes, setLignes] = useState<LigneLocal[]>([]);
@@ -415,12 +421,18 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
     if (!form.client_id) e.client_id = 'Veuillez sélectionner un client';
     if (!form.date_debut) e.date_debut = 'Requis';
     if (lignes.length === 0) e.lignes = 'Ajoutez au moins une ligne';
+    if (Object.keys(e).length > 0) {
+      e._global = 'Veuillez corriger les champs en erreur ci-dessous avant de créer le contrat : ' + Object.values(e).join(' • ');
+    }
     setErrors(e);
-    return Object.keys(e).length === 0;
+    return Object.keys(e).filter(k => k !== '_global').length === 0;
   };
 
   const handleSubmit = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -1204,6 +1216,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
             </div>
             <div className="p-6 space-y-5">
               {/* Recherche produit catalogue */}
+              {catalogueModuleActive && (
               <div className="relative" ref={produitDropdownRef}>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Rechercher dans le catalogue
@@ -1242,6 +1255,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                   </div>
                 )}
               </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>

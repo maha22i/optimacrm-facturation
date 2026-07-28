@@ -1,4 +1,4 @@
-import { query, pool } from '../../config/database.js';
+import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { toDateStr, addMonthsUTC, subDayUTC, periodEnd } from '../../utils/dateUtils.js';
 
@@ -185,42 +185,40 @@ export async function getFactureById(id) {
   );
   if (!facture) throw new ApiError(404, 'Facture introuvable');
 
-  const [lignesRes, reglementsRes, historiqueRes, clientLiveRes] = await Promise.all([
-    query(
-      `SELECT fl.*,
-         CASE WHEN rc.id IS NOT NULL THEN json_build_object(
-           'id', rc.id,
-           'date_releve', rc.date_releve,
-           'machine_numero_serie', pm.numero_serie,
-           'compteur_nb', rc.compteur_nb,
-           'compteur_couleur', rc.compteur_couleur,
-           'import_id', rc.import_id,
-           'numero_batch', ir.numero_batch,
-           'date_import', ir.date_import,
-           'user_nom', ir.user_nom
-         ) ELSE NULL END AS releve_info
-       FROM facture_lignes fl
-       LEFT JOIN releves_compteurs rc ON rc.id = fl.releve_compteur_id
-       LEFT JOIN parc_machines pm ON pm.id = rc.machine_id
-       LEFT JOIN imports_releves ir ON ir.id = rc.import_id
-       WHERE fl.facture_id = $1
-       ORDER BY fl.position`, [id]
-    ),
-    query(
-      `SELECT * FROM facture_reglements WHERE facture_id = $1 ORDER BY date_reglement DESC`, [id]
-    ),
-    query(
-      `SELECT * FROM facture_historique WHERE facture_id = $1 ORDER BY created_at DESC`, [id]
-    ),
-    facture.client_id ? query(
-      `SELECT c.numero_client, c.raison_sociale, c.email_principal, c.telephone_principal,
-              c.tva_intracommunautaire,
-              ca.ligne1, ca.ligne2, ca.code_postal, ca.ville
-       FROM clients c
-       LEFT JOIN client_adresses ca ON ca.client_id = c.id AND ca.est_defaut = true AND ca.type = 'FACTURATION'
-       WHERE c.id = $1`, [facture.client_id]
-    ) : { rows: [] },
-  ]);
+  const lignesRes = await query(
+    `SELECT fl.*,
+       CASE WHEN rc.id IS NOT NULL THEN json_build_object(
+         'id', rc.id,
+         'date_releve', rc.date_releve,
+         'machine_numero_serie', pm.numero_serie,
+         'compteur_nb', rc.compteur_nb,
+         'compteur_couleur', rc.compteur_couleur,
+         'import_id', rc.import_id,
+         'numero_batch', ir.numero_batch,
+         'date_import', ir.date_import,
+         'user_nom', ir.user_nom
+       ) ELSE NULL END AS releve_info
+     FROM facture_lignes fl
+     LEFT JOIN releves_compteurs rc ON rc.id = fl.releve_compteur_id
+     LEFT JOIN parc_machines pm ON pm.id = rc.machine_id
+     LEFT JOIN imports_releves ir ON ir.id = rc.import_id
+     WHERE fl.facture_id = $1
+     ORDER BY fl.position`, [id]
+  );
+  const reglementsRes = await query(
+    `SELECT * FROM facture_reglements WHERE facture_id = $1 ORDER BY date_reglement DESC`, [id]
+  );
+  const historiqueRes = await query(
+    `SELECT * FROM facture_historique WHERE facture_id = $1 ORDER BY created_at DESC`, [id]
+  );
+  const clientLiveRes = facture.client_id ? await query(
+    `SELECT c.numero_client, c.raison_sociale, c.email_principal, c.telephone_principal,
+            c.tva_intracommunautaire,
+            ca.ligne1, ca.ligne2, ca.code_postal, ca.ville
+     FROM clients c
+     LEFT JOIN client_adresses ca ON ca.client_id = c.id AND ca.est_defaut = true AND ca.type = 'FACTURATION'
+     WHERE c.id = $1`, [facture.client_id]
+  ) : { rows: [] };
 
   const clientLive = clientLiveRes.rows[0] || null;
 
@@ -247,20 +245,18 @@ export async function getFactureById(id) {
 // ---------------------------------------------------------------------------
 
 export async function getFacturesStats() {
-  const [caTotal, enAttente, envoyees] = await Promise.all([
-    query(
-      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
-       WHERE statut != 'Annulée' AND est_avoir = false`
-    ),
-    query(
-      `SELECT COALESCE(SUM(net_a_payer), 0) AS montant, COUNT(*)::int AS count FROM factures
-       WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0 AND est_avoir = false`
-    ),
-    query(
-      `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
-       WHERE statut = 'Envoyée' AND est_avoir = false`
-    ),
-  ]);
+  const caTotal = await query(
+    `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
+     WHERE statut != 'Annulée' AND est_avoir = false`
+  );
+  const enAttente = await query(
+    `SELECT COALESCE(SUM(net_a_payer), 0) AS montant, COUNT(*)::int AS count FROM factures
+     WHERE statut IN ('Validée', 'Envoyée') AND net_a_payer > 0 AND est_avoir = false`
+  );
+  const envoyees = await query(
+    `SELECT COALESCE(SUM(total_ttc), 0) AS montant, COUNT(*)::int AS count FROM factures
+     WHERE statut = 'Envoyée' AND est_avoir = false`
+  );
 
   return {
     ca_mois: { count: parseInt(caTotal.rows[0].count), montant: parseFloat(caTotal.rows[0].montant) },
@@ -274,9 +270,11 @@ export async function getFacturesStats() {
 // ---------------------------------------------------------------------------
 
 export async function createFacture(data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const snapshot = await getClientSnapshot(dbClient, data.client_id);
     const numero = await generateNumeroFacture(dbClient);
@@ -360,13 +358,13 @@ export async function createFacture(data, userId) {
     await recalculerFacture(dbClient, facture.id);
     await ajouterHistorique(dbClient, facture.id, 'Création', `Facture ${numero} créée`, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(facture.id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -375,9 +373,11 @@ export async function createFacture(data, userId) {
 // ---------------------------------------------------------------------------
 
 export async function updateFacture(id, data, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [existing] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [id]);
     if (!existing) throw new ApiError(404, 'Facture introuvable');
@@ -455,13 +455,13 @@ export async function updateFacture(id, data, userId) {
     const histDesc = wasAnnulee ? 'Facture réouverte et modifiée (ex-annulée → brouillon)' : 'Facture modifiée';
     await ajouterHistorique(dbClient, id, 'Modification', histDesc, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -545,14 +545,16 @@ export async function validerFacture(id, userId) {
   if (!f) throw new ApiError(404, 'Facture introuvable');
   if (f.statut !== 'Brouillon') throw new ApiError(400, 'Seul un brouillon peut être validé');
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
     await dbClient.query(`UPDATE factures SET statut = 'Validée', updated_at = NOW() WHERE id = $1`, [id]);
     await ajouterHistorique(dbClient, id, 'Validation', 'Facture validée', userId);
-    await dbClient.query('COMMIT');
-  } catch (err) { await dbClient.query('ROLLBACK'); throw err; }
-  finally { dbClient.release(); }
+    if (ownConnection) await dbClient.query('COMMIT');
+  } catch (err) { if (ownConnection) await dbClient.query('ROLLBACK'); throw err; }
+  finally { if (ownConnection) dbClient.release(); }
 
   return getFactureById(id);
 }
@@ -566,14 +568,16 @@ export async function envoyerFacture(id, userId) {
   if (!f) throw new ApiError(404, 'Facture introuvable');
   if (!['Validée', 'Envoyée'].includes(f.statut)) throw new ApiError(400, 'La facture doit être validée avant envoi');
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
     await dbClient.query(`UPDATE factures SET statut = 'Envoyée', updated_at = NOW() WHERE id = $1`, [id]);
     await ajouterHistorique(dbClient, id, 'Envoi', 'Facture envoyée', userId);
-    await dbClient.query('COMMIT');
-  } catch (err) { await dbClient.query('ROLLBACK'); throw err; }
-  finally { dbClient.release(); }
+    if (ownConnection) await dbClient.query('COMMIT');
+  } catch (err) { if (ownConnection) await dbClient.query('ROLLBACK'); throw err; }
+  finally { if (ownConnection) dbClient.release(); }
 
   return getFactureById(id);
 }
@@ -587,9 +591,11 @@ export async function annulerFacture(id, userId) {
   if (!f) throw new ApiError(404, 'Facture introuvable');
   if (f.statut === 'Annulée') throw new ApiError(400, 'Facture déjà annulée');
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
     await dbClient.query(`UPDATE factures SET statut = 'Annulée', updated_at = NOW() WHERE id = $1`, [id]);
     await ajouterHistorique(dbClient, id, 'Annulation', 'Facture annulée', userId);
 
@@ -597,9 +603,9 @@ export async function annulerFacture(id, userId) {
       await rollbackContratFacturationTx(dbClient, f.contrat_id, f.id);
     }
 
-    await dbClient.query('COMMIT');
-  } catch (err) { await dbClient.query('ROLLBACK'); throw err; }
-  finally { dbClient.release(); }
+    if (ownConnection) await dbClient.query('COMMIT');
+  } catch (err) { if (ownConnection) await dbClient.query('ROLLBACK'); throw err; }
+  finally { if (ownConnection) dbClient.release(); }
 
   return getFactureById(id);
 }
@@ -658,9 +664,11 @@ export async function dupliquerFacture(id, userId) {
 export async function genererDepuisContrat(contratId, userId, options = {}) {
   const { periode_debut, periode_fin, releve_compteur_nb_id, releve_compteur_coul_id } = options;
 
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [contrat] } = await dbClient.query(
       `SELECT c.*, cl.raison_sociale AS client_raison_sociale, cl.numero_client AS client_code,
@@ -915,7 +923,7 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
       await ajouterHistorique(dbClient, facture.id, 'Création',
         `Facture générée depuis contrat ${contrat.numero_contrat}`, userId);
 
-      await dbClient.query('COMMIT');
+      if (ownConnection) await dbClient.query('COMMIT');
       return getFactureById(facture.id);
 
     } else {
@@ -971,14 +979,14 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
       await ajouterHistorique(dbClient, facture.id, 'Création',
         `Facture générée depuis contrat ${contrat.numero_contrat}`, userId);
 
-      await dbClient.query('COMMIT');
+      if (ownConnection) await dbClient.query('COMMIT');
       return getFactureById(facture.id);
     }
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -1318,9 +1326,11 @@ export async function listRelevesCompteurs() {
 // ---------------------------------------------------------------------------
 
 export async function genererDepuisDevis(devisId, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [devis] } = await dbClient.query(
       `SELECT d.*, c.raison_sociale AS client_raison_sociale, c.numero_client AS client_code
@@ -1396,13 +1406,13 @@ export async function genererDepuisDevis(devisId, userId) {
     await ajouterHistorique(dbClient, facture.id, 'Création',
       `Facture générée depuis devis ${devis.numero_devis}`, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(facture.id);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
@@ -1412,9 +1422,11 @@ export async function genererDepuisDevis(devisId, userId) {
 // ---------------------------------------------------------------------------
 
 export async function ajouterLigne(factureId, ligne, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
     if (!f) throw new ApiError(404, 'Facture introuvable');
@@ -1461,20 +1473,22 @@ export async function ajouterLigne(factureId, ligne, userId) {
     await ajouterHistorique(dbClient, factureId, 'AJOUT_LIGNE',
       `Ligne ajoutée : ${ligne.designation.trim()}`, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(factureId);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
 export async function modifierLigne(factureId, ligneId, ligne, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
     if (!f) throw new ApiError(404, 'Facture introuvable');
@@ -1525,20 +1539,22 @@ export async function modifierLigne(factureId, ligneId, ligne, userId) {
     await ajouterHistorique(dbClient, factureId, 'MODIF_LIGNE',
       `Ligne modifiée : ${ligne.designation !== undefined ? ligne.designation.trim() : existing.designation}`, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(factureId);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
 export async function supprimerLigne(factureId, ligneId, userId) {
-  const dbClient = await pool.connect();
+  const alsClient = getClient();
+  const dbClient = alsClient || await pool.connect();
+  const ownConnection = !alsClient;
   try {
-    await dbClient.query('BEGIN');
+    if (ownConnection) await dbClient.query('BEGIN');
 
     const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
     if (!f) throw new ApiError(404, 'Facture introuvable');
@@ -1559,33 +1575,22 @@ export async function supprimerLigne(factureId, ligneId, userId) {
     await ajouterHistorique(dbClient, factureId, 'SUPPR_LIGNE',
       `Ligne supprimée : ${existing.designation}`, userId);
 
-    await dbClient.query('COMMIT');
+    if (ownConnection) await dbClient.query('COMMIT');
     return getFactureById(factureId);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    if (ownConnection) await dbClient.query('ROLLBACK');
     throw err;
   } finally {
-    dbClient.release();
+    if (ownConnection) dbClient.release();
   }
 }
 
 export async function recalculerTotaux(factureId) {
-  const dbClient = await pool.connect();
-  try {
-    await dbClient.query('BEGIN');
+  const { rows: [f] } = await query('SELECT * FROM factures WHERE id = $1', [factureId]);
+  if (!f) throw new ApiError(404, 'Facture introuvable');
 
-    const { rows: [f] } = await dbClient.query('SELECT * FROM factures WHERE id = $1', [factureId]);
-    if (!f) throw new ApiError(404, 'Facture introuvable');
-
-    await recalculerFacture(dbClient, factureId);
-    await dbClient.query('COMMIT');
-    return getFactureById(factureId);
-  } catch (err) {
-    await dbClient.query('ROLLBACK');
-    throw err;
-  } finally {
-    dbClient.release();
-  }
+  await recalculerFacture({ query }, factureId);
+  return getFactureById(factureId);
 }
 
 // ---------------------------------------------------------------------------
