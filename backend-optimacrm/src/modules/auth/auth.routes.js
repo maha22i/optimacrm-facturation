@@ -4,8 +4,16 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { tenantMiddleware } from '../../middleware/tenantContext.js';
+import { ApiError } from '../../utils/ApiError.js';
 
 const router = Router();
+
+function rejectClientRole(req, _res, next) {
+  if (req.user?.role === 'client') {
+    return next(ApiError.forbidden('Accès réservé aux utilisateurs internes'));
+  }
+  next();
+}
 
 // ── Public ──────────────────────────────────────────────────────────────────
 
@@ -32,11 +40,12 @@ router.post(
 // ── Authenticated ───────────────────────────────────────────────────────────
 
 router.post('/logout', ctrl.logout);
-router.get('/profile', authenticate, ctrl.getProfile);
+router.get('/profile', authenticate, rejectClientRole, ctrl.getProfile);
 
 router.put(
   '/profile',
   authenticate,
+  rejectClientRole,
   validate({
     first_name: { minLength: 2, maxLength: 100 },
     last_name:  { minLength: 2, maxLength: 100 },
@@ -48,6 +57,7 @@ router.put(
 router.put(
   '/change-password',
   authenticate,
+  rejectClientRole,
   validate({
     old_password: { required: true, label: 'Current password' },
     new_password: { required: true, minLength: 8, label: 'New password' },
@@ -82,7 +92,7 @@ router.post(
     password:   { required: true, minLength: 8, label: 'Password' },
     first_name: { required: true, minLength: 2, maxLength: 100, label: 'First name' },
     last_name:  { required: true, minLength: 2, maxLength: 100, label: 'Last name' },
-    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien'] },
+    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien', 'client'] },
   }),
   ctrl.createUser,
 );
@@ -99,7 +109,7 @@ router.put(
     first_name: { minLength: 2, maxLength: 100 },
     last_name:  { minLength: 2, maxLength: 100 },
     email:      { type: 'email' },
-    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien'] },
+    role:       { enum: ['admin', 'user', 'admin_technique', 'technicien', 'client'] },
     is_active:  { type: 'boolean' },
   }),
   ctrl.updateUser,

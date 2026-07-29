@@ -143,6 +143,10 @@ async function loadMigrations() {
   migrations.push(m72);
   const m73 = await import('./migrations/073_multitenant_societe_config.js');
   migrations.push(m73);
+  const m74 = await import('./migrations/074_add_client_role_and_client_id_to_users.js');
+  migrations.push(m74);
+  const m75 = await import('./migrations/075_alter_activity_logs_entity_id_to_text.js');
+  migrations.push(m75);
 }
 
 async function ensureMigrationsTable(client) {

@@ -41,11 +41,8 @@ const MENU_KEYS_BY_ROLE: Record<UserRole, string[] | null> = {
   user: null,
   admin_technique: ['dashboard', 'tickets', 'planning', 'users', 'parametres'],
   technicien: ['tickets', 'planning'],
-  // super_admin n'a jamais de menu ici : il est immédiatement redirigé vers
-  // /super-admin (cf. useEffect ci-dessous) — ce dashboard est structurellement
-  // pensé pour un tenant (sidebar métier, useSociete(), permissions liées à
-  // un tenant), un super_admin (tenant_id NULL) n'y a rien à faire.
   super_admin: [],
+  client: [],
 };
 
 const ALLOWED_PATHS_BY_ROLE: Record<UserRole, RegExp[] | null> = {
@@ -57,10 +54,8 @@ const ALLOWED_PATHS_BY_ROLE: Record<UserRole, RegExp[] | null> = {
     /^\/dashboard\/planning(\/|$)/,
     /^\/dashboard\/clients\/\d+(\/|$)/,
   ],
-  // Tableau vide (pas null) : aucun chemin de ce groupe de routes n'est
-  // autorisé pour un super_admin, quel que soit le pathname → déclenche
-  // systématiquement la redirection vers getRedirectForRole() ci-dessous.
   super_admin: [],
+  client: [],
 };
 
 // Blocage de l'accès direct par URL à un module désactivé (le filtrage du
@@ -297,6 +292,18 @@ const ADMIN_NAV: NavItem = {
   ),
 };
 
+const ESPACE_CLIENT_NAV: NavItem = {
+  key: 'espace-client',
+  label: 'Espace client',
+  href: '/dashboard/espace-client',
+  requiredPermission: 'clients_write',
+  icon: (
+    <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+    </svg>
+  ),
+};
+
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 function resolveLogoUrl(url: string | null | undefined): string {
@@ -313,6 +320,8 @@ function hexToRgb(hex: string): string {
   return `${r} ${g} ${b}`;
 }
 
+const CLIENT_PORTAL_URL = process.env.NEXT_PUBLIC_CLIENT_PORTAL_URL || 'http://localhost:3002';
+
 function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, hasPermission, tenantSuspended } = useAuth();
   const { config: societeConfig } = useSociete();
@@ -324,6 +333,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [ticketsNouveaux, setTicketsNouveaux] = useState(0);
+  const [clientRejected, setClientRejected] = useState(false);
 
   const fetchTicketsBadge = useCallback(async () => {
     try {
@@ -345,11 +355,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
-      // Un tenant suspendu peut ne jamais avoir de `user` chargé (le tout
-      // premier /auth/profile a pu échouer en 403 dès un reload) : dans ce
-      // cas on reste sur place pour laisser le rendu afficher l'écran dédié
-      // au lieu de rediriger vers /login.
       if (!tenantSuspended) router.push('/login');
+      return;
+    }
+
+    if (user.role === 'client') {
+      setClientRejected(true);
+      logout();
       return;
     }
 
@@ -376,7 +388,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       }
       if (!hasPermission('dashboard')) {
         const showUsersNav = user.role === 'admin' || user.role === 'admin_technique';
-        const rawItems: NavItem[] = [...NAV_ITEMS, ...(showUsersNav ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
+        const rawItems: NavItem[] = [...NAV_ITEMS, ...(showUsersNav ? [ADMIN_NAV] : []), ESPACE_CLIENT_NAV, CHAMPS_PERSO_NAV, SETTINGS_NAV];
         const first = rawItems.find(
           (item) => item.href !== '/dashboard' && (!item.requiredPermission || hasPermission(item.requiredPermission)),
         );
@@ -420,13 +432,44 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   // dans les deux cas, sans dépendre de la présence de `user`.
   if (tenantSuspended) return <SuspendedScreen />;
 
+  if (clientRejected) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 px-4">
+        <div className="max-w-md w-full text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-100 rounded-full mb-6">
+            <svg className="w-8 h-8 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">Espace réservé au personnel</h1>
+          <p className="text-sm text-gray-500 mb-6">
+            Ce portail est destiné aux équipes internes. Pour accéder à votre espace client, utilisez le lien ci-dessous.
+          </p>
+          <a
+            href={CLIENT_PORTAL_URL}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            Accéder à mon espace client
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+            </svg>
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) return null;
+
+  // DEBUG TEMPORAIRE — diagnostic bug "entrée de menu reste affichée malgré
+  // module désactivé". À retirer une fois le maillon cassé identifié.
+  console.log('MODULES:', JSON.stringify(user?.modules_actifs));
 
   const primaryColor = societeConfig?.couleur_principale || '#3b82f6';
   const primaryRgb = hexToRgb(primaryColor);
 
   const showUsers = user.role === 'admin' || user.role === 'admin_technique';
-  const rawNav: NavItem[] = [...NAV_ITEMS, ...(showUsers ? [ADMIN_NAV] : []), CHAMPS_PERSO_NAV, SETTINGS_NAV];
+  const rawNav: NavItem[] = [...NAV_ITEMS, ...(showUsers ? [ADMIN_NAV] : []), ESPACE_CLIENT_NAV, CHAMPS_PERSO_NAV, SETTINGS_NAV];
 
   const allowedKeys = MENU_KEYS_BY_ROLE[user.role as UserRole] ?? null;
 
@@ -574,7 +617,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             {!sidebarCollapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-semibold text-white truncate">{user.first_name} {user.last_name}</p>
-                <p className="text-[11px] text-white/50 capitalize">{{ admin: 'Administrateur', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
+                <p className="text-[11px] text-white/50 capitalize">{{ admin: 'Administrateur', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien', super_admin: 'Super Admin', client: 'Client' }[user.role as string] || user.role}</p>
               </div>
             )}
           </div>
@@ -665,7 +708,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   </div>
                   <div className="text-left hidden sm:block">
                     <p className="text-[13px] font-semibold text-gray-800 leading-tight">{user.first_name} {user.last_name}</p>
-                    <p className="text-[11px] text-gray-400 capitalize leading-tight">{{ admin: 'Admin', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien' }[user.role] || user.role}</p>
+                    <p className="text-[11px] text-gray-400 capitalize leading-tight">{{ admin: 'Admin', user: 'Utilisateur', admin_technique: 'Admin Technique', technicien: 'Technicien', super_admin: 'Super Admin', client: 'Client' }[user.role as string] || user.role}</p>
                   </div>
                   <svg className={`h-3.5 w-3.5 text-gray-400 hidden sm:block transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />

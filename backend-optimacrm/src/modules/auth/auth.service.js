@@ -4,7 +4,7 @@ import { query } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 const SALT_ROUNDS = 12;
-const USER_FIELDS = 'id, email, first_name, last_name, role, is_active, created_at, updated_at';
+const USER_FIELDS = 'id, email, first_name, last_name, role, is_active, client_id, created_at, updated_at';
 
 function generateToken(userId, role) {
   return jwt.sign({ userId, role }, process.env.JWT_SECRET, {
@@ -106,7 +106,7 @@ export async function getProfile(userId) {
   const [userResult, permResult] = await Promise.all([
     query(
       `SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.is_active,
-              u.created_at, u.updated_at, t.modules_actifs
+              u.client_id, u.created_at, u.updated_at, t.modules_actifs
        FROM users u
        LEFT JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = $1`,
@@ -165,28 +165,30 @@ export async function changePassword(userId, oldPassword, newPassword) {
 // Admin — user management
 // ---------------------------------------------------------------------------
 
-export async function createUser({ email, password, first_name, last_name, role = 'user', tenant_id }) {
+export async function createUser({ email, password, first_name, last_name, role = 'user', tenant_id, client_id = null }) {
   const existing = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
   if (existing.rows.length > 0) {
     throw ApiError.conflict('Email already registered');
   }
 
-  // Cohérence avec la contrainte users_tenant_id_required_check
-  // (role = 'super_admin' OR tenant_id IS NOT NULL) : on refuse ici plutôt
-  // que de laisser Postgres renvoyer une erreur de contrainte opaque.
-  // Défensif : le controller impose déjà cette règle côté acteur (req.user),
-  // mais createUser() peut être appelé depuis d'autres call sites futurs.
   if (role !== 'super_admin' && !tenant_id) {
     throw ApiError.badRequest('tenant_id est requis pour créer un utilisateur non super_admin');
+  }
+
+  if (role === 'client' && !client_id) {
+    throw ApiError.badRequest('client_id est requis pour créer un compte client');
+  }
+  if (role !== 'client' && client_id) {
+    throw ApiError.badRequest('client_id ne peut être défini que pour le rôle client');
   }
 
   const hashed = await bcrypt.hash(password, SALT_ROUNDS);
 
   const result = await query(
-    `INSERT INTO users (email, password, first_name, last_name, role, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO users (email, password, first_name, last_name, role, tenant_id, client_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${USER_FIELDS}`,
-    [email.toLowerCase(), hashed, first_name, last_name, role, tenant_id ?? null],
+    [email.toLowerCase(), hashed, first_name, last_name, role, tenant_id ?? null, client_id],
   );
 
   const newUser = result.rows[0];
@@ -222,13 +224,23 @@ export async function getAllUsers(page = 1, limit = 20, roleFilter = null) {
   let countWhereClause = '';
 
   if (roleFilter) {
-    whereClause = 'WHERE role = $3';
-    countWhereClause = 'WHERE role = $1';
+    whereClause = 'WHERE u.role = $3';
+    countWhereClause = 'WHERE u.role = $1';
     params.push(roleFilter);
   }
 
-  const usersRes = await query(`SELECT ${USER_FIELDS} FROM users ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`, params);
-  const countRes = await query(`SELECT COUNT(*)::int AS total FROM users ${countWhereClause}`, roleFilter ? [roleFilter] : []);
+  const usersRes = await query(
+    `SELECT ${USER_FIELDS.split(', ').map(f => `u.${f}`).join(', ')}, c.raison_sociale AS client_raison_sociale
+     FROM users u
+     LEFT JOIN clients c ON c.id = u.client_id
+     ${whereClause}
+     ORDER BY u.created_at DESC LIMIT $1 OFFSET $2`,
+    params,
+  );
+  const countRes = await query(
+    `SELECT COUNT(*)::int AS total FROM users u ${countWhereClause}`,
+    roleFilter ? [roleFilter] : [],
+  );
 
   return {
     users: usersRes.rows,

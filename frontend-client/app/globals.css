@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+:root {
+  /* Couleur de marque par défaut (avant chargement du branding société) */
+  --brand: #4f46e5;
+  --brand-dark: #392f9e;
+  --brand-darker: #241d6b;
+  --brand-light: #eef0fd;
+  --brand-ring: rgba(79, 70, 229, 0.16);
+  --brand-shadow: rgba(79, 70, 229, 0.32);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+::selection {
+  background-color: #6366f1;
+  color: white;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -36,6 +36,11 @@ export async function login(req, res, next) {
         module: 'parametres',
         description: `Connexion de ${nom}`,
         ipAddress: activityLog.getClientIp(req),
+        // Login public (avant tenantMiddleware) : aucun SET LOCAL n'a été posé
+        // sur la connexion, il faut donc fournir tenant_id explicitement
+        // (cf. commentaire de activityLog.service.js). NULL pour un
+        // super_admin, comportement inchangé (colonne omise par log()).
+        tenantId: result.user?.tenant_id || null,
       });
     } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
     sendSuccess(res, { user: result.user }, 'Login successful');
@@ -75,22 +80,18 @@ export async function createUser(req, res, next) {
       return next(ApiError.forbidden('Vous ne pouvez créer que des comptes technicien'));
     }
 
-    // Le nouvel utilisateur est rattaché au tenant de l'admin qui le crée.
-    // Un super_admin (tenant_id NULL) n'a pas de tenant "par défaut" : il
-    // doit le préciser explicitement dans le body. On affinera ça avec le
-    // portail super-admin (sélection de tenant dédiée) ; pour l'instant,
-    // erreur claire si rien n'est fourni.
-    //
-    // Le spread `{ ...req.body, tenant_id }` écrase volontairement un
-    // éventuel tenant_id fourni par un admin normal dans le body : on force
-    // toujours son propre tenant, pour empêcher qu'un admin crée un compte
-    // dans un autre tenant en le passant simplement dans la requête.
     let tenant_id = req.user.tenant_id;
     if (!tenant_id) {
       if (!req.body.tenant_id) {
         return next(ApiError.badRequest('Un super_admin doit spécifier le tenant cible (tenant_id) pour créer un utilisateur'));
       }
       tenant_id = req.body.tenant_id;
+    }
+
+    // Rôle client : seul un admin peut créer un compte client, et client_id
+    // est obligatoire (validé aussi par auth.service.js et la contrainte DB).
+    if (req.body.role === 'client' && req.user.role !== 'admin') {
+      return next(ApiError.forbidden('Seul un admin peut créer un compte client'));
     }
 
     const user = await authService.createUser({ ...req.body, tenant_id });
@@ -114,7 +115,12 @@ export async function getAllUsers(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     
     // admin_technique ne voit que les techniciens
-    const roleFilter = req.user.role === 'admin_technique' ? 'technicien' : null;
+    let roleFilter = req.user.role === 'admin_technique' ? 'technicien' : null;
+
+    // Un admin peut filtrer par rôle via ?role=client (pour la gestion espace client)
+    if (!roleFilter && req.query.role) {
+      roleFilter = req.query.role;
+    }
     
     const { users, pagination } = await authService.getAllUsers(page, limit, roleFilter);
     sendPaginated(res, users, pagination);

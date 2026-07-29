@@ -11,7 +11,7 @@ export type PermissionKey =
   | 'tickets_read' | 'tickets_write' | 'tickets_admin' | 'techniciens_manage'
   | 'parametres_societe';
 
-export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien' | 'super_admin';
+export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien' | 'super_admin' | 'client';
 
 export interface User {
   id: string;
@@ -20,6 +20,7 @@ export interface User {
   last_name: string;
   role: UserRole;
   is_active: boolean;
+  client_id?: number | null;
   permissions?: PermissionKey[];
   /**
    * Modules optionnels désactivés pour le tenant de cet utilisateur.

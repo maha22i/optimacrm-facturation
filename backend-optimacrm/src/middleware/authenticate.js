@@ -22,6 +22,7 @@ export async function authenticate(req, _res, next) {
     const [userResult, permResult] = await Promise.all([
       query(
         `SELECT u.id, u.email, u.first_name, u.last_name, u.role, u.is_active, u.tenant_id,
+                u.client_id,
                 t.statut AS tenant_statut, t.modules_actifs AS tenant_modules_actifs
          FROM users u
          LEFT JOIN tenants t ON t.id = u.tenant_id
