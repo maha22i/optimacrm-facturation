@@ -147,6 +147,8 @@ async function loadMigrations() {
   migrations.push(m74);
   const m75 = await import('./migrations/075_alter_activity_logs_entity_id_to_text.js');
   migrations.push(m75);
+  const m76 = await import('./migrations/076_add_password_reset_to_users.js');
+  migrations.push(m76);
 }
 
 async function ensureMigrationsTable(client) {

@@ -8,7 +8,9 @@ export function middleware(request: NextRequest) {
   }
 
   const token = request.cookies.get('token')?.value;
-  const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/reset-password');
+  const isAuthPage = pathname.startsWith('/login')
+    || pathname.startsWith('/forgot-password')
+    || pathname.startsWith('/reset-password');
 
   if (pathname.startsWith('/portal') && !token) {
     return NextResponse.redirect(new URL('/login', request.url));

@@ -461,10 +461,6 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  // DEBUG TEMPORAIRE — diagnostic bug "entrée de menu reste affichée malgré
-  // module désactivé". À retirer une fois le maillon cassé identifié.
-  console.log('MODULES:', JSON.stringify(user?.modules_actifs));
-
   const primaryColor = societeConfig?.couleur_principale || '#3b82f6';
   const primaryRgb = hexToRgb(primaryColor);
 

@@ -27,6 +27,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
   admin_technique: 'Admin Technique',
   technicien: 'Technicien',
   super_admin: 'Super Admin',
+  client: 'Client',
 };
 
 function slugify(value: string): string {

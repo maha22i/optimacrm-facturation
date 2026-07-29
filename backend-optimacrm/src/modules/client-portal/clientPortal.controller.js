@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { query } from '../../config/database.js';
+import crypto from 'node:crypto';
+import { query, runWithTenantContext } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as service from './clientPortal.service.js';
@@ -90,6 +91,173 @@ export async function changePassword(req, res, next) {
     const hashed = await bcrypt.hash(new_password, 12);
     await query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hashed, req.user.id]);
     sendSuccess(res, null, 'Mot de passe modifié');
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// Mot de passe oublié (self-service, public)
+// ---------------------------------------------------------------------------
+//
+// Contrairement au flow admin interne (JWT signé, auto-porteur, jamais
+// stocké → non révocable avant expiration), ce flow public génère un token
+// aléatoire (256 bits) dont seul le hash SHA-256 est persisté en base. Cela
+// permet un usage unique réel (la ligne est effacée après consommation) et
+// limite l'impact d'une fuite de la base (le hash seul ne permet pas de
+// rejouer le lien).
+//
+// Deux règles de sécurité structurent tout le code ci-dessous :
+//   1. Réponse strictement identique (même message, même statut HTTP) que
+//      l'email corresponde ou non à un compte client — sans quoi l'endpoint
+//      deviendrait un oracle d'énumération de comptes.
+//   2. Résolution du tenant AVANT tout accès à la config SMTP : email_config
+//      est une table multi-tenant protégée par RLS. Sans poser explicitement
+//      le contexte tenant (runWithTenantContext), une requête pré-auth (sans
+//      cookie, donc sans tenantMiddleware) verrait la policy RLS s'appliquer
+//      en mode « échappement » (aucun contexte posé) et pourrait remonter la
+//      configuration SMTP d'un tenant arbitraire — pas nécessairement celui
+//      de l'utilisateur concerné.
+
+const RESET_TOKEN_BYTES = 32; // 256 bits — bruteforce computationnellement infaisable
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1h (plus court que le flow admin interne, volontairement)
+const GENERIC_FORGOT_MESSAGE = 'Si un compte existe avec cette adresse email, un lien de réinitialisation vient de lui être envoyé.';
+
+function hashResetToken(rawToken) {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+export async function forgotPassword(req, res, next) {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+
+    const { rows: [user] } = await query(
+      `SELECT u.id, u.tenant_id, u.email, u.first_name, u.is_active, t.statut AS tenant_statut
+       FROM users u
+       LEFT JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.email = $1 AND u.role = 'client'`,
+      [email],
+    );
+
+    // Compte inexistant, désactivé, ou tenant suspendu : même réponse
+    // générique, aucun email envoyé — mais on ne le dit jamais au client.
+    if (!user || !user.is_active || user.tenant_statut === 'suspendu') {
+      return sendSuccess(res, null, GENERIC_FORGOT_MESSAGE);
+    }
+
+    const rawToken = crypto.randomBytes(RESET_TOKEN_BYTES).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+    // Écriture du token isolée de l'envoi d'email : si le SMTP échoue
+    // (identifiants invalides, timeout réseau...), le token doit rester
+    // valide en base plutôt que d'être perdu par un rollback de transaction
+    // partagée. Le user pourra toujours consommer le lien si l'email a
+    // malgré tout été délivré par le serveur SMTP distant avant l'échec.
+    await query(
+      `UPDATE users
+       SET password_reset_token_hash = $1, password_reset_expires_at = $2
+       WHERE id = $3`,
+      [tokenHash, expiresAt, user.id],
+    );
+
+    try {
+      await runWithTenantContext(user.tenant_id, async () => {
+        const { getEmailConfigRaw, createTransporter, logEmail, escapeHtml } = await import('../email/email.service.js');
+        const config = await getEmailConfigRaw();
+        if (!config || !config.est_configure) {
+          // Problème de configuration côté société, jamais exposé au client
+          // (voir règle de sécurité n°1 ci-dessus) — uniquement journalisé.
+          console.error(`[ForgotPassword] SMTP non configuré (tenant ${user.tenant_id})`);
+          return;
+        }
+
+        const portalUrl = process.env.CLIENT_PORTAL_URL || 'http://localhost:3002';
+        const resetLink = `${portalUrl}/reset-password?token=${rawToken}`;
+        const fromName = config.smtp_from_name || 'OptimaCRM';
+        const fromEmail = config.smtp_from_email || config.smtp_user;
+        const transporter = createTransporter(config);
+
+        await transporter.sendMail({
+          from: `"${fromName}" <${fromEmail}>`,
+          to: user.email,
+          replyTo: config.reply_to_email || fromEmail,
+          subject: 'Réinitialisation de votre mot de passe',
+          html: `
+            <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+              <div style="background:#4F46E5;padding:16px 20px;border-radius:8px 8px 0 0;text-align:center;">
+                <h1 style="color:white;margin:0;font-size:18px;">${escapeHtml(fromName)}</h1>
+              </div>
+              <div style="background:#ffffff;padding:24px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px;">
+                <div style="color:#1a1a2e;font-size:14px;line-height:1.6;">
+                  <p>Bonjour ${escapeHtml(user.first_name)},</p>
+                  <p>Vous avez demandé la réinitialisation du mot de passe de votre espace client.</p>
+                  <div style="text-align:center;margin:24px 0;">
+                    <a href="${resetLink}" style="display:inline-block;background:#4F46E5;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;font-size:14px;">Réinitialiser mon mot de passe</a>
+                  </div>
+                  <p style="color:#6b7280;font-size:13px;">Ce lien est valable 1 heure et à usage unique. Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet email : votre mot de passe restera inchangé.</p>
+                  <p style="color:#9ca3af;font-size:12px;word-break:break-all;margin-top:16px;">Lien direct : ${resetLink}</p>
+                </div>
+              </div>
+              <div style="text-align:center;padding:12px;color:#9ca3af;font-size:11px;">Envoyé via ${escapeHtml(fromName)}</div>
+            </div>
+          `,
+        });
+
+        // Pas de document_id ici : la colonne est INTEGER (pensée pour les
+        // factures/devis) alors que users.id est un UUID — le passer
+        // provoquerait une erreur SQL qui ferait échouer (et donc annuler,
+        // même transaction) l'écriture du token juste au-dessus.
+        await logEmail({
+          type_document: 'reset_password_client',
+          destinataire: user.email,
+          sujet: 'Réinitialisation de mot de passe (portail client)',
+          statut: 'envoyé',
+        });
+      });
+    } catch (mailErr) {
+      // Un échec d'envoi (SMTP down, etc.) ne doit jamais transparaître dans
+      // la réponse HTTP — sans quoi elle deviendrait distinguable du cas
+      // « email inconnu » et réintroduirait l'énumération de comptes.
+      console.error('[ForgotPassword] Échec de l\'envoi de l\'email :', mailErr.message);
+    }
+
+    sendSuccess(res, null, GENERIC_FORGOT_MESSAGE);
+  } catch (err) { next(err); }
+}
+
+export async function resetPassword(req, res, next) {
+  try {
+    const { token, new_password } = req.body;
+    const tokenHash = hashResetToken(String(token));
+
+    const { rows: [user] } = await query(
+      `SELECT u.id, u.tenant_id, u.is_active, t.statut AS tenant_statut
+       FROM users u
+       LEFT JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.password_reset_token_hash = $1
+         AND u.role = 'client'
+         AND u.password_reset_expires_at > NOW()`,
+      [tokenHash],
+    );
+
+    if (!user || !user.is_active || user.tenant_statut === 'suspendu') {
+      throw ApiError.badRequest('Ce lien de réinitialisation est invalide ou a expiré. Veuillez refaire une demande.');
+    }
+
+    const hashedPassword = await bcrypt.hash(new_password, 12);
+
+    // Usage unique : le token est invalidé dans la même écriture que le
+    // changement de mot de passe, qu'il soit ou non consommé avec succès
+    // par la suite (impossible de le rejouer, même en cas de replay rapide).
+    await runWithTenantContext(user.tenant_id, async () => {
+      await query(
+        `UPDATE users
+         SET password = $1, password_reset_token_hash = NULL, password_reset_expires_at = NULL, updated_at = NOW()
+         WHERE id = $2`,
+        [hashedPassword, user.id],
+      );
+    });
+
+    sendSuccess(res, null, 'Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.');
   } catch (err) { next(err); }
 }
 

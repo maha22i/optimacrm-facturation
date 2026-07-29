@@ -2,10 +2,27 @@ import { Router } from 'express';
 import { authenticate } from '../../middleware/authenticate.js';
 import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { validate } from '../../middleware/validate.js';
+import { createRateLimiter } from '../../middleware/rateLimit.js';
 import { requireClientRole, clientContext } from './clientPortal.middleware.js';
 import * as ctrl from './clientPortal.controller.js';
 
 const router = Router();
+
+// Endpoints publics sensibles (pas d'authentification en amont) : un
+// limiteur par IP réduit le risque d'énumération de comptes via
+// /auth/forgot-password (spam d'emails) et de bruteforce de token via
+// /auth/reset-password. Fenêtres volontairement larges (15 min) pour ne pas
+// gêner un usage légitime (plusieurs tentatives de saisie du mot de passe).
+const forgotPasswordLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Trop de demandes de réinitialisation. Réessayez dans quelques minutes.',
+});
+const resetPasswordLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Trop de tentatives. Réessayez dans quelques minutes.',
+});
 
 // ── Auth client ─────────────────────────────────────────────────────────────
 // Login utilise le même mécanisme que les internes (JWT en cookie) mais
@@ -20,6 +37,28 @@ router.post(
 );
 
 router.post('/auth/logout', ctrl.logout);
+
+// Mot de passe oublié — self-service, public. Le message de réponse est
+// toujours identique (voir clientPortal.controller.js) pour ne jamais
+// révéler si un compte existe pour l'email fourni.
+router.post(
+  '/auth/forgot-password',
+  forgotPasswordLimiter,
+  validate({
+    email: { required: true, type: 'email', label: 'Email' },
+  }),
+  ctrl.forgotPassword,
+);
+
+router.post(
+  '/auth/reset-password',
+  resetPasswordLimiter,
+  validate({
+    token:        { required: true, label: 'Token' },
+    new_password: { required: true, minLength: 8, label: 'Nouveau mot de passe' },
+  }),
+  ctrl.resetPassword,
+);
 
 // ── Toutes les routes suivantes exigent un user authentifié de rôle client ──
 router.use(authenticate);

@@ -27,7 +27,12 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   const [branding, setBranding] = useState<Branding | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
+  // Le contenu de la sidebar (dont le menu utilisateur) est rendu deux fois
+  // (aside desktop + tiroir mobile, ce dernier restant monté dans le DOM même
+  // masqué en CSS) : un seul ref partagé ne pointerait que sur l'une des deux
+  // instances, faisant percevoir l'autre comme « extérieure » au clic.
+  const userMenuRefDesktop = useRef<HTMLDivElement>(null);
+  const userMenuRefMobile = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -72,7 +77,10 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideDesktop = userMenuRefDesktop.current?.contains(target) ?? false;
+      const insideMobile = userMenuRefMobile.current?.contains(target) ?? false;
+      if (!insideDesktop && !insideMobile) {
         setUserMenuOpen(false);
       }
     }
@@ -100,7 +108,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
   const initials = `${user.first_name?.[0] ?? ''}${user.last_name?.[0] ?? ''}`.toUpperCase();
 
-  const sidebarContent = (
+  const renderSidebarContent = (userMenuRef: React.RefObject<HTMLDivElement | null>) => (
     <>
       <div className="px-5 py-5 border-b border-white/10">
         <div className="flex items-center gap-3">
@@ -193,7 +201,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
       {/* Sidebar (desktop) */}
       <aside className="hidden lg:flex w-72 bg-[var(--brand)] flex-col shrink-0 sticky top-0 h-screen shadow-xl shadow-black/5">
-        {sidebarContent}
+        {renderSidebarContent(userMenuRefDesktop)}
       </aside>
 
       {/* Sidebar (mobile drawer) */}
@@ -202,7 +210,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {sidebarContent}
+        {renderSidebarContent(userMenuRefMobile)}
       </aside>
 
       {/* Main content */}

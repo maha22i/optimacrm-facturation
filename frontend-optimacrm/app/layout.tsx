@@ -17,6 +17,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'OptimaCRM — Gestion de facturation',
   description: 'Plateforme SaaS de gestion de facturation et CRM',
+  icons: {
+    icon: '/icon.png',
+    apple: '/apple-icon.png',
+  },
 };
 
 export default function RootLayout({

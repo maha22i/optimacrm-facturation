@@ -50,13 +50,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 const allowedOrigins = [
+  process.env.LEGACY_FRONTEND_URL,
   process.env.FRONTEND_URL || 'http://localhost:3000',
   process.env.CLIENT_PORTAL_URL || 'http://localhost:3002',
 ];
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    if (!origin || allowedOrigins.filter(Boolean).includes(origin)) return cb(null, true);
     cb(new Error('Not allowed by CORS'));
   },
   credentials: true,

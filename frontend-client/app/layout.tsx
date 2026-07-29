@@ -11,6 +11,10 @@ const geistSans = Geist({
 export const metadata: Metadata = {
   title: 'Espace Client — OptimaCRM',
   description: 'Portail client : factures, tickets, parc machines, contrats',
+  icons: {
+    icon: '/icon.png',
+    apple: '/apple-icon.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

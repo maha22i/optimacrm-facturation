@@ -14,6 +14,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
   // Un super_admin n'apparaît jamais dans cette liste (tenant-scopée), mais
   // l'entrée est requise pour que Record<UserRole, string> reste exhaustif.
   super_admin: 'Super Admin',
+  client: 'Client',
 };
 
 interface CreateUserForm {
