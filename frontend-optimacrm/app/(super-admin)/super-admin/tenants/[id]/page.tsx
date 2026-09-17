@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import type { ApiResponse, TenantDetail, TenantUser, UserRole } from '@/lib/types';
+import { formatMontant } from '@/lib/utils/formatNumber';
+import type { ApiResponse, Pagination, TenantActivityLog, TenantDetail, TenantDetailedStats, TenantUser, UserRole } from '@/lib/types';
 
 const STATUT_BADGE: Record<string, string> = {
   actif: 'bg-green-50 text-green-700 ring-green-600/20',
@@ -45,6 +46,25 @@ function extractErrorMessage(err: unknown, fallback: string): string {
     : fallback;
 }
 
+function formatDateHeure(value: string | null): string {
+  if (!value) return 'Jamais';
+  return new Date(value).toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// Libellés lisibles pour les clés brutes de `factures.statut` renvoyées par
+// factures_par_statut (cf. superAdmin.service.js#getTenantDetailedStats).
+const FACTURE_STATUT_LABELS: Record<string, string> = {
+  'Brouillon': 'Brouillon',
+  'Validée': 'Validée',
+  'Envoyée': 'Envoyée',
+  'Payée': 'Payée',
+  'Partiellement payée': 'Part. payée',
+  'En retard': 'En retard',
+  'Annulée': 'Annulée',
+};
+
 const INITIAL_ADMIN_FORM = { email: '', password: '', first_name: '', last_name: '' };
 
 // Modules optionnels — cf. plan validé : Devis, Email et Dashboard restent
@@ -75,6 +95,12 @@ export default function TenantDetailPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
+  // Stats détaillées — chargées via un endpoint séparé (GET .../stats) pour
+  // ne pas alourdir le chargement principal de la page. Erreur isolée : un
+  // échec ici n'empêche pas d'afficher le reste du détail tenant.
+  const [detailedStats, setDetailedStats] = useState<TenantDetailedStats | null>(null);
+  const [statsError, setStatsError] = useState('');
+
   // Formulaire "Informations" (nom / slug)
   const [editNom, setEditNom] = useState('');
   const [editSlug, setEditSlug] = useState('');
@@ -97,6 +123,28 @@ export default function TenantDetailPage() {
   const [moduleSaving, setModuleSaving] = useState<string | null>(null);
   const [moduleErrors, setModuleErrors] = useState<Record<string, string>>({});
 
+  // Journal d'activité — filtres en texte libre (module/action) : contrairement
+  // au journal du dashboard tenant, il n'y a pas de liste fixe de modules côté
+  // super-admin (le module "super-admin" s'ajoute à tous les modules métier).
+  const [logs, setLogs] = useState<TenantActivityLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const [logsError, setLogsError] = useState('');
+  const [logsPagination, setLogsPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [availableModules, setAvailableModules] = useState<string[]>([]);
+  const [moduleFilter, setModuleFilter] = useState('');
+  const [actionInput, setActionInput] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
+  const [dateDebut, setDateDebut] = useState('');
+  const [dateFin, setDateFin] = useState('');
+
+  // Debounce sur le champ action (texte libre, désormais en ILIKE côté
+  // backend) — même pattern que le champ "search" du journal dashboard :
+  // évite une requête réseau à chaque frappe.
+  useEffect(() => {
+    const timer = setTimeout(() => setActionFilter(actionInput), 300);
+    return () => clearTimeout(timer);
+  }, [actionInput]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError('');
@@ -112,7 +160,54 @@ export default function TenantDetailPage() {
     }
   }, [id]);
 
+  const loadStats = useCallback(async () => {
+    setStatsError('');
+    try {
+      const res = await api.get<ApiResponse<TenantDetailedStats>>(`/super-admin/tenants/${id}/stats`);
+      setDetailedStats(res.data);
+    } catch (err: unknown) {
+      setStatsError(extractErrorMessage(err, 'Erreur lors du chargement des statistiques'));
+    }
+  }, [id]);
+
+  const loadModules = useCallback(async () => {
+    try {
+      const res = await api.get<ApiResponse<string[]>>(`/super-admin/tenants/${id}/activity-logs/modules`);
+      setAvailableModules(res.data);
+    } catch {
+      // Non bloquant : le dropdown reste sur "Tous les modules" si l'appel échoue.
+    }
+  }, [id]);
+
+  const fetchLogs = useCallback(async (page = 1) => {
+    setLogsLoading(true);
+    setLogsError('');
+    try {
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('limit', String(logsPagination.limit));
+      if (moduleFilter) params.set('module', moduleFilter);
+      if (actionFilter) params.set('action', actionFilter);
+      if (dateDebut) params.set('date_debut', dateDebut);
+      if (dateFin) params.set('date_fin', dateFin);
+
+      const res = await api.get<{ data: TenantActivityLog[]; pagination: Pagination }>(
+        `/super-admin/tenants/${id}/activity-logs?${params}`,
+      );
+      setLogs(res.data);
+      setLogsPagination(res.pagination);
+    } catch (err: unknown) {
+      setLogsError(extractErrorMessage(err, 'Erreur lors du chargement du journal'));
+    } finally {
+      setLogsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, moduleFilter, actionFilter, dateDebut, dateFin]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => { loadModules(); }, [loadModules]);
+  useEffect(() => { fetchLogs(1); }, [fetchLogs]);
 
   async function handleSaveInfo(e: React.FormEvent) {
     e.preventDefault();
@@ -250,7 +345,7 @@ export default function TenantDetailPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-4 mb-4">
         {[
           { label: 'Utilisateurs', value: tenant.stats.users },
           { label: 'Clients', value: tenant.stats.clients },
@@ -262,6 +357,47 @@ export default function TenantDetailPage() {
           </div>
         ))}
       </div>
+
+      {/* Stats détaillées */}
+      {statsError ? (
+        <div className="mb-8 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{statsError}</div>
+      ) : !detailedStats ? (
+        <div className="mb-8 grid grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-[74px] bg-gray-50 rounded-2xl border border-gray-100 animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="mb-8 grid grid-cols-2 md:grid-cols-3 gap-4">
+          {[
+            { label: 'CA TTC (hors brouillon/annulée)', value: `${formatMontant(detailedStats.ca_ttc)} €` },
+            { label: 'CA HT (hors brouillon/annulée)', value: `${formatMontant(detailedStats.ca_ht)} €` },
+            { label: 'Devis', value: String(detailedStats.devis) },
+            { label: 'Contrats', value: String(detailedStats.contrats) },
+            { label: 'Tickets', value: String(detailedStats.tickets) },
+            { label: 'Dernière activité', value: formatDateHeure(detailedStats.derniere_activite) },
+          ].map((stat) => (
+            <div key={stat.label} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{stat.label}</p>
+              <p className="mt-1 text-xl font-bold text-gray-900">{stat.value}</p>
+            </div>
+          ))}
+
+          {Object.keys(detailedStats.factures_par_statut).length > 0 && (
+            <div className="col-span-2 md:col-span-3 bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Factures par statut</p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(detailedStats.factures_par_statut).map(([statut, count]) => (
+                  <span key={statut} className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+                    {FACTURE_STATUT_LABELS[statut] || statut}
+                    <span className="font-bold">{count}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Informations éditables */}
@@ -448,6 +584,7 @@ export default function TenantDetailPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Utilisateur</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rôle</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dernière connexion</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -480,10 +617,138 @@ export default function TenantDetailPage() {
                       {u.is_active ? 'Actif' : 'Inactif'}
                     </span>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {formatDateHeure(u.last_login_at)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+
+      {/* Journal d'activité */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mt-6">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-800">Journal d&apos;activité</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Actions effectuées dans ce tenant, tous utilisateurs confondus.</p>
+        </div>
+
+        {/* Filtres */}
+        <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap gap-3">
+          <select
+            value={moduleFilter}
+            onChange={(e) => setModuleFilter(e.target.value)}
+            className="flex-1 min-w-[160px] rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none cursor-pointer"
+          >
+            <option value="">Tous les modules</option>
+            {availableModules.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Filtrer par action (ex. email)"
+            value={actionInput}
+            onChange={(e) => setActionInput(e.target.value)}
+            className="flex-1 min-w-[160px] rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none"
+          />
+          <input
+            type="date"
+            value={dateDebut}
+            onChange={(e) => setDateDebut(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none"
+          />
+          <input
+            type="date"
+            value={dateFin}
+            onChange={(e) => setDateFin(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-slate-500 focus:ring-1 focus:ring-slate-500 outline-none"
+          />
+          {(moduleFilter || actionInput || dateDebut || dateFin) && (
+            <button
+              type="button"
+              onClick={() => { setModuleFilter(''); setActionInput(''); setActionFilter(''); setDateDebut(''); setDateFin(''); }}
+              className="px-3 py-2 text-xs font-medium text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+            >
+              Réinitialiser
+            </button>
+          )}
+        </div>
+
+        {logsError && (
+          <div className="mx-6 mt-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{logsError}</div>
+        )}
+
+        {logsLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <div className="animate-spin h-6 w-6 border-4 border-slate-800 border-t-transparent rounded-full" />
+          </div>
+        ) : logs.length === 0 ? (
+          <div className="py-10 text-center text-sm text-gray-500">Aucune activité pour l&apos;instant.</div>
+        ) : (
+          <>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date/Heure</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Utilisateur</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Module</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {logs.map((log) => (
+                  <tr key={log.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDateHeure(log.created_at)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{log.user_nom || 'Système'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">{log.module}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{log.action.replace(/_/g, ' ')}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700 max-w-md">{log.description}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                        log.statut === 'succes' ? 'text-green-700' : log.statut === 'erreur' ? 'text-red-600' : 'text-amber-600'
+                      }`}>
+                        <span className={`h-2 w-2 rounded-full ${
+                          log.statut === 'succes' ? 'bg-green-500' : log.statut === 'erreur' ? 'bg-red-400' : 'bg-amber-400'
+                        }`} />
+                        {log.statut}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200">
+              <p className="text-xs text-gray-500">
+                Page {logsPagination.page} sur {logsPagination.totalPages} — {logsPagination.total} entrée(s)
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchLogs(logsPagination.page - 1)}
+                  disabled={logsPagination.page <= 1 || logsLoading}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Précédent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fetchLogs(logsPagination.page + 1)}
+                  disabled={logsPagination.page >= logsPagination.totalPages || logsLoading}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Suivant
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>

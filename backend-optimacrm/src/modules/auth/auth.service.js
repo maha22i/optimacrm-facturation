@@ -84,6 +84,14 @@ export async function login(email, password) {
     throw ApiError.forbidden('Compte suspendu');
   }
 
+  // Non bloquant : un souci sur cette colonne (purement informative, affichée
+  // dans le portail super-admin) ne doit jamais empêcher la connexion.
+  try {
+    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+  } catch (err) {
+    console.error('[Auth] Échec mise à jour last_login_at :', err.message);
+  }
+
   const permResult = await query(
     'SELECT permission FROM user_permissions WHERE user_id = $1',
     [user.id],

@@ -1,5 +1,6 @@
 import { query } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
+import * as activityLogService from '../activity-logs/activityLog.service.js';
 
 const TENANT_FIELDS = 'id, nom, slug, statut, modules_actifs, created_at, updated_at';
 
@@ -77,7 +78,7 @@ export async function getTenantById(id) {
   const [stats, usersRes] = await Promise.all([
     getTenantStats(id),
     query(
-      `SELECT id, email, first_name, last_name, role, is_active
+      `SELECT id, email, first_name, last_name, role, is_active, last_login_at
        FROM users WHERE tenant_id = $1 ORDER BY created_at`,
       [id],
     ),
@@ -92,6 +93,90 @@ export async function getTenantById(id) {
 
 export async function ensureTenantExists(id) {
   return getTenantOrThrow(id);
+}
+
+// ---------------------------------------------------------------------------
+// Stats détaillées — endpoint séparé (GET /tenants/:id/stats), pour ne pas
+// alourdir GET /tenants/:id à chaque chargement de la page détail.
+//
+// Une seule requête avec sous-requêtes scalaires (même approche que
+// getTenantStats ci-dessus) : peu de tenants au départ, cf. plan validé.
+// Chaque sous-requête filtre EXPLICITEMENT `WHERE tenant_id = $1` — la RLS
+// ne fait rien ici puisque ce module n'a pas de tenantMiddleware (le
+// super-admin est cross-tenant, aucun contexte n'est posé sur la connexion,
+// donc l'escape clause RLS renverrait TOUT sans ce filtre manuel).
+//
+// Colonnes vérifiées dans les migrations avant écriture de cette requête :
+//   - devis.deleted_at (003), devis.statut (003)
+//   - contrats.deleted_at (011), contrats.statut (011)
+//   - tickets.statut (036) — pas de deleted_at sur cette table
+//   - factures.total_ht / total_ttc / statut (017)
+//   - activity_logs.created_at / tenant_id (019 / 046)
+//
+// Répartition des factures par statut agrégée en JSON (json_object_agg) dans
+// une sous-requête imbriquée, pour rester dans UNE seule requête SQL plutôt
+// que d'enchaîner un GROUP BY séparé.
+// ---------------------------------------------------------------------------
+export async function getTenantDetailedStats(id) {
+  await getTenantOrThrow(id);
+
+  const result = await query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM devis
+          WHERE tenant_id = $1 AND deleted_at IS NULL) AS devis_count,
+       (SELECT COUNT(*)::int FROM contrats
+          WHERE tenant_id = $1 AND deleted_at IS NULL) AS contrats_count,
+       (SELECT COUNT(*)::int FROM tickets
+          WHERE tenant_id = $1) AS tickets_count,
+       (SELECT COALESCE(SUM(total_ttc), 0) FROM factures
+          WHERE tenant_id = $1 AND statut NOT IN ('Brouillon', 'Annulée')) AS ca_ttc,
+       (SELECT COALESCE(SUM(total_ht), 0) FROM factures
+          WHERE tenant_id = $1 AND statut NOT IN ('Brouillon', 'Annulée')) AS ca_ht,
+       (SELECT COALESCE(json_object_agg(statut, cnt), '{}'::json)
+          FROM (
+            SELECT statut, COUNT(*)::int AS cnt
+            FROM factures WHERE tenant_id = $1
+            GROUP BY statut
+          ) f) AS factures_par_statut,
+       (SELECT MAX(created_at) FROM activity_logs
+          WHERE tenant_id = $1) AS derniere_activite`,
+    [id],
+  );
+
+  const row = result.rows[0];
+  return {
+    devis: row.devis_count,
+    contrats: row.contrats_count,
+    tickets: row.tickets_count,
+    ca_ttc: Number(row.ca_ttc),
+    ca_ht: Number(row.ca_ht),
+    factures_par_statut: row.factures_par_statut,
+    derniere_activite: row.derniere_activite,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Journal d'activité tenant — GET /tenants/:id/activity-logs
+//
+// Réutilise activityLogService.listLogs() (pagination + filtres module/
+// action/date déjà implémentés) en lui passant tenantId explicitement : ce
+// module n'a pas de tenantMiddleware (super-admin cross-tenant), donc aucun
+// contexte n'est posé sur la connexion et la RLS de `activity_logs` retombe
+// sur son escape clause (aucun contexte = tout visible). Sans ce filtre
+// explicite, un super-admin verrait les logs de TOUS les tenants mélangés
+// pour n'importe quel tenant demandé.
+// ---------------------------------------------------------------------------
+export async function getTenantActivityLogs(id, filters) {
+  await getTenantOrThrow(id);
+  return activityLogService.listLogs({ ...filters, tenantId: id });
+}
+
+// Alimente le dropdown de filtre "Module" du journal — uniquement les
+// modules ayant réellement des logs pour ce tenant (cf. commentaire dans
+// activityLogService.listDistinctModules).
+export async function getTenantActivityModules(id) {
+  await getTenantOrThrow(id);
+  return activityLogService.listDistinctModules(id);
 }
 
 export async function updateTenant(id, { nom, slug }) {

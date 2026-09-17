@@ -39,6 +39,9 @@ router.post(
 );
 
 router.get('/tenants/:id', ctrl.getTenantById);
+router.get('/tenants/:id/stats', ctrl.getTenantDetailedStats);
+router.get('/tenants/:id/activity-logs', ctrl.getTenantActivityLogs);
+router.get('/tenants/:id/activity-logs/modules', ctrl.getTenantActivityModules);
 
 router.put(
   '/tenants/:id',

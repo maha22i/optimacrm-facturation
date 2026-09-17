@@ -149,6 +149,8 @@ async function loadMigrations() {
   migrations.push(m75);
   const m76 = await import('./migrations/076_add_password_reset_to_users.js');
   migrations.push(m76);
+  const m77 = await import('./migrations/077_add_last_login_to_users.js');
+  migrations.push(m77);
 }
 
 async function ensureMigrationsTable(client) {

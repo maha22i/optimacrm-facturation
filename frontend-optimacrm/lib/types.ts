@@ -1711,8 +1711,48 @@ export interface TenantUser {
   last_name: string;
   role: UserRole;
   is_active: boolean;
+  last_login_at: string | null;
 }
 
 export interface TenantDetail extends TenantWithStats {
   users: TenantUser[];
+}
+
+// Répartition des factures par statut : clés = valeurs de `factures.statut`
+// (ex. "Payée", "Envoyée", "Brouillon"...), non exhaustives selon les données
+// réelles du tenant — d'où Record<string, number> plutôt qu'un type fermé.
+export interface TenantDetailedStats {
+  devis: number;
+  contrats: number;
+  tickets: number;
+  ca_ttc: number;
+  ca_ht: number;
+  factures_par_statut: Record<string, number>;
+  derniere_activite: string | null;
+}
+
+// Miroir de la ligne `activity_logs` (cf. migrations 019/046/075) telle que
+// renvoyée par GET /super-admin/tenants/:id/activity-logs.
+export interface TenantActivityLog {
+  id: number;
+  user_id: string | null;
+  user_nom: string | null;
+  action: string;
+  module: string;
+  description: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  entity_label: string | null;
+  details: Record<string, unknown>;
+  statut: string;
+  ip_address: string | null;
+  created_at: string;
+  tenant_id: string;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }

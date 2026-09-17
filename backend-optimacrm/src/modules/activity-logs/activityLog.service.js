@@ -59,18 +59,34 @@ export async function listLogs({
   date_debut,
   date_fin,
   search,
+  // Filtre explicite, réservé à l'usage cross-tenant du super-admin (cf.
+  // superAdmin.service.js#getTenantActivityLogs). Le chemin normal
+  // (/api/activity-logs, avec tenantMiddleware) ne le passe jamais : le
+  // filtrage y est déjà assuré par la RLS via le contexte tenant posé sur
+  // la connexion. Ici au contraire, aucun contexte n'est posé (le
+  // super-admin n'a pas de tenantMiddleware), donc l'escape clause RLS
+  // renverrait TOUT sans ce filtre manuel — indispensable pour l'isolation.
+  tenantId = null,
 }) {
   const conditions = [];
   const params = [];
   let i = 1;
 
+  if (tenantId) {
+    conditions.push(`tenant_id = $${i++}`);
+    params.push(tenantId);
+  }
   if (moduleName) {
     conditions.push(`module = $${i++}`);
     params.push(moduleName);
   }
   if (action) {
-    conditions.push(`action = $${i++}`);
-    params.push(action);
+    // ILIKE partiel (pas d'égalité stricte) : contrairement à `module`
+    // (sélectionné via un dropdown fermé, donc valeur exacte connue),
+    // `action` reste un champ texte libre côté super-admin — taper "email"
+    // doit trouver "notification_email", "facture_envoyee_email", etc.
+    conditions.push(`action ILIKE $${i++}`);
+    params.push(`%${action}%`);
   }
   if (user_id) {
     conditions.push(`user_id = $${i++}`);
@@ -173,6 +189,19 @@ export async function getStats({ module: moduleName, date_debut, date_fin, searc
     ce_mois: parseInt(monthR.rows[0].count, 10),
     par_module,
   };
+}
+
+// Modules distincts réellement présents pour un tenant donné — alimente le
+// dropdown de filtre du portail super-admin. Requête dynamique plutôt qu'une
+// liste statique de modules connus : ne propose jamais un module vide pour
+// ce tenant, et reste à jour automatiquement si de nouveaux modules
+// apparaissent (ex. activation d'un module optionnel).
+export async function listDistinctModules(tenantId) {
+  const result = await query(
+    `SELECT DISTINCT module FROM activity_logs WHERE tenant_id = $1 ORDER BY module`,
+    [tenantId],
+  );
+  return result.rows.map((r) => r.module);
 }
 
 export async function getEntityHistory(entityType, entityId) {

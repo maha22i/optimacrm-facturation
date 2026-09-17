@@ -2,7 +2,7 @@ import * as superAdminService from './superAdmin.service.js';
 import * as authService from '../auth/auth.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
 import { runWithTenantContext } from '../../config/database.js';
-import { sendSuccess } from '../../utils/response.js';
+import { sendSuccess, sendPaginated } from '../../utils/response.js';
 
 // Helper commun : logue une action super-admin liée à un tenant précis.
 // tenantId explicite (bypass du DEFAULT current_setting sur activity_logs,
@@ -50,6 +50,39 @@ export async function getTenantById(req, res, next) {
   try {
     const tenant = await superAdminService.getTenantById(req.params.id);
     sendSuccess(res, tenant);
+  } catch (err) { next(err); }
+}
+
+export async function getTenantDetailedStats(req, res, next) {
+  try {
+    const stats = await superAdminService.getTenantDetailedStats(req.params.id);
+    sendSuccess(res, stats);
+  } catch (err) { next(err); }
+}
+
+export async function getTenantActivityLogs(req, res, next) {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const { module: moduleName, action, date_debut, date_fin } = req.query;
+
+    const result = await superAdminService.getTenantActivityLogs(req.params.id, {
+      page,
+      limit,
+      module: moduleName,
+      action,
+      date_debut,
+      date_fin,
+    });
+
+    sendPaginated(res, result.data, result.pagination);
+  } catch (err) { next(err); }
+}
+
+export async function getTenantActivityModules(req, res, next) {
+  try {
+    const modules = await superAdminService.getTenantActivityModules(req.params.id);
+    sendSuccess(res, modules);
   } catch (err) { next(err); }
 }
 
