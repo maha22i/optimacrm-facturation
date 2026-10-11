@@ -184,7 +184,7 @@ export default function ModifierClientPage() {
 
     setSaving(true);
     try {
-      await api.put(`/clients/${clientId}`, {
+      const res = await api.put<{ data: { contrats_resilies?: unknown[] } }>(`/clients/${clientId}`, {
         raison_sociale: form.raison_sociale,
         forme_juridique: form.forme_juridique,
         siret: form.siret || null,
@@ -215,7 +215,13 @@ export default function ModifierClientPage() {
         await api.put(`/champs-config/valeurs/CLIENT/${clientId}`, { valeurs: champsPersoValeurs });
       }
 
-      setToast({ message: 'Client mis à jour avec succès', type: 'success' });
+      const nb = res.data?.contrats_resilies?.length ?? 0;
+      setToast({
+        message: nb > 0
+          ? `Client mis à jour, ${nb} contrat${nb > 1 ? 's' : ''} résilié${nb > 1 ? 's' : ''}`
+          : 'Client mis à jour avec succès',
+        type: 'success',
+      });
       setTimeout(() => router.push(`/dashboard/clients/${clientId}`), 1000);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur lors de la mise à jour';
@@ -324,6 +330,11 @@ export default function ModifierClientPage() {
                 <option value="BLOQUE">Bloqué</option>
                 <option value="INACTIF">Inactif</option>
               </select>
+              {form.statut === 'INACTIF' && (
+                <p className="mt-1.5 text-xs text-amber-700">
+                  À l&apos;enregistrement, les contrats en cours de ce client (actifs, suspendus ou renouvelés) passeront en « Résilié ».
+                </p>
+              )}
             </div>
 
             {/* Blocage raison – conditional */}

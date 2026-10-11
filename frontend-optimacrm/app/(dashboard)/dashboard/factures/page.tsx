@@ -70,6 +70,16 @@ const RAISON_LABELS: Record<string, { label: string; icon: string; color: string
     icon: '📊',
     color: 'text-blue-700 bg-blue-50 border-blue-200',
   },
+  lot_multi_forfait: {
+    label: 'Lot avec plusieurs forfaits — machine principale indéterminée',
+    icon: '🧩',
+    color: 'text-orange-700 bg-orange-50 border-orange-200',
+  },
+  premier_releve_initialisation: {
+    label: "Premier relevé d'initialisation — rien à facturer",
+    icon: 'ℹ️',
+    color: 'text-sky-700 bg-sky-50 border-sky-200',
+  },
   aucune_ligne_active: {
     label: 'Aucune ligne de facturation active',
     icon: '📝',
@@ -329,7 +339,8 @@ function LotResultDisplay({ lotResult, router, setShowLotModal }: {
 
 export default function FacturesListPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  const canDeleteFactures = hasPermission('factures_delete');
   // Onglet "Imports récents" : appelle /imports-releves (module parc_machines)
   // depuis la page Factures (module socle) — hors de la page dédiée
   // /dashboard/parc-machines/imports. Ne jamais l'afficher ni l'interroger
@@ -904,6 +915,7 @@ export default function FacturesListPage() {
               )}
               Envoyer par email
             </button>
+            {canDeleteFactures && (
             <button
               onClick={handleBulkDelete}
               disabled={bulkLoading !== null || !someAreSupprimable}
@@ -917,6 +929,7 @@ export default function FacturesListPage() {
               )}
               Supprimer
             </button>
+            )}
             <button
               onClick={() => { setSelectedIds([]); setAllIdsSelected(false); }}
               className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer"
@@ -1062,7 +1075,7 @@ export default function FacturesListPage() {
                                   <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/factures/${facture.id}/modifier`); setMenuOpen(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">Modifier</button>
                                 </>
                               )}
-                              {['Brouillon', 'Annulée'].includes(facture.statut) && (
+                              {canDeleteFactures && ['Brouillon', 'Annulée'].includes(facture.statut) && (
                                 <button onClick={e => { e.stopPropagation(); handleAction('supprimer', facture); }} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer">Supprimer</button>
                               )}
                             </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { Devis, DevisStats, PaginatedResponse, ApiResponse, StatutDevis } from '@/lib/types';
 
 interface ImportResult {
@@ -63,6 +64,8 @@ function isExpired(devis: Devis) {
 
 export default function DevisListPage() {
   const router = useRouter();
+  const { hasPermission } = useAuth();
+  const canDeleteDevis = hasPermission('devis_delete');
   const [devisList, setDevisList] = useState<Devis[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [stats, setStats] = useState<DevisStats | null>(null);
@@ -437,7 +440,7 @@ export default function DevisListPage() {
                               {devis.statut === 'ACCEPTE' && (
                                 <button onClick={e => { e.stopPropagation(); handleAction('transformer', devis); }} className="w-full text-left px-4 py-2 text-sm text-blue-700 hover:bg-blue-50 cursor-pointer">Transformer en facture</button>
                               )}
-                              {['BROUILLON', 'REFUSE'].includes(devis.statut) && (
+                              {canDeleteDevis && ['BROUILLON', 'REFUSE'].includes(devis.statut) && (
                                 <>
                                   <div className="border-t border-gray-100 my-1" />
                                   <button onClick={e => { e.stopPropagation(); handleAction('supprimer', devis); }} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer">Supprimer</button>

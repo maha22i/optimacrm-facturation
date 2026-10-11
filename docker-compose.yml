@@ -1,0 +1,137 @@
+name: optima-facturation
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack « outil de facturation » — strictement isolée du CRM Chelly déjà en
+# place sur ce serveur : réseau dédié, base dédiée, ports dédiés.
+#
+# Tous les ports sont publiés sur 127.0.0.1 uniquement : le seul point
+# d'entrée public est le nginx de l'hôte, qui termine le TLS.
+#
+#   127.0.0.1:5437 → postgres
+#   127.0.0.1:8401 → backend (API Express)
+#   127.0.0.1:8402 → frontend CRM      (facturationgroupinnov.optimacrm.fr)
+#   127.0.0.1:8403 → portail client    (clientgroupinnov.optimacrm.fr)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Sans plafond, les logs json-file de Docker grossissent indéfiniment et
+# finissent par saturer le disque de l'hôte, partagé avec le CRM existant.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: facturation-postgres
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - facturation-network
+    ports:
+      - "127.0.0.1:5437:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD manquant dans .env}
+      POSTGRES_DB: optimacrm
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD manquant dans .env}
+      TZ: Europe/Paris
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d optimacrm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend-optimacrm
+      dockerfile: Dockerfile
+    image: facturation-backend:latest
+    container_name: facturation-backend
+    restart: unless-stopped
+    logging: *default-logging
+    # Chromium (puppeteer) laisse des processus enfants : un init PID 1
+    # évite l'accumulation de zombies après chaque génération de PDF.
+    init: true
+    networks:
+      - facturation-network
+    ports:
+      - "127.0.0.1:8401:3001"
+    env_file:
+      - ./deploy/env/backend.env
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  crm:
+    build:
+      context: ./frontend-optimacrm
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://facturationgroupinnov.optimacrm.fr/api
+        NEXT_PUBLIC_BACKEND_URL: https://facturationgroupinnov.optimacrm.fr
+        NEXT_PUBLIC_CLIENT_PORTAL_URL: https://clientgroupinnov.optimacrm.fr
+    image: facturation-crm:latest
+    container_name: facturation-crm
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - facturation-network
+    ports:
+      - "127.0.0.1:8402:3000"
+
+  client:
+    build:
+      context: ./frontend-client
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://clientgroupinnov.optimacrm.fr/api/client
+    image: facturation-client:latest
+    container_name: facturation-client
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - facturation-network
+    ports:
+      - "127.0.0.1:8403:3000"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Service outillage, jamais démarré avec `up`.
+  #
+  # Les tables sont en FORCE ROW LEVEL SECURITY : le propriétaire lui-même est
+  # soumis aux policies. Les migrations doivent donc tourner sous `postgres`
+  # (superuser, seul à contourner le RLS), alors que l'application tourne sous
+  # le rôle `optimacrm_app`, restreint au DML et soumis au RLS.
+  #
+  #   docker compose run --rm migrate
+  # ───────────────────────────────────────────────────────────────────────────
+  migrate:
+    profiles: ["tools"]
+    image: facturation-backend:latest
+    container_name: facturation-migrate
+    networks:
+      - facturation-network
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_SUPERUSER_PASSWORD}@postgres:5432/optimacrm
+      TZ: Europe/Paris
+    command: ["node", "src/database/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  facturation-network:
+    name: facturation-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_uploads:
+    driver: local

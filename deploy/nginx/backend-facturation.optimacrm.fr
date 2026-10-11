@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Accès direct à l'API de facturation (tests, Swagger, intégrations tierces).
+#
+# Les deux frontends passent par leur propre origine (/api) et non par ce
+# sous-domaine : l'authentification par cookie ne fonctionne donc pas ici, seule
+# l'authentification par en-tête Authorization: Bearer est utilisable.
+# ─────────────────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name backend-facturation.optimacrm.fr;
+
+    client_max_body_size 25M;
+    client_body_timeout 120s;
+    client_header_timeout 120s;
+
+    access_log /var/log/nginx/facturation-backend.access.log;
+    error_log  /var/log/nginx/facturation-backend.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+    }
+}

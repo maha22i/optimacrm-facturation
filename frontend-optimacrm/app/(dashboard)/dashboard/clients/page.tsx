@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -12,6 +12,16 @@ const STATUTS: { label: string; value: StatutClient | ''; color: string; dot: st
   { label: 'Prospects', value: 'PROSPECT', color: 'text-blue-700', dot: 'bg-blue-500' },
   { label: 'Bloqués', value: 'BLOQUE', color: 'text-red-700', dot: 'bg-red-500' },
   { label: 'Inactifs', value: 'INACTIF', color: 'text-gray-500', dot: 'bg-gray-400' },
+];
+
+type TypeContratFilter = '' | 'copieur' | 'telephonie' | 'copieur_telephonie' | 'sans_contrat';
+
+const TYPES_CONTRAT: { label: string; value: TypeContratFilter }[] = [
+  { label: 'Tous les contrats', value: '' },
+  { label: 'Contrat Copieur', value: 'copieur' },
+  { label: 'Contrat Téléphonie', value: 'telephonie' },
+  { label: 'Copieur + Téléphonie', value: 'copieur_telephonie' },
+  { label: 'Sans contrat', value: 'sans_contrat' },
 ];
 
 const STATUT_CONFIG: Record<StatutClient, { label: string; bg: string; text: string; dot: string }> = {
@@ -55,6 +65,13 @@ function getGradient(str: string) {
   return AVATAR_GRADIENTS[Math.abs(h) % AVATAR_GRADIENTS.length];
 }
 
+const SCROLL_STORAGE_KEY = 'clients-list-scroll';
+const nameCollator = new Intl.Collator('fr', { sensitivity: 'base' });
+
+function compareClients(a: Client, b: Client) {
+  return nameCollator.compare((a.raison_sociale || '').trim(), (b.raison_sociale || '').trim()) || a.id - b.id;
+}
+
 function customFieldsPreview(client: Client) {
   if (!Array.isArray(client.champs_personnalises)) return [];
   return client.champs_personnalises.filter(c => c.label && c.valeur).slice(0, 2);
@@ -62,11 +79,13 @@ function customFieldsPreview(client: Client) {
 
 export default function ClientsPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
-  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
+  const [total, setTotal] = useState(0);
+  const fetchSeq = useRef(0);
   const [search, setSearch] = useState('');
-  const [statutFilter, setStatutFilter] = useState<StatutClient | ''>('');
+  const [statutFilter, setStatutFilter] = useState<StatutClient | ''>('ACTIF');
+  const [typeContratFilter, setTypeContratFilter] = useState<TypeContratFilter>('');
   const [loading, setLoading] = useState(true);
   const [searchDebounce, setSearchDebounce] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -87,6 +106,7 @@ export default function ClientsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const isAdmin = user?.role === 'admin';
+  const canDeleteClients = hasPermission('clients_delete');
   const DELETE_CONFIRM_PHRASE = 'SUPPRIMER TOUS LES CLIENTS';
 
   const handleDeleteAll = async () => {
@@ -97,7 +117,7 @@ export default function ClientsPage() {
       await api.delete('/clients/all');
       setDeleteStep(0);
       setDeleteConfirmText('');
-      fetchClients(1);
+      fetchClients();
     } catch (err: unknown) {
       setDeleteError(err instanceof Error ? err.message : 'Erreur lors de la suppression');
     } finally {
@@ -116,33 +136,86 @@ export default function ClientsPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const fetchClients = useCallback(async (page: number) => {
+  const fetchClients = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), limit: '10' });
-      if (statutFilter) params.set('statut', statutFilter);
-      if (searchDebounce) params.set('search', searchDebounce);
+      const buildParams = (page: number) => {
+        const params = new URLSearchParams({ page: String(page), limit: '100' });
+        if (statutFilter) params.set('statut', statutFilter);
+        if (typeContratFilter) params.set('type_contrat', typeContratFilter);
+        if (searchDebounce) params.set('search', searchDebounce);
+        return params;
+      };
 
-      const res = await api.get<PaginatedResponse<Client>>(`/clients?${params}`);
-      setClients(res.data);
-      setPagination(res.pagination);
+      const first = await api.get<PaginatedResponse<Client>>(`/clients?${buildParams(1)}`);
+      const pages = [first.data];
+      if (first.pagination.totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: first.pagination.totalPages - 1 }, (_, i) =>
+            api.get<PaginatedResponse<Client>>(`/clients?${buildParams(i + 2)}`),
+          ),
+        );
+        pages.push(...rest.map(r => r.data));
+      }
+
+      if (seq !== fetchSeq.current) return;
+      const byId = new Map<number, Client>();
+      for (const client of pages.flat()) byId.set(client.id, client);
+      setClients([...byId.values()].sort(compareClients));
+      setTotal(first.pagination.total);
       setSelectedIds(new Set());
     } catch {
+      if (seq !== fetchSeq.current) return;
       setClients([]);
+      setTotal(0);
     } finally {
-      setLoading(false);
+      if (seq === fetchSeq.current) setLoading(false);
     }
-  }, [statutFilter, searchDebounce]);
+  }, [statutFilter, typeContratFilter, searchDebounce]);
 
   useEffect(() => {
-    fetchClients(1);
+    fetchClients();
   }, [fetchClients]);
 
+  useEffect(() => {
+    if (loading || clients.length === 0) return;
+    const saved = sessionStorage.getItem(SCROLL_STORAGE_KEY);
+    if (saved === null) return;
+    sessionStorage.removeItem(SCROLL_STORAGE_KEY);
+    requestAnimationFrame(() => window.scrollTo(0, Number(saved) || 0));
+  }, [loading, clients.length]);
+
+  const openClient = (clientId: number) => {
+    sessionStorage.setItem(SCROLL_STORAGE_KEY, String(window.scrollY));
+    router.push(`/dashboard/clients/${clientId}`);
+  };
+
   const handleToggleStatut = async (clientId: number, newStatut: 'ACTIF' | 'INACTIF') => {
+    if (
+      newStatut === 'INACTIF' &&
+      !window.confirm('Désactiver ce client ? Ses contrats en cours (actifs, suspendus ou renouvelés) passeront en « Résilié ».')
+    ) return;
     try {
-      await api.put(`/clients/${clientId}`, { statut: newStatut });
-      setToast({ message: newStatut === 'INACTIF' ? 'Client désactivé' : 'Client réactivé', type: 'success' });
-      fetchClients(pagination.page);
+      const res = await api.put<{ data: { contrats_resilies?: unknown[] } }>(`/clients/${clientId}`, { statut: newStatut });
+      const nb = res.data?.contrats_resilies?.length ?? 0;
+      setToast({
+        message: newStatut === 'INACTIF'
+          ? (nb > 0 ? `Client désactivé, ${nb} contrat${nb > 1 ? 's' : ''} résilié${nb > 1 ? 's' : ''}` : 'Client désactivé')
+          : 'Client réactivé',
+        type: 'success',
+      });
+      if (statutFilter && statutFilter !== newStatut) {
+        setClients(prev => prev.filter(c => c.id !== clientId));
+        setTotal(t => Math.max(0, t - 1));
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          next.delete(clientId);
+          return next;
+        });
+      } else {
+        setClients(prev => prev.map(c => (c.id === clientId ? { ...c, statut: newStatut } : c)));
+      }
     } catch {
       setToast({ message: 'Erreur lors du changement de statut', type: 'error' });
     }
@@ -173,6 +246,7 @@ export default function ClientsPage() {
       if (exportContacts) params.set('contacts', '1');
       if (exportApplyFilters) {
         if (statutFilter) params.set('statut', statutFilter);
+        if (typeContratFilter) params.set('type_contrat', typeContratFilter);
         if (searchDebounce) params.set('search', searchDebounce);
       }
       await api.download(`/clients/export?${params}`);
@@ -182,21 +256,6 @@ export default function ClientsPage() {
     } finally {
       setExporting(false);
     }
-  };
-
-  const pageNumbers = () => {
-    const pages: (number | string)[] = [];
-    const { page, totalPages } = pagination;
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (page > 3) pages.push('...');
-      for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
-      if (page < totalPages - 2) pages.push('...');
-      pages.push(totalPages);
-    }
-    return pages;
   };
 
   return (
@@ -218,7 +277,7 @@ export default function ClientsPage() {
       )}
 
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-4">
           <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
             <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -230,9 +289,9 @@ export default function ClientsPage() {
             <p className="mt-0.5 text-sm text-gray-500">Gérez vos clients et prospects</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => fetchClients(pagination.page)}
+            onClick={() => fetchClients()}
             className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition-all cursor-pointer"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -262,11 +321,11 @@ export default function ClientsPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           {
             label: 'Total clients',
-            value: pagination.total,
+            value: total,
             gradient: 'from-blue-500 to-indigo-500',
             icon: (
               <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -307,7 +366,7 @@ export default function ClientsPage() {
         ].map(stat => (
           <div
             key={stat.label}
-            className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow"
+            className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -323,10 +382,10 @@ export default function ClientsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-6">
-        <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
+      <div className="mb-6 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="flex min-w-0 flex-col items-start gap-3 lg:flex-row lg:items-center">
           {/* Search */}
-          <div className="flex-1 relative w-full lg:max-w-md">
+          <div className="relative w-full min-w-0 flex-1 lg:max-w-md">
             <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
             </svg>
@@ -355,9 +414,25 @@ export default function ClientsPage() {
             </svg>
           </div>
 
+          {/* Type de contrat dropdown */}
+          <div className="relative">
+            <select
+              value={typeContratFilter}
+              onChange={e => setTypeContratFilter(e.target.value as TypeContratFilter)}
+              className="appearance-none rounded-xl bg-gray-50/80 border border-gray-200 py-2.5 pl-4 pr-10 text-sm font-medium text-gray-700 focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 outline-none transition cursor-pointer"
+            >
+              {TYPES_CONTRAT.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </div>
+
           {/* Export + Delete All */}
           <div className="flex items-center gap-2 ml-auto">
-            {isAdmin && pagination.total > 0 && (
+            {isAdmin && canDeleteClients && total > 0 && (
               <button
                 onClick={() => setDeleteStep(1)}
                 className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-100 hover:border-red-300 transition cursor-pointer"
@@ -381,7 +456,7 @@ export default function ClientsPage() {
         </div>
 
         {/* Active filter chips */}
-        {(statutFilter || search) && (
+        {(statutFilter || typeContratFilter || search) && (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
             <span className="text-xs text-gray-400 font-medium">Filtres actifs :</span>
             {search && (
@@ -404,7 +479,17 @@ export default function ClientsPage() {
                 </button>
               </span>
             )}
-            <button onClick={() => { setSearch(''); setStatutFilter(''); }} className="text-xs text-gray-400 hover:text-gray-600 font-medium ml-1 cursor-pointer">
+            {typeContratFilter && (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                {TYPES_CONTRAT.find(t => t.value === typeContratFilter)?.label}
+                <button onClick={() => setTypeContratFilter('')} className="hover:text-blue-900 cursor-pointer">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+            )}
+            <button onClick={() => { setSearch(''); setStatutFilter(''); setTypeContratFilter(''); }} className="text-xs text-gray-400 hover:text-gray-600 font-medium ml-1 cursor-pointer">
               Tout effacer
             </button>
           </div>
@@ -412,9 +497,9 @@ export default function ClientsPage() {
       </div>
 
       {/* Results count */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="mb-3 flex items-center justify-between">
         <p className="text-sm text-gray-500">
-          <span className="font-semibold text-gray-700">{pagination.total}</span> client{pagination.total > 1 ? 's' : ''} trouvé{pagination.total > 1 ? 's' : ''}
+          <span className="font-semibold text-gray-700">{total}</span> client{total > 1 ? 's' : ''} trouvé{total > 1 ? 's' : ''}
         </p>
         {selectedIds.size > 0 && (
           <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
@@ -424,7 +509,7 @@ export default function ClientsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -485,7 +570,13 @@ export default function ClientsPage() {
               ) : clients.map(client => (
                 <tr
                   key={client.id}
-                  onClick={() => router.push(`/dashboard/clients/${client.id}`)}
+                  onClick={e => {
+                    if (e.metaKey || e.ctrlKey) window.open(`/dashboard/clients/${client.id}`, '_blank', 'noopener');
+                    else openClient(client.id);
+                  }}
+                  onAuxClick={e => {
+                    if (e.button === 1) window.open(`/dashboard/clients/${client.id}`, '_blank', 'noopener');
+                  }}
                     className={`group hover:bg-blue-50/30 cursor-pointer transition-colors ${selectedIds.has(client.id) ? 'bg-blue-50/50' : ''}`}
                 >
                   <td className="w-12 px-4 py-3.5">
@@ -500,7 +591,7 @@ export default function ClientsPage() {
                   <td className="px-4 py-3.5">
                     <span className="text-xs font-bold text-gray-400 font-mono">{client.numero_client}</span>
                   </td>
-                  <td className="px-4 py-3.5">
+                  <td className="max-w-[240px] px-4 py-3 xl:max-w-xs">
                     <div className="flex items-center gap-3">
                       <div className={`h-9 w-9 rounded-xl bg-gradient-to-br ${getGradient(client.raison_sociale)} flex items-center justify-center text-white text-[11px] font-bold shadow-sm shrink-0`}>
                         {getInitials(client.raison_sociale)}
@@ -528,9 +619,9 @@ export default function ClientsPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3.5">
+                  <td className="px-4 py-3">
                     {customFieldsPreview(client).length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5 max-w-[200px]">
+                      <div className="flex max-w-[180px] flex-wrap gap-1.5">
                         {customFieldsPreview(client).map((champ, idx) => (
                           <span key={`${champ.label}-${idx}`} className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
                             {champ.label}: {champ.valeur}
@@ -544,13 +635,13 @@ export default function ClientsPage() {
                   <td className="px-4 py-3.5">
                     <StatusBadge statut={client.statut} />
                   </td>
-                  <td className="px-4 py-3.5">
+                  <td className="whitespace-nowrap px-4 py-3">
                     <span className="text-xs text-gray-400">{new Date(client.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-center gap-1">
                       <button
-                        onClick={e => { e.stopPropagation(); router.push(`/dashboard/clients/${client.id}`); }}
+                        onClick={e => { e.stopPropagation(); openClient(client.id); }}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
                         title="Voir la fiche"
                       >
@@ -559,6 +650,19 @@ export default function ClientsPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                         </svg>
                       </button>
+                      <a
+                        href={`/dashboard/clients/${client.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        onAuxClick={e => e.stopPropagation()}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition cursor-pointer"
+                        title="Ouvrir dans un nouvel onglet"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                        </svg>
+                      </a>
                       <button
                         onClick={e => { e.stopPropagation(); router.push(`/dashboard/clients/${client.id}/modifier`); }}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
@@ -596,54 +700,6 @@ export default function ClientsPage() {
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
-        {pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4">
-            <p className="text-sm text-gray-500">
-              Affichage de <span className="font-medium text-gray-700">{(pagination.page - 1) * pagination.limit + 1}</span> à{' '}
-              <span className="font-medium text-gray-700">{Math.min(pagination.page * pagination.limit, pagination.total)}</span> sur{' '}
-              <span className="font-medium text-gray-700">{pagination.total}</span>
-            </p>
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={pagination.page <= 1}
-                onClick={() => fetchClients(pagination.page - 1)}
-                className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-              {pageNumbers().map((p, i) =>
-                typeof p === 'string' ? (
-                  <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm">...</span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => fetchClients(p)}
-                    className={`h-9 min-w-[36px] rounded-xl text-sm font-medium transition cursor-pointer ${
-                      p === pagination.page
-                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm shadow-blue-500/25'
-                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
-              <button
-                disabled={pagination.page >= pagination.totalPages}
-                onClick={() => fetchClients(pagination.page + 1)}
-                className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Modal Export */}
@@ -737,7 +793,7 @@ export default function ClientsPage() {
               </div>
 
               {/* Filtres */}
-              {(statutFilter || searchDebounce) && (
+              {(statutFilter || typeContratFilter || searchDebounce) && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Périmètre</label>
                   <div className="space-y-2">
@@ -763,12 +819,11 @@ export default function ClientsPage() {
                     <div>
                       <p className="text-sm font-medium text-gray-700">Avec les filtres actifs</p>
                         <p className="text-xs text-gray-400">
-                          {statutFilter && searchDebounce
-                            ? `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label} + Recherche : "${searchDebounce}"`
-                            : statutFilter
-                              ? `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label}`
-                              : `Recherche : "${searchDebounce}"`
-                          }
+                          {[
+                            statutFilter && `Statut : ${STATUTS.find(s => s.value === statutFilter)?.label}`,
+                            typeContratFilter && `Contrat : ${TYPES_CONTRAT.find(t => t.value === typeContratFilter)?.label}`,
+                            searchDebounce && `Recherche : "${searchDebounce}"`,
+                          ].filter(Boolean).join(' + ')}
                         </p>
                       </div>
                     </label>
@@ -783,7 +838,7 @@ export default function ClientsPage() {
 
             <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4 bg-gray-50/50">
               <p className="text-xs text-gray-400">
-                {pagination.total} client{pagination.total > 1 ? 's' : ''} au total
+                {total} client{total > 1 ? 's' : ''} au total
               </p>
               <div className="flex items-center gap-3">
                 <button
@@ -835,7 +890,7 @@ export default function ClientsPage() {
             <div className="p-6">
               <p className="text-sm text-gray-700">
                 Vous êtes sur le point de supprimer <strong className="text-red-600">définitivement</strong> la totalité des{' '}
-                <strong className="text-red-600">{pagination.total} client(s)</strong>, ainsi que toutes les données associées : adresses, contacts, documents, contrats, devis, factures et parc machines.
+                <strong className="text-red-600">{total} client(s)</strong>, ainsi que toutes les données associées : adresses, contacts, documents, contrats, devis, factures et parc machines.
               </p>
               <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-3">
                 <div className="flex gap-2">
@@ -885,7 +940,7 @@ export default function ClientsPage() {
             </div>
             <div className="p-6">
               <p className="text-sm text-gray-700 mb-4">
-                Pour confirmer la suppression de <strong>{pagination.total} client(s)</strong>, tapez exactement :
+                Pour confirmer la suppression de <strong>{total} client(s)</strong>, tapez exactement :
               </p>
               <div className="rounded-lg bg-gray-100 px-3 py-2 text-center mb-4">
                 <code className="text-sm font-bold text-red-600 select-all">{DELETE_CONFIRM_PHRASE}</code>

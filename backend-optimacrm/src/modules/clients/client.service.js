@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { bucket, isFirebaseReady } from '../../config/firebase.js';
+import { STATUTS_CONTRAT_EN_VIGUEUR } from '../contrats/contrat.service.js';
 
 const CLIENT_FIELDS = `
   id, numero_client, raison_sociale, forme_juridique, siret, siren,
@@ -58,11 +59,23 @@ function normalizeChampsPersonnalises(value) {
     .filter((item) => item.label && item.valeur);
 }
 
+const hasContratType = (type) => `EXISTS (
+  SELECT 1 FROM contrats ct
+  WHERE ct.client_id = c.id AND ct.deleted_at IS NULL AND ct.type_contrat = '${type}'
+)`;
+
+const TYPE_CONTRAT_FILTERS = {
+  copieur: hasContratType('Copieur'),
+  telephonie: hasContratType('Telephonie'),
+  copieur_telephonie: `${hasContratType('Copieur')} AND ${hasContratType('Telephonie')}`,
+  sans_contrat: `NOT EXISTS (SELECT 1 FROM contrats ct WHERE ct.client_id = c.id AND ct.deleted_at IS NULL)`,
+};
+
 // ---------------------------------------------------------------------------
 // CLIENTS — CRUD
 // ---------------------------------------------------------------------------
 
-export async function listClients({ page = 1, limit = 10, statut, search }) {
+export async function listClients({ page = 1, limit = 10, statut, search, type_contrat }) {
   const offset = (page - 1) * limit;
   const conditions = [];
   const params = [];
@@ -71,6 +84,10 @@ export async function listClients({ page = 1, limit = 10, statut, search }) {
   if (statut) {
     conditions.push(`c.statut = $${i++}`);
     params.push(statut);
+  }
+
+  if (TYPE_CONTRAT_FILTERS[type_contrat]) {
+    conditions.push(`(${TYPE_CONTRAT_FILTERS[type_contrat]})`);
   }
 
   if (search) {
@@ -88,7 +105,7 @@ export async function listClients({ page = 1, limit = 10, statut, search }) {
 
   const clientsRes = await query(
     `SELECT ${CLIENT_FIELDS} FROM clients c ${where}
-     ORDER BY c.created_at DESC LIMIT $${i} OFFSET $${i + 1}`,
+     ORDER BY LOWER(TRIM(c.raison_sociale)) ASC NULLS LAST, c.id ASC LIMIT $${i} OFFSET $${i + 1}`,
     [...params, limit, offset],
   );
   const countRes = await query(`SELECT COUNT(*)::int AS total FROM clients c ${where}`, params);
@@ -230,7 +247,9 @@ export async function updateClient(id, data) {
     vals,
   );
 
-  return result.rows[0];
+  const updated = result.rows[0];
+  const contrats_resilies = updated.statut === 'INACTIF' ? await resilierContratsDuClient(id) : [];
+  return { ...updated, contrats_resilies };
 }
 
 export async function deleteClient(id) {
@@ -239,7 +258,18 @@ export async function deleteClient(id) {
     [id],
   );
   if (result.rows.length === 0) throw ApiError.notFound('Client non trouvé');
-  return result.rows[0];
+  const contrats_resilies = await resilierContratsDuClient(id);
+  return { ...result.rows[0], contrats_resilies };
+}
+
+async function resilierContratsDuClient(clientId) {
+  const res = await query(
+    `UPDATE contrats SET statut = 'Résilié', updated_at = NOW()
+     WHERE client_id = $1 AND deleted_at IS NULL AND statut = ANY($2)
+     RETURNING id, numero_contrat`,
+    [clientId, STATUTS_CONTRAT_EN_VIGUEUR],
+  );
+  return res.rows;
 }
 
 export async function deleteAllClients() {
@@ -404,10 +434,12 @@ export async function updateAdresse(clientId, adresseId, data) {
 
 export async function deleteAdresse(clientId, adresseId) {
   const result = await query(
-    'DELETE FROM client_adresses WHERE id = $1 AND client_id = $2 RETURNING id',
+    `DELETE FROM client_adresses WHERE id = $1 AND client_id = $2
+     RETURNING id, type, ligne1, code_postal, ville`,
     [adresseId, clientId],
   );
   if (result.rows.length === 0) throw ApiError.notFound('Adresse non trouvée');
+  return result.rows[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -476,10 +508,12 @@ export async function updateContact(clientId, contactId, data) {
 
 export async function deleteContact(clientId, contactId) {
   const result = await query(
-    'DELETE FROM client_contacts WHERE id = $1 AND client_id = $2 RETURNING id',
+    `DELETE FROM client_contacts WHERE id = $1 AND client_id = $2
+     RETURNING id, nom, prenom, fonction, email`,
     [contactId, clientId],
   );
   if (result.rows.length === 0) throw ApiError.notFound('Contact non trouvé');
+  return result.rows[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -549,13 +583,20 @@ export async function deleteDocument(clientId, documentId) {
   }
 
   await query('DELETE FROM client_documents WHERE id = $1 AND client_id = $2', [documentId, clientId]);
+  return doc;
+}
+
+/** Raison sociale d'un client, pour libeller une entrée de journal. */
+export async function getRaisonSociale(clientId) {
+  const { rows } = await query('SELECT raison_sociale FROM clients WHERE id = $1', [clientId]);
+  return rows[0]?.raison_sociale || `#${clientId}`;
 }
 
 // ---------------------------------------------------------------------------
 // EXPORT
 // ---------------------------------------------------------------------------
 
-export async function getClientsForExport({ statut, search, includeAdresses, includeContacts }) {
+export async function getClientsForExport({ statut, search, type_contrat, includeAdresses, includeContacts }) {
   const conditions = [];
   const params = [];
   let i = 1;
@@ -563,6 +604,10 @@ export async function getClientsForExport({ statut, search, includeAdresses, inc
   if (statut) {
     conditions.push(`c.statut = $${i++}`);
     params.push(statut);
+  }
+
+  if (TYPE_CONTRAT_FILTERS[type_contrat]) {
+    conditions.push(`(${TYPE_CONTRAT_FILTERS[type_contrat]})`);
   }
 
   if (search) {

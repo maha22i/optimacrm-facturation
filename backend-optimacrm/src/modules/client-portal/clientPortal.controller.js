@@ -5,7 +5,31 @@ import { query, runWithTenantContext } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as service from './clientPortal.service.js';
+import * as authService from '../auth/auth.service.js';
+import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { generateFacturePdf } from '../factures/pdf.service.js';
+
+// Les actions du portail sont rangées dans leur propre module pour rester
+// distinguables de celles des utilisateurs internes.
+//
+// Les routes publiques (login, logout, mot de passe oublié) s'exécutent sans
+// tenantMiddleware : le tenant doit être passé explicitement, sinon le DEFAULT
+// de la colonne tenant_id échoue faute de contexte posé sur la connexion.
+function logPortail({ tenantId, user, req, action, description, details, statut = 'succes' }) {
+  return activityLog.log({
+    userId: user?.id ?? null,
+    userNom: activityLog.getUserName(user),
+    action,
+    module: MODULES.ESPACE_CLIENT,
+    description,
+    entityType: 'espace_client',
+    details,
+    statut,
+    ipAddress: activityLog.getClientIp(req),
+    tenantId,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -30,19 +54,42 @@ export async function login(req, res, next) {
        WHERE u.email = $1`,
       [email.toLowerCase()],
     );
-    if (result.rows.length === 0) throw ApiError.unauthorized('Identifiants invalides');
+    // Email inconnu : aucun tenant à rattacher (colonne NOT NULL), la tentative
+    // ne peut donc que partir dans les logs applicatifs.
+    if (result.rows.length === 0) {
+      console.warn(`[EspaceClient] Connexion échouée — email inconnu : ${email} (IP ${activityLog.getClientIp(req)})`);
+      throw ApiError.unauthorized('Identifiants invalides');
+    }
 
     const user = result.rows[0];
 
-    if (user.role !== 'client') throw ApiError.unauthorized('Identifiants invalides');
-    if (!user.is_active) throw ApiError.forbidden('Compte désactivé');
-    if (user.tenant_id && user.tenant_statut === 'suspendu') throw ApiError.forbidden('Compte suspendu');
+    const refuser = async (motif, erreur) => {
+      await logPortail({
+        tenantId: user.tenant_id, user, req,
+        action: 'connexion_echouee',
+        description: `Connexion à l'espace client refusée pour ${user.email} — ${motif}`,
+        details: { email: user.email, motif },
+        statut: 'echec',
+      });
+      throw erreur;
+    };
+
+    if (user.role !== 'client') await refuser('compte non client', ApiError.unauthorized('Identifiants invalides'));
+    if (!user.is_active) await refuser('compte désactivé', ApiError.forbidden('Compte désactivé'));
+    if (user.tenant_id && user.tenant_statut === 'suspendu') await refuser('compte suspendu', ApiError.forbidden('Compte suspendu'));
 
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) throw ApiError.unauthorized('Identifiants invalides');
+    if (!valid) await refuser('mot de passe incorrect', ApiError.unauthorized('Identifiants invalides'));
 
     const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+    });
+
+    await logPortail({
+      tenantId: user.tenant_id, user, req,
+      action: 'connexion',
+      description: `Connexion à l'espace client de ${user.email}`,
+      details: { email: user.email, client_id: user.client_id },
     });
 
     res.cookie('token', token, COOKIE_OPTIONS);
@@ -59,7 +106,18 @@ export async function login(req, res, next) {
   } catch (err) { next(err); }
 }
 
-export async function logout(_req, res) {
+export async function logout(req, res) {
+  // Route publique : l'identité n'est portée que par le cookie, encore présent
+  // à ce stade. Un token expiré reste exploitable pour nommer l'auteur.
+  const identite = await authService.getIdentiteDepuisToken(req.cookies?.token);
+  if (identite) {
+    await logPortail({
+      tenantId: identite.tenant_id, user: identite, req,
+      action: 'deconnexion',
+      description: `Déconnexion de l'espace client de ${activityLog.getUserName(identite)}`,
+    });
+  }
+
   res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
   sendSuccess(res, null, 'Déconnecté');
 }
@@ -86,10 +144,25 @@ export async function changePassword(req, res, next) {
     if (!user) throw ApiError.notFound('Utilisateur introuvable');
 
     const valid = await bcrypt.compare(old_password, user.password);
-    if (!valid) throw ApiError.unauthorized('Mot de passe actuel incorrect');
+    if (!valid) {
+      await activityLog.logRequest(req, {
+        action: 'mot_de_passe_modifie',
+        module: MODULES.ESPACE_CLIENT,
+        description: `Échec du changement de mot de passe de ${activityLog.getUserName(req.user)} — mot de passe actuel incorrect`,
+        entityType: 'espace_client',
+        statut: 'echec',
+      });
+      throw ApiError.unauthorized('Mot de passe actuel incorrect');
+    }
 
     const hashed = await bcrypt.hash(new_password, 12);
     await query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hashed, req.user.id]);
+    await activityLog.logRequest(req, {
+      action: 'mot_de_passe_modifie',
+      module: MODULES.ESPACE_CLIENT,
+      description: `Changement du mot de passe de l'espace client de ${activityLog.getUserName(req.user)}`,
+      entityType: 'espace_client',
+    });
     sendSuccess(res, null, 'Mot de passe modifié');
   } catch (err) { next(err); }
 }
@@ -158,6 +231,13 @@ export async function forgotPassword(req, res, next) {
        WHERE id = $3`,
       [tokenHash, expiresAt, user.id],
     );
+
+    await logPortail({
+      tenantId: user.tenant_id, user, req,
+      action: 'mot_de_passe_oublie',
+      description: `Demande de réinitialisation du mot de passe pour ${user.email}`,
+      details: { email: user.email },
+    });
 
     try {
       await runWithTenantContext(user.tenant_id, async () => {
@@ -255,6 +335,12 @@ export async function resetPassword(req, res, next) {
          WHERE id = $2`,
         [hashedPassword, user.id],
       );
+    });
+
+    await logPortail({
+      tenantId: user.tenant_id, user, req,
+      action: 'mot_de_passe_reinitialise',
+      description: `Réinitialisation du mot de passe de l'espace client (utilisateur ${user.id})`,
     });
 
     sendSuccess(res, null, 'Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.');
@@ -360,6 +446,15 @@ export async function createTicket(req, res, next) {
   try {
     const userNom = `${req.user.first_name} ${req.user.last_name}`.trim();
     const ticket = await service.createTicket(req.clientId, req.user.id, userNom, req.body);
+    await activityLog.logRequest(req, {
+      action: 'ticket_cree',
+      module: MODULES.ESPACE_CLIENT,
+      description: `Ticket ${ticket.numero} créé depuis l'espace client — ${req.body.sujet}`,
+      entityType: 'ticket',
+      entityId: ticket.id,
+      entityLabel: ticket.numero,
+      details: { sujet: req.body.sujet, priorite: ticket.priorite },
+    });
     sendSuccess(res, ticket, 'Ticket créé', 201);
   } catch (err) { next(err); }
 }
@@ -370,6 +465,14 @@ export async function addTicketComment(req, res, next) {
     const comment = await service.addTicketComment(
       req.clientId, parseInt(req.params.id), req.user.id, userNom, req.body.contenu,
     );
+    await activityLog.logRequest(req, {
+      action: 'commentaire_ajoute',
+      module: MODULES.ESPACE_CLIENT,
+      description: `Commentaire ajouté depuis l'espace client sur le ticket #${req.params.id}`,
+      entityType: 'ticket',
+      entityId: parseInt(req.params.id),
+      details: { commentaire_id: comment?.id },
+    });
     sendSuccess(res, comment, 'Commentaire ajouté', 201);
   } catch (err) { next(err); }
 }

@@ -82,7 +82,7 @@ export async function listProduits({ page = 1, limit = 20, categorie, search, ac
      LEFT JOIN fournisseurs f ON f.id = p.fournisseur_id
      LEFT JOIN marques m ON m.id = p.marque_id
      ${where}
-     ORDER BY p.categorie, p.designation
+     ORDER BY p.categorie, p.designation, p.id
      LIMIT $${i} OFFSET $${i + 1}`,
     [...params, limit, offset]
   );
@@ -102,6 +102,15 @@ export async function getCategories() {
 }
 
 // ── GET BY ID (complet) ─────────────────────────────────────────────────────────
+
+/** Libellé d'un produit, pour renseigner une entrée de journal. */
+export async function getLibelleProduit(id) {
+  const { rows } = await query(
+    'SELECT designation, reference FROM catalogue_produits WHERE id = $1',
+    [id],
+  );
+  return rows[0]?.designation || rows[0]?.reference || `#${id}`;
+}
 
 export async function getProduitById(id) {
   const result = await query(

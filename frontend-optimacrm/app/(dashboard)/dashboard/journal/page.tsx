@@ -2,12 +2,16 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import Link from 'next/link';
 
+// Les champs liés à l'auteur ne sont renvoyés par l'API qu'aux administrateurs.
 interface ActivityLog {
   id: number;
-  user_id: number | null;
-  user_nom: string;
+  user_id?: string | null;
+  user_nom?: string | null;
+  user_email?: string | null;
+  user_role?: string | null;
   action: string;
   module: string;
   description: string;
@@ -16,8 +20,66 @@ interface ActivityLog {
   entity_label: string | null;
   details: Record<string, unknown>;
   statut: string;
-  ip_address: string | null;
+  ip_address?: string | null;
   created_at: string;
+}
+
+interface Auteur {
+  user_id: string;
+  user_nom: string | null;
+  user_role: string | null;
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  user: 'Utilisateur',
+  admin_technique: 'Admin technique',
+  technicien: 'Technicien',
+  super_admin: 'Super admin',
+  client: 'Client',
+};
+
+const AVATAR_GRADIENTS = [
+  'from-blue-500 to-indigo-600',
+  'from-emerald-500 to-teal-600',
+  'from-violet-500 to-purple-600',
+  'from-amber-500 to-orange-600',
+  'from-rose-500 to-pink-600',
+  'from-cyan-500 to-sky-600',
+];
+
+function getInitials(nom: string) {
+  return nom.split(/\s+/).filter(Boolean).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+
+function AuteurBadge({ log, compact = false }: { log: ActivityLog; compact?: boolean }) {
+  if (!log.user_id) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-[9px] font-bold text-gray-500">⚙</span>
+        <span className="text-xs font-semibold text-gray-500">{log.user_nom || 'Système'}</span>
+      </span>
+    );
+  }
+  const nom = log.user_nom || 'Utilisateur';
+  const hash = [...log.user_id].reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const gradient = AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length];
+  return (
+    <span className="inline-flex items-center gap-1.5" title={log.user_email || undefined}>
+      <span className={`flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br ${gradient} text-[9px] font-bold text-white`}>
+        {getInitials(nom)}
+      </span>
+      <span className="text-xs font-semibold text-gray-800">{nom}</span>
+      {log.user_role && (
+        <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+          {ROLE_LABELS[log.user_role] || log.user_role}
+        </span>
+      )}
+      {!compact && log.user_email && (
+        <span className="hidden text-[11px] text-gray-400 sm:inline">{log.user_email}</span>
+      )}
+    </span>
+  );
 }
 
 interface Stats {
@@ -35,7 +97,11 @@ interface Pagination {
   totalPages: number;
 }
 
+// Doit rester aligné avec MODULES côté backend (src/config/activityModules.js),
+// hors `super-admin` : un module absent d'ici retombe silencieusement sur la
+// pastille « Paramètres » et n'a pas d'onglet de filtre.
 const MODULE_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
+  authentification: { label: 'Connexions',    color: 'text-slate-700',   bg: 'bg-slate-50 border-slate-200',     dot: 'bg-slate-500' },
   clients:        { label: 'Clients',       color: 'text-blue-700',    bg: 'bg-blue-50 border-blue-200',       dot: 'bg-blue-500' },
   contrats:       { label: 'Contrats',      color: 'text-violet-700',  bg: 'bg-violet-50 border-violet-200',   dot: 'bg-violet-500' },
   catalogue:      { label: 'Catalogue',     color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-500' },
@@ -43,22 +109,30 @@ const MODULE_CONFIG: Record<string, { label: string; color: string; bg: string; 
   releves:        { label: 'Relevés',       color: 'text-cyan-700',    bg: 'bg-cyan-50 border-cyan-200',       dot: 'bg-cyan-500' },
   devis:          { label: 'Devis',         color: 'text-indigo-700',  bg: 'bg-indigo-50 border-indigo-200',   dot: 'bg-indigo-500' },
   factures:       { label: 'Factures',      color: 'text-red-700',     bg: 'bg-red-50 border-red-200',         dot: 'bg-red-500' },
+  avoirs:         { label: 'Avoirs',        color: 'text-rose-700',    bg: 'bg-rose-50 border-rose-200',       dot: 'bg-rose-500' },
+  sepa:           { label: 'SEPA',          color: 'text-teal-700',    bg: 'bg-teal-50 border-teal-200',       dot: 'bg-teal-500' },
+  tickets:        { label: 'Tickets',       color: 'text-amber-700',   bg: 'bg-amber-50 border-amber-200',     dot: 'bg-amber-500' },
+  planning:       { label: 'Planning',      color: 'text-lime-700',    bg: 'bg-lime-50 border-lime-200',       dot: 'bg-lime-500' },
+  espace_client:  { label: 'Espace client', color: 'text-fuchsia-700', bg: 'bg-fuchsia-50 border-fuchsia-200', dot: 'bg-fuchsia-500' },
   parametres:     { label: 'Paramètres',    color: 'text-gray-700',    bg: 'bg-gray-50 border-gray-200',       dot: 'bg-gray-500' },
   utilisateurs:   { label: 'Utilisateurs',  color: 'text-gray-700',    bg: 'bg-gray-50 border-gray-200',       dot: 'bg-gray-500' },
 };
+// Pas d'entrée `super-admin` ici : ces actions sont estampillées avec le
+// tenant ciblé mais filtrées côté serveur, elles n'atteignent jamais cet écran.
+// Elles ne sont consultables que depuis la console super-admin.
 
 const ALL_MODULES = Object.keys(MODULE_CONFIG);
 
 function getActionColor(action: string): string {
   if (action.includes('supprim') || action.includes('delete')) return 'bg-red-500';
   if (action.includes('modifi') || action.includes('update') || action === 'devis_envoye' || action === 'facture_envoyee') return 'bg-blue-500';
-  if (action.includes('erreur') || action === 'partiel') return 'bg-amber-500';
+  if (action.includes('erreur') || action.includes('echouee') || action === 'partiel') return 'bg-amber-500';
   if (action === 'connexion' || action === 'deconnexion') return 'bg-gray-400';
   return 'bg-emerald-500';
 }
 
 function getStatutIcon(statut: string) {
-  if (statut === 'erreur') return <span className="text-red-500">&#10060;</span>;
+  if (statut === 'erreur' || statut === 'echec') return <span className="text-red-500">&#10060;</span>;
   if (statut === 'partiel') return <span className="text-amber-500">&#9888;</span>;
   if (statut === 'annule') return <span className="text-gray-400">&#8856;</span>;
   return <span className="text-emerald-500">&#10003;</span>;
@@ -73,6 +147,7 @@ function getEntityLink(entityType: string | null, entityId: number | null): stri
     machine: `/dashboard/parc-machines/${entityId}`,
     devis: `/dashboard/devis/${entityId}`,
     facture: `/dashboard/factures/${entityId}`,
+    ticket: `/dashboard/tickets/${entityId}`,
   };
   return map[entityType] || null;
 }
@@ -105,6 +180,10 @@ function groupByDay(logs: ActivityLog[]): Record<string, ActivityLog[]> {
 }
 
 export default function JournalPage() {
+  const { user } = useAuth();
+  const voirAuteur = user?.role === 'admin' || user?.role === 'super_admin';
+  const [auteurs, setAuteurs] = useState<Auteur[]>([]);
+  const [userFilter, setUserFilter] = useState('');
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, totalPages: 1 });
@@ -124,6 +203,13 @@ export default function JournalPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
+  // Un filtre pointant sur un module qui n'a plus de pastille (module retiré
+  // de MODULE_CONFIG) resterait actif sans aucun moyen de le désélectionner :
+  // le journal paraîtrait vide sans que rien n'indique pourquoi.
+  useEffect(() => {
+    if (moduleFilter && !MODULE_CONFIG[moduleFilter]) setModuleFilter('');
+  }, [moduleFilter]);
+
   const fetchLogs = useCallback(async (page = 1) => {
     setLoading(true);
     try {
@@ -131,6 +217,7 @@ export default function JournalPage() {
       params.set('page', String(page));
       params.set('limit', '50');
       if (moduleFilter) params.set('module', moduleFilter);
+      if (userFilter) params.set('user_id', userFilter);
       if (statutFilter) params.set('statut', statutFilter);
       if (dateDebut) params.set('date_debut', dateDebut);
       if (dateFin) params.set('date_fin', dateFin);
@@ -144,12 +231,13 @@ export default function JournalPage() {
     } finally {
       setLoading(false);
     }
-  }, [moduleFilter, statutFilter, dateDebut, dateFin, searchDebounce]);
+  }, [moduleFilter, userFilter, statutFilter, dateDebut, dateFin, searchDebounce]);
 
   const fetchStats = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (moduleFilter) params.set('module', moduleFilter);
+      if (userFilter) params.set('user_id', userFilter);
       if (dateDebut) params.set('date_debut', dateDebut);
       if (dateFin) params.set('date_fin', dateFin);
       if (searchDebounce) params.set('search', searchDebounce);
@@ -159,12 +247,19 @@ export default function JournalPage() {
     } catch (err) {
       console.error('Erreur chargement stats:', err);
     }
-  }, [moduleFilter, dateDebut, dateFin, searchDebounce]);
+  }, [moduleFilter, userFilter, dateDebut, dateFin, searchDebounce]);
 
   useEffect(() => {
     fetchLogs(1);
     fetchStats();
   }, [fetchLogs, fetchStats]);
+
+  useEffect(() => {
+    if (!voirAuteur) return;
+    api.get<{ data: Auteur[] }>('/activity-logs/auteurs')
+      .then(res => setAuteurs(res.data))
+      .catch(err => console.error('Erreur chargement auteurs:', err));
+  }, [voirAuteur]);
 
   const handleExport = async () => {
     try {
@@ -172,6 +267,7 @@ export default function JournalPage() {
       params.set('page', '1');
       params.set('limit', '10000');
       if (moduleFilter) params.set('module', moduleFilter);
+      if (userFilter) params.set('user_id', userFilter);
       if (statutFilter) params.set('statut', statutFilter);
       if (dateDebut) params.set('date_debut', dateDebut);
       if (dateFin) params.set('date_fin', dateFin);
@@ -180,10 +276,15 @@ export default function JournalPage() {
       const res = await api.get<{ data: ActivityLog[] }>(`/activity-logs?${params}`);
       const rows = res.data;
 
-      const header = 'Date;Utilisateur;Module;Action;Description;Statut\n';
-      const csv = header + rows.map(r =>
-        `${new Date(r.created_at).toLocaleString('fr-FR')};${r.user_nom};${r.module};${r.action};${r.description.replace(/;/g, ',')};${r.statut}`
-      ).join('\n');
+      const header = voirAuteur
+        ? 'Date;Utilisateur;Email;Rôle;Module;Action;Description;Statut\n'
+        : 'Date;Module;Action;Description;Statut\n';
+      const csv = header + rows.map(r => {
+        const auteur = voirAuteur
+          ? `${r.user_nom || 'Système'};${r.user_email || ''};${r.user_role ? ROLE_LABELS[r.user_role] || r.user_role : ''};`
+          : '';
+        return `${new Date(r.created_at).toLocaleString('fr-FR')};${auteur}${r.module};${r.action};${r.description.replace(/;/g, ',')};${r.statut}`;
+      }).join('\n');
 
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -318,10 +419,24 @@ export default function JournalPage() {
           >
             <option value="">Tous les statuts</option>
             <option value="succes">Succès</option>
-            <option value="erreur">Erreur</option>
+            <option value="echec">Échec</option>
             <option value="partiel">Partiel</option>
             <option value="annule">Annulé</option>
           </select>
+          {voirAuteur && (
+            <select
+              value={userFilter}
+              onChange={e => setUserFilter(e.target.value)}
+              className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:bg-white focus:border-blue-300 outline-none cursor-pointer"
+            >
+              <option value="">Tous les utilisateurs</option>
+              {auteurs.map(a => (
+                <option key={a.user_id} value={a.user_id}>
+                  {a.user_nom || 'Utilisateur sans nom'}{a.user_role ? ` (${ROLE_LABELS[a.user_role] || a.user_role})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             type="date"
             value={dateDebut}
@@ -336,9 +451,9 @@ export default function JournalPage() {
             className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:bg-white focus:border-blue-300 outline-none cursor-pointer"
             placeholder="Date fin"
           />
-          {(search || statutFilter || dateDebut || dateFin || moduleFilter) && (
+          {(search || statutFilter || dateDebut || dateFin || moduleFilter || userFilter) && (
             <button
-              onClick={() => { setSearch(''); setStatutFilter(''); setDateDebut(''); setDateFin(''); setModuleFilter(''); }}
+              onClick={() => { setSearch(''); setStatutFilter(''); setDateDebut(''); setDateFin(''); setModuleFilter(''); setUserFilter(''); }}
               className="px-3 py-2 text-xs font-medium text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
             >
               Réinitialiser
@@ -400,8 +515,12 @@ export default function JournalPage() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                                   <span className="text-xs font-medium text-gray-400">{formatTime(log.created_at)}</span>
-                                  <span className="text-xs text-gray-300">•</span>
-                                  <span className="text-xs font-semibold text-gray-700">{log.user_nom || 'Système'}</span>
+                                  {voirAuteur && (
+                                    <>
+                                      <span className="text-xs text-gray-300">•</span>
+                                      <AuteurBadge log={log} />
+                                    </>
+                                  )}
                                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${modCfg.bg} ${modCfg.color}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${modCfg.dot}`} />
                                     {modCfg.label}
@@ -495,7 +614,9 @@ export default function JournalPage() {
               <thead>
                 <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50">
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date/Heure</th>
-                  <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Utilisateur</th>
+                  {voirAuteur && (
+                    <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Utilisateur</th>
+                  )}
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Module</th>
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Action</th>
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Description</th>
@@ -512,7 +633,9 @@ export default function JournalPage() {
                         {new Date(log.created_at).toLocaleDateString('fr-FR')}<br />
                         <span className="text-gray-400">{formatTime(log.created_at)}</span>
                       </td>
-                      <td className="px-4 py-3 text-xs font-medium text-gray-700 whitespace-nowrap">{log.user_nom || 'Système'}</td>
+                      {voirAuteur && (
+                        <td className="px-4 py-3 whitespace-nowrap"><AuteurBadge log={log} compact /></td>
+                      )}
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${modCfg.bg} ${modCfg.color}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${modCfg.dot}`} />

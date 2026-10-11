@@ -67,8 +67,9 @@ const NATIVE_CONTRAT_KEYS = new Set([
   'periodicite', 'date_signature', 'date_installation', 'date_debut',
   'date_echeance', 'date_prochaine_facture', 'date_renouvellement',
   'duree_contrat_mois', 'numero_dossier_financement', 'organisme_credit',
-  'montant_finance', 'loyer_ht', 'location_interne', 'statut',
+  'montant_finance', 'loyer_ht', 'location_interne', 'calage', 'date_calage', 'statut',
   'ftc', 'ect', 'notes', 'devis_id', 'terme_facturation',
+  'duree_reconduction_mois', 'preavis_renouvellement_mois',
 ]);
 
 export async function createConfig(data) {
@@ -163,10 +164,11 @@ export async function updateConfig(id, data) {
 
 export async function deleteConfig(id) {
   const result = await query(
-    'DELETE FROM champs_personnalises_config WHERE id = $1 RETURNING id',
+    'DELETE FROM champs_personnalises_config WHERE id = $1 RETURNING id, entite, cle, label, section',
     [id]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Champ personnalisé non trouvé');
+  return result.rows[0];
 }
 
 export async function updateSectionOrdre(entite, sections) {

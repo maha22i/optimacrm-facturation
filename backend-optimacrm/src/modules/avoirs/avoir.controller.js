@@ -1,6 +1,7 @@
 import * as avoirService from './avoir.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function listAvoirs(req, res, next) {
   try {
@@ -32,7 +33,7 @@ export async function createAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'avoir_cree', module: 'Avoirs',
+        action: 'avoir_cree', module: MODULES.AVOIRS,
         description: `Avoir ${avoir.numero} créé (${avoir.type_avoir}) sur facture ${avoir.numero_facture}`,
         entityType: 'avoir', entityId: avoir.id, entityLabel: avoir.numero,
         details: { montant_ttc: avoir.montant_ttc, type: avoir.type_avoir },
@@ -49,7 +50,7 @@ export async function updateAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'avoir_modifie', module: 'Avoirs',
+        action: 'avoir_modifie', module: MODULES.AVOIRS,
         description: `Avoir ${avoir.numero} modifié`,
         entityType: 'avoir', entityId: avoir.id, entityLabel: avoir.numero,
         ipAddress: activityLog.getClientIp(req),
@@ -65,7 +66,7 @@ export async function validerAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'avoir_valide', module: 'Avoirs',
+        action: 'avoir_valide', module: MODULES.AVOIRS,
         description: `Avoir ${avoir.numero} validé`,
         entityType: 'avoir', entityId: avoir.id, entityLabel: avoir.numero,
         ipAddress: activityLog.getClientIp(req),
@@ -81,7 +82,7 @@ export async function utiliserAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: `avoir_${avoir.mode_utilisation?.toLowerCase() || 'utilise'}`, module: 'Avoirs',
+        action: `avoir_${avoir.mode_utilisation?.toLowerCase() || 'utilise'}`, module: MODULES.AVOIRS,
         description: `Avoir ${avoir.numero} — ${avoir.mode_utilisation === 'IMPUTATION' ? 'imputé sur ' + (avoir.facture_imputee_numero || '') : 'remboursé'}`,
         entityType: 'avoir', entityId: avoir.id, entityLabel: avoir.numero,
         ipAddress: activityLog.getClientIp(req),
@@ -97,7 +98,7 @@ export async function annulerAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'avoir_annule', module: 'Avoirs',
+        action: 'avoir_annule', module: MODULES.AVOIRS,
         description: `Avoir ${avoir.numero} annulé`,
         entityType: 'avoir', entityId: avoir.id, entityLabel: avoir.numero,
         ipAddress: activityLog.getClientIp(req),

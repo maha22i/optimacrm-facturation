@@ -28,6 +28,10 @@ interface CreateUserForm {
 interface PermissionDef {
   key: string;
   label: string;
+  /** Permission sensible : jamais héritée d'un rôle, à cocher une par une. */
+  destructive?: boolean;
+  /** Pastille affichée à la place de « Suppression » (ex. modification du numéro). */
+  badge?: string;
 }
 
 interface PermissionGroup {
@@ -43,8 +47,39 @@ const INITIAL_FORM: CreateUserForm = {
   role: 'user',
 };
 
+function errorMessage(err: unknown, fallback: string): string {
+  return err && typeof err === 'object' && 'message' in err
+    ? (err as { message: string }).message
+    : fallback;
+}
+
+function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 4000);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div className={`fixed top-4 right-4 z-[70] flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-medium shadow-xl ${
+      type === 'success' ? 'bg-emerald-600 text-white shadow-emerald-500/20' : 'bg-red-600 text-white shadow-red-500/20'
+    }`}>
+      <span className="h-5 w-5 shrink-0">
+        {type === 'success' ? (
+          <svg fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+        ) : (
+          <svg fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+        )}
+      </span>
+      {message}
+      <button onClick={onClose} className="ml-2 hover:opacity-70 cursor-pointer">
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+      </button>
+    </div>
+  );
+}
+
 export default function UsersPage() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,11 +106,14 @@ export default function UsersPage() {
   const [permSelected, setPermSelected] = useState<Set<string>>(new Set());
   const [permLoading, setPermLoading] = useState(false);
   const [permSaving, setPermSaving] = useState(false);
-  const [permSaved, setPermSaved] = useState(false);
+  const [permError, setPermError] = useState('');
+  const [permConfirmOpen, setPermConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const isAdmin = user?.role === 'admin';
   const isAdminTechnique = user?.role === 'admin_technique';
   const canManageUsers = isAdmin || isAdminTechnique;
+  const canDeleteUsers = hasPermission('users_delete');
 
   useEffect(() => {
     if (user && !canManageUsers) {
@@ -180,10 +218,7 @@ export default function UsersPage() {
       setUsers((prev) => prev.map((u) => (u.id === editTarget.id ? { ...u, ...res.data } : u)));
       setEditTarget(null);
     } catch (err: unknown) {
-      const message = err && typeof err === 'object' && 'message' in err
-        ? (err as { message: string }).message
-        : 'Une erreur est survenue';
-      setEditError(message);
+      setEditError(errorMessage(err, 'Une erreur est survenue'));
     } finally {
       setEditSaving(false);
     }
@@ -198,10 +233,7 @@ export default function UsersPage() {
       await api.post(`/auth/users/${editTarget.id}/reset-password-link`, {});
       setResetSuccess(`Lien envoyé à ${editTarget.email}`);
     } catch (err: unknown) {
-      const message = err && typeof err === 'object' && 'message' in err
-        ? (err as { message: string }).message
-        : 'Erreur lors de l\'envoi';
-      setEditError(message);
+      setEditError(errorMessage(err, 'Erreur lors de l\'envoi'));
     } finally {
       setResetSending(false);
     }
@@ -217,11 +249,7 @@ export default function UsersPage() {
       setUsers((prev) => [res.data, ...prev]);
       setShowCreateModal(false);
     } catch (err: unknown) {
-      const message =
-        err && typeof err === 'object' && 'message' in err
-          ? (err as { message: string }).message
-          : 'Une erreur est survenue';
-      setCreateError(message);
+      setCreateError(errorMessage(err, 'Une erreur est survenue'));
     } finally {
       setCreating(false);
     }
@@ -230,7 +258,10 @@ export default function UsersPage() {
   async function openPermissions(target: User) {
     setPermTarget(target);
     setPermLoading(true);
-    setPermSaved(false);
+    setPermError('');
+    setPermConfirmOpen(false);
+    setPermGroups([]);
+    setPermSelected(new Set());
 
     try {
       const [groupsRes, userPermsRes] = await Promise.all([
@@ -239,15 +270,21 @@ export default function UsersPage() {
       ]);
       setPermGroups(groupsRes.data);
       setPermSelected(new Set(userPermsRes.data));
-    } catch {
-      // silently fail
+    } catch (err: unknown) {
+      setPermError(errorMessage(err, 'Impossible de charger les permissions'));
     } finally {
       setPermLoading(false);
     }
   }
 
+  function closePermissions() {
+    setPermTarget(null);
+    setPermConfirmOpen(false);
+    setPermError('');
+  }
+
   function togglePermission(key: string) {
-    setPermSaved(false);
+    setPermError('');
     setPermSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -256,9 +293,11 @@ export default function UsersPage() {
     });
   }
 
+  // Les permissions de suppression sont exclues des raccourcis « tout cocher » /
+  // « cocher le groupe » : elles ne s'accordent qu'une par une, délibérément.
   function toggleGroup(group: PermissionGroup) {
-    setPermSaved(false);
-    const groupKeys = group.permissions.map((p) => p.key);
+    setPermError('');
+    const groupKeys = group.permissions.filter((p) => !p.destructive).map((p) => p.key);
     const allSelected = groupKeys.every((k) => permSelected.has(k));
     setPermSelected((prev) => {
       const next = new Set(prev);
@@ -268,26 +307,39 @@ export default function UsersPage() {
   }
 
   function selectAll() {
-    setPermSaved(false);
-    const allKeys = permGroups.flatMap((g) => g.permissions.map((p) => p.key));
-    setPermSelected(new Set(allKeys));
+    setPermError('');
+    const grantable = permGroups.flatMap((g) => g.permissions.filter((p) => !p.destructive).map((p) => p.key));
+    setPermSelected((prev) => {
+      const next = new Set(prev);
+      grantable.forEach((k) => next.add(k));
+      return next;
+    });
   }
 
   function deselectAll() {
-    setPermSaved(false);
+    setPermError('');
     setPermSelected(new Set());
   }
 
-  async function savePermissions() {
+  async function confirmSavePermissions() {
     if (!permTarget) return;
+    const target = permTarget;
     setPermSaving(true);
+    setPermError('');
     try {
-      await api.put(`/permissions/user/${permTarget.id}`, {
+      await api.put<{ data: string[] }>(`/permissions/user/${target.id}`, {
         permissions: Array.from(permSelected),
       });
-      setPermSaved(true);
-    } catch {
-      // silently fail
+      closePermissions();
+      setToast({
+        message: `Permissions de ${target.first_name} ${target.last_name} enregistrées`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      // On garde la modale ouverte avec les cases telles que l'admin les a
+      // laissées : il peut corriger et réessayer sans tout recocher.
+      setPermConfirmOpen(false);
+      setPermError(errorMessage(err, 'Impossible d\'enregistrer les permissions'));
     } finally {
       setPermSaving(false);
     }
@@ -295,8 +347,23 @@ export default function UsersPage() {
 
   if (!user || !canManageUsers) return null;
 
-  const allPermKeys = permGroups.flatMap((g) => g.permissions.map((p) => p.key));
-  const allChecked = allPermKeys.length > 0 && allPermKeys.every((k) => permSelected.has(k));
+  // Un admin détient déjà tout le reste via son rôle : seules les permissions
+  // sensibles (suppressions, numéro de contrat) ont un sens à lui accorder.
+  const targetIsAdmin = permTarget?.role === 'admin';
+  const visibleGroups: PermissionGroup[] = targetIsAdmin
+    ? permGroups
+        .map((g) => ({ ...g, permissions: g.permissions.filter((p) => p.destructive) }))
+        .filter((g) => g.permissions.length > 0)
+    : permGroups;
+
+  const grantableKeys = visibleGroups.flatMap((g) => g.permissions.filter((p) => !p.destructive).map((p) => p.key));
+  const allChecked = grantableKeys.length > 0 && grantableKeys.every((k) => permSelected.has(k));
+
+  // Mises en avant dans la confirmation : ce sont les seules qu'aucun rôle
+  // n'accorde implicitement, donc les seules dont l'octroi n'est pas anodin.
+  const selectedDestructive = permGroups
+    .flatMap((g) => g.permissions)
+    .filter((p) => p.destructive && permSelected.has(p.key));
 
   return (
     <div>
@@ -494,7 +561,7 @@ export default function UsersPage() {
       {/* Modal de permissions */}
       {permTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setPermTarget(null)} />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closePermissions} />
           <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-white shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <div>
@@ -508,7 +575,7 @@ export default function UsersPage() {
                   )}
                 </p>
               </div>
-              <button onClick={() => setPermTarget(null)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors cursor-pointer">
+              <button onClick={closePermissions} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors cursor-pointer">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                 </svg>
@@ -520,60 +587,70 @@ export default function UsersPage() {
                 <div className="flex items-center justify-center py-12">
                   <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full" />
                 </div>
-              ) : permTarget.role === 'admin' ? (
-                <div className="rounded-lg bg-purple-50 border border-purple-200 px-4 py-6 text-center">
-                  <p className="text-sm text-purple-800 font-medium">Les administrateurs ont automatiquement accès à toutes les fonctionnalités.</p>
-                  <p className="text-xs text-purple-600 mt-1">Rétrogradez cet utilisateur en &quot;user&quot; pour gérer ses permissions individuellement.</p>
-                </div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between mb-4">
-                    <p className="text-sm text-gray-600">
-                      <span className="font-medium text-gray-900">{permSelected.size}</span> permission{permSelected.size > 1 ? 's' : ''} activée{permSelected.size > 1 ? 's' : ''}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button onClick={selectAll} disabled={allChecked} className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-300 cursor-pointer">
-                        Tout cocher
-                      </button>
-                      <span className="text-gray-300">|</span>
-                      <button onClick={deselectAll} disabled={permSelected.size === 0} className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-300 cursor-pointer">
-                        Tout décocher
-                      </button>
+                  {permError && (
+                    <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{permError}</div>
+                  )}
+                  {targetIsAdmin ? (
+                    <div className="rounded-lg bg-purple-50 border border-purple-200 px-4 py-3 mb-4">
+                      <p className="text-sm text-purple-800 font-medium">Les administrateurs ont automatiquement accès à toutes les fonctionnalités, sauf les actions sensibles.</p>
+                      <p className="text-xs text-purple-600 mt-1">Cochez ci-dessous les suppressions et la modification du numéro de contrat que vous souhaitez lui autoriser.</p>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium text-gray-900">{permSelected.size}</span> permission{permSelected.size > 1 ? 's' : ''} activée{permSelected.size > 1 ? 's' : ''}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button onClick={selectAll} disabled={allChecked} className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-300 cursor-pointer">
+                          Tout cocher
+                        </button>
+                        <span className="text-gray-300">|</span>
+                        <button onClick={deselectAll} disabled={permSelected.size === 0} className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-300 cursor-pointer">
+                          Tout décocher
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-4">
-                    {permGroups.map((group) => {
-                      const groupKeys = group.permissions.map((p) => p.key);
-                      const groupAllSelected = groupKeys.every((k) => permSelected.has(k));
+                    {visibleGroups.map((group) => {
+                      const groupKeys = group.permissions.filter((p) => !p.destructive).map((p) => p.key);
+                      const groupAllSelected = groupKeys.length > 0 && groupKeys.every((k) => permSelected.has(k));
                       const groupSomeSelected = groupKeys.some((k) => permSelected.has(k));
 
                       return (
                         <div key={group.group} className="rounded-lg border border-gray-200 overflow-hidden">
                           <button
                             onClick={() => toggleGroup(group)}
-                            className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer"
+                            disabled={groupKeys.length === 0}
+                            className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer disabled:cursor-default"
                           >
-                            <div className={`h-4 w-4 rounded border-2 flex items-center justify-center transition-colors ${
-                              groupAllSelected
-                                ? 'bg-blue-600 border-blue-600'
-                                : groupSomeSelected
-                                  ? 'bg-blue-100 border-blue-400'
-                                  : 'border-gray-300'
-                            }`}>
-                              {groupAllSelected && (
-                                <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="none">
-                                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              )}
-                              {!groupAllSelected && groupSomeSelected && (
-                                <div className="h-2 w-2 rounded-sm bg-blue-500" />
-                              )}
-                            </div>
+                            {groupKeys.length > 0 && (
+                              <div className={`h-4 w-4 rounded border-2 flex items-center justify-center transition-colors ${
+                                groupAllSelected
+                                  ? 'bg-blue-600 border-blue-600'
+                                  : groupSomeSelected
+                                    ? 'bg-blue-100 border-blue-400'
+                                    : 'border-gray-300'
+                              }`}>
+                                {groupAllSelected && (
+                                  <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="none">
+                                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                                {!groupAllSelected && groupSomeSelected && (
+                                  <div className="h-2 w-2 rounded-sm bg-blue-500" />
+                                )}
+                              </div>
+                            )}
                             <span className="text-sm font-semibold text-gray-800">{group.group}</span>
-                            <span className="ml-auto text-xs text-gray-400">
-                              {groupKeys.filter((k) => permSelected.has(k)).length}/{groupKeys.length}
-                            </span>
+                            {groupKeys.length > 0 && (
+                              <span className="ml-auto text-xs text-gray-400">
+                                {groupKeys.filter((k) => permSelected.has(k)).length}/{groupKeys.length}
+                              </span>
+                            )}
                           </button>
                           <div className="divide-y divide-gray-100">
                             {group.permissions.map((perm) => {
@@ -581,10 +658,14 @@ export default function UsersPage() {
                               return (
                                 <label
                                   key={perm.key}
-                                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-blue-50/50 transition-colors cursor-pointer"
+                                  className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer ${
+                                    perm.destructive ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-blue-50/50'
+                                  }`}
                                 >
                                   <div className={`h-4 w-4 rounded border-2 flex items-center justify-center transition-colors ${
-                                    checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300'
+                                    checked
+                                      ? perm.destructive ? 'bg-red-600 border-red-600' : 'bg-blue-600 border-blue-600'
+                                      : perm.destructive ? 'border-red-300' : 'border-gray-300'
                                   }`}>
                                     {checked && (
                                       <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="none">
@@ -598,7 +679,14 @@ export default function UsersPage() {
                                     checked={checked}
                                     onChange={() => togglePermission(perm.key)}
                                   />
-                                  <span className="text-sm text-gray-700">{perm.label}</span>
+                                  <span className={`text-sm ${perm.destructive ? 'text-red-800 font-medium' : 'text-gray-700'}`}>
+                                    {perm.label}
+                                  </span>
+                                  {perm.destructive && (
+                                    <span className="ml-auto inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                                      {perm.badge || 'Suppression'}
+                                    </span>
+                                  )}
                                 </label>
                               );
                             })}
@@ -611,39 +699,103 @@ export default function UsersPage() {
               )}
             </div>
 
-            {permTarget.role !== 'admin' && !permLoading && (
-              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50 shrink-0 rounded-b-xl">
-                <div>
-                  {permSaved && (
-                    <span className="inline-flex items-center gap-1.5 text-sm text-green-600 font-medium">
-                      <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                      Permissions enregistrées
-                    </span>
-                  )}
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setPermTarget(null)}
-                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
-                  >
-                    Fermer
-                  </button>
-                  <button
-                    onClick={savePermissions}
-                    disabled={permSaving}
-                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
-                  >
-                    {permSaving && <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
-                    Enregistrer
-                  </button>
-                </div>
+            {!permLoading && (
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 shrink-0 rounded-b-xl">
+                <button
+                  onClick={closePermissions}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Fermer
+                </button>
+                <button
+                  onClick={() => { setPermError(''); setPermConfirmOpen(true); }}
+                  disabled={permSaving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {permSaving && <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                  Enregistrer
+                </button>
               </div>
             )}
           </div>
         </div>
       )}
+
+      {/* Confirmation avant écriture — les permissions changent ce que
+          l'utilisateur ciblé peut faire, on ne l'applique pas sur un clic. */}
+      {permTarget && permConfirmOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="bg-blue-50 p-6 flex items-center gap-4">
+              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Confirmer les permissions</h3>
+                <p className="text-sm text-gray-600 mt-0.5">{permTarget.first_name} {permTarget.last_name}</p>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <p className="text-sm text-gray-700">
+                {permSelected.size === 0 ? (
+                  <>
+                    Vous allez retirer <strong>toutes les permissions</strong> de cet utilisateur.
+                    {!targetIsAdmin && ' Il n\'aura plus accès à aucune fonctionnalité.'}
+                  </>
+                ) : (
+                  <>
+                    Vous allez enregistrer <strong>{permSelected.size} permission{permSelected.size > 1 ? 's' : ''}</strong> pour cet utilisateur.
+                    Les accès prennent effet immédiatement, sans qu&apos;il ait besoin de se reconnecter.
+                  </>
+                )}
+              </p>
+
+              {selectedDestructive.length > 0 && (
+                <div className="mt-4 rounded-xl bg-red-50 border border-red-200 p-3">
+                  <div className="flex gap-2">
+                    <svg className="h-5 w-5 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                    </svg>
+                    <div>
+                      <p className="text-xs font-semibold text-red-800">
+                        Dont {selectedDestructive.length} action{selectedDestructive.length > 1 ? 's' : ''} sensible{selectedDestructive.length > 1 ? 's' : ''} :
+                      </p>
+                      <ul className="mt-1.5 space-y-0.5">
+                        {selectedDestructive.map((p) => (
+                          <li key={p.key} className="text-xs text-red-700">• {p.label}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 pb-6">
+              <button
+                onClick={() => setPermConfirmOpen(false)}
+                disabled={permSaving}
+                className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer disabled:opacity-40"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={confirmSavePermissions}
+                disabled={permSaving}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 shadow-sm transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {permSaving && <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />}
+                {permSaving ? 'Enregistrement...' : 'Confirmer et enregistrer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {loading ? (
@@ -717,7 +869,7 @@ export default function UsersPage() {
                         >
                           {u.is_active ? 'Désactiver' : 'Activer'}
                         </button>
-                        {isAdmin && (
+                        {isAdmin && canDeleteUsers && (
                           <button
                             onClick={() => deleteUser(u)}
                             className="text-red-600 hover:text-red-800 font-medium cursor-pointer"

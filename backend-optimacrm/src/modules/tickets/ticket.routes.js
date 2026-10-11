@@ -54,7 +54,7 @@ router.put(
   ctrl.updateCategorie,
 );
 
-router.delete('/categories/:id', checkPermission('tickets_admin'), ctrl.deleteCategorie);
+router.delete('/categories/:id', checkPermission('tickets_delete'), ctrl.deleteCategorie);
 
 // ── Règles SLA ──────────────────────────────────────────────────────────────
 router.get('/sla-rules', checkPermission('tickets_read'), ctrl.listSlaRules);
@@ -85,7 +85,7 @@ router.put(
   ctrl.updateTicket,
 );
 
-router.delete('/:id', checkPermission('tickets_admin'), ctrl.deleteTicket);
+router.delete('/:id', checkPermission('tickets_delete'), ctrl.deleteTicket);
 
 // ── Statut & Assignation ────────────────────────────────────────────────────
 router.put(

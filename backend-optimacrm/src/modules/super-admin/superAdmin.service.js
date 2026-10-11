@@ -168,7 +168,11 @@ export async function getTenantDetailedStats(id) {
 // ---------------------------------------------------------------------------
 export async function getTenantActivityLogs(id, filters) {
   await getTenantOrThrow(id);
-  return activityLogService.listLogs({ ...filters, tenantId: id });
+  // Seule vue à réintégrer les actions super-admin : elles sont masquées dans
+  // le journal du tenant lui-même (cf. activityLogService.listLogs). Le drapeau
+  // est posé après le spread pour qu'un paramètre de requête ne puisse pas
+  // l'inverser dans l'autre sens.
+  return activityLogService.listLogs({ ...filters, tenantId: id, inclureSuperAdmin: true });
 }
 
 // Alimente le dropdown de filtre "Module" du journal — uniquement les

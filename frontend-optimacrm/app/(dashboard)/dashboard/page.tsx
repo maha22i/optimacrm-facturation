@@ -24,7 +24,7 @@ interface FactureRecente {
 }
 interface ActivityRecente {
   id: number; action: string; module: string; description: string;
-  user_nom: string; entity_label: string; created_at: string;
+  user_nom?: string | null; entity_label: string; created_at: string;
 }
 interface TopClient {
   id: number; raison_sociale: string; numero_client: string;
@@ -1444,8 +1444,12 @@ export default function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-[11px] text-gray-700 font-medium leading-snug truncate">{a.description}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[10px] text-gray-400">{a.user_nom}</span>
-                        <span className="text-gray-200">&middot;</span>
+                        {a.user_nom && (
+                          <>
+                            <span className="text-[10px] text-gray-400">{a.user_nom}</span>
+                            <span className="text-gray-200">&middot;</span>
+                          </>
+                        )}
                         <span className="text-[10px] text-gray-400">{timeAgo(a.created_at)}</span>
                       </div>
                     </div>

@@ -67,7 +67,7 @@ router.put(
   ctrl.updateDevis,
 );
 
-router.delete('/:id', checkPermission('devis_write'), ctrl.deleteDevis);
+router.delete('/:id', checkPermission('devis_delete'), ctrl.deleteDevis);
 
 // ── Actions workflow ──────────────────────────────────────────────────────
 

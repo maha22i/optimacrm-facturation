@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import * as parcService from './parcMachine.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 // ---------------------------------------------------------------------------
 // MACHINES
@@ -42,7 +43,7 @@ export async function createMachine(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'machine_creee',
-        module: 'parc_machines',
+        module: MODULES.PARC_MACHINES,
         description: `Création de la machine ${machine.numero_serie || ''}`,
         entityType: 'machine',
         entityId: machine.id,
@@ -63,7 +64,7 @@ export async function updateMachine(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'machine_modifiee',
-        module: 'parc_machines',
+        module: MODULES.PARC_MACHINES,
         description: `Modification de la machine ${machine.numero_serie || ''}`,
         entityType: 'machine',
         entityId: machine.id,
@@ -87,7 +88,7 @@ export async function deleteMachine(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'machine_supprimee',
-        module: 'parc_machines',
+        module: MODULES.PARC_MACHINES,
         description: `Suppression de la machine ${machineLabel}`,
         entityType: 'machine',
         entityId: machineId,
@@ -102,6 +103,15 @@ export async function deleteMachine(req, res, next) {
 export async function duplicateMachine(req, res, next) {
   try {
     const machine = await parcService.duplicateMachine(parseInt(req.params.id));
+    await activityLog.logRequest(req, {
+      action: 'machine_dupliquee',
+      module: MODULES.PARC_MACHINES,
+      description: `Duplication de la machine #${req.params.id} vers ${machine.numero_serie}`,
+      entityType: 'machine',
+      entityId: machine.id,
+      entityLabel: machine.numero_serie,
+      details: { machine_source_id: parseInt(req.params.id) },
+    });
     sendSuccess(res, machine, 'Machine dupliquée avec succès', 201);
   } catch (err) { next(err); }
 }
@@ -217,7 +227,7 @@ export async function createReleve(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'releve_saisi',
-        module: 'releves',
+        module: MODULES.RELEVES,
         description: `Saisie manuelle du relevé pour la machine #${req.params.id}`,
         entityType: 'machine',
         entityId: parseInt(req.params.id),
@@ -232,18 +242,54 @@ export async function createReleve(req, res, next) {
 
 export async function updateReleve(req, res, next) {
   try {
+    const machineId = parseInt(req.params.id);
     const releve = await parcService.updateReleve(
-      parseInt(req.params.id),
+      machineId,
       parseInt(req.params.releveId),
       req.body,
     );
+    // Un relevé corrigé après coup déplace le dépassement facturé : l'ancienne
+    // et la nouvelle valeur du compteur sont conservées telles quelles.
+    await activityLog.logRequest(req, {
+      action: 'releve_modifie',
+      module: MODULES.RELEVES,
+      description: `Modification du relevé du ${formatDateReleve(releve.date_releve)} pour la machine #${machineId}`,
+      entityType: 'machine',
+      entityId: machineId,
+      entityLabel: `Machine #${machineId}`,
+      details: {
+        releve_id: releve.id,
+        compteur_nb: releve.compteur_nb,
+        compteur_couleur: releve.compteur_couleur,
+        champs_modifies: Object.keys(req.body),
+      },
+    });
     sendSuccess(res, releve, 'Relevé mis à jour');
   } catch (err) { next(err); }
 }
 
 export async function deleteReleve(req, res, next) {
   try {
-    await parcService.deleteReleve(parseInt(req.params.id), parseInt(req.params.releveId));
+    const machineId = parseInt(req.params.id);
+    const releve = await parcService.deleteReleve(machineId, parseInt(req.params.releveId));
+    await activityLog.logRequest(req, {
+      action: 'releve_supprime',
+      module: MODULES.RELEVES,
+      description: `Suppression du relevé du ${formatDateReleve(releve.date_releve)} pour la machine #${machineId}`,
+      entityType: 'machine',
+      entityId: machineId,
+      entityLabel: `Machine #${machineId}`,
+      details: {
+        releve_id: releve.id,
+        compteur_nb: releve.compteur_nb,
+        compteur_couleur: releve.compteur_couleur,
+      },
+    });
     sendSuccess(res, null, 'Relevé supprimé');
   } catch (err) { next(err); }
+}
+
+function formatDateReleve(d) {
+  if (!d) return 'date inconnue';
+  return new Date(d).toLocaleDateString('fr-FR');
 }

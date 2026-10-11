@@ -879,9 +879,9 @@ export async function saveMappingConfig({ name, mapping, user_id }) {
 
 export async function deleteSavedMapping(id) {
   const result = await query(
-    "DELETE FROM import_mappings_saved WHERE id = $1 AND entity_type = 'catalogue' RETURNING id",
+    "DELETE FROM import_mappings_saved WHERE id = $1 AND entity_type = 'catalogue' RETURNING id, name",
     [id]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Mapping non trouvé');
-  return { deleted: true };
+  return result.rows[0];
 }

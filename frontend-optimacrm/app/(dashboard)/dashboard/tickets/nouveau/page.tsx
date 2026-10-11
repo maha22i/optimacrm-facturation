@@ -65,11 +65,13 @@ export default function NouveauTicketPage() {
         const [clientsRes, categoriesRes, usersRes] = await Promise.all([
           api.get<PaginatedResponse<Client>>('/clients?limit=500'),
           api.get<ApiResponse<TicketCategorie[]>>('/tickets/categories'),
-          api.get<PaginatedResponse<User>>('/auth/users'),
+          api.get<PaginatedResponse<User>>('/auth/users?limit=100'),
         ]);
         setClients(clientsRes.data);
         setCategories(categoriesRes.data.filter(c => c.actif));
-        setTechniciens(usersRes.data);
+        setTechniciens(
+          (usersRes.data || []).filter(u => u.role === 'technicien' || u.role === 'admin_technique'),
+        );
       } catch {
         showToast('Erreur lors du chargement des données', 'error');
       }

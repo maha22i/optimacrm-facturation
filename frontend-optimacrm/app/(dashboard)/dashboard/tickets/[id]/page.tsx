@@ -52,7 +52,7 @@ function formatDateShort(d: string) {
 export default function TicketDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const ticketId = params.id as string;
 
   const isTechnicien = user?.role === 'technicien';
@@ -104,8 +104,12 @@ export default function TicketDetailPage() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await api.get<ApiResponse<User[]>>('/auth/users');
-      setUsers(Array.isArray(res.data) ? res.data : []);
+      const res = await api.get<ApiResponse<User[]>>('/auth/users?limit=100');
+      setUsers(
+        (Array.isArray(res.data) ? res.data : []).filter(
+          u => u.role === 'technicien' || u.role === 'admin_technique',
+        ),
+      );
     } catch { /* ignore */ }
   }, []);
 
@@ -225,7 +229,7 @@ export default function TicketDetailPage() {
   const isTermine = ticket.statut === 'resolu';
   const transitions = TRANSITIONS[ticket.statut] || [];
   const canAssign = ['admin', 'admin_technique'].includes(user?.role || '') && !isTermine;
-  const canDelete = ['admin', 'admin_technique'].includes(user?.role || '') && !isTermine;
+  const canDelete = ['admin', 'admin_technique'].includes(user?.role || '') && !isTermine && hasPermission('tickets_delete');
   const canModify = !isTermine;
   const techNom = ticket.technicien_prenom && ticket.technicien_nom_famille
     ? `${ticket.technicien_prenom} ${ticket.technicien_nom_famille}` : null;

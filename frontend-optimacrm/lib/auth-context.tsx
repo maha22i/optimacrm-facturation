@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, isTenantSuspended, resetTenantSuspended } from './api';
-import type { User, ApiResponse, PermissionKey } from './types';
+import { isDeletePermission, type User, type ApiResponse, type PermissionKey } from './types';
 
 interface AuthState {
   user: User | null;
@@ -111,15 +111,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const hasPermission = useCallback((...perms: PermissionKey[]) => {
     if (!state.user) return false;
-    if (state.user.role === 'admin') return true;
-    if (state.user.role === 'admin_technique') {
-      const adminTechPerms = new Set([
-        'tickets_read', 'tickets_write', 'tickets_admin', 'techniciens_manage',
-        'clients_read', 'parc_read', 'dashboard', 'users_manage',
-      ]);
-      const allAllowed = perms.every(p => adminTechPerms.has(p));
-      if (allAllowed) return true;
+
+    // Une permission destructive (suppression, modification du numéro de
+    // contrat) n'est jamais héritée d'un rôle : elle doit figurer
+    // explicitement dans `permissions`. Même logique que le middleware
+    // checkPermission côté backend, qui reste la seule barrière qui compte.
+    const destructive = perms.some(isDeletePermission);
+
+    if (!destructive) {
+      if (state.user.role === 'admin') return true;
+      if (state.user.role === 'admin_technique') {
+        const adminTechPerms = new Set([
+          'tickets_read', 'tickets_write', 'tickets_admin', 'techniciens_manage',
+          'clients_read', 'parc_read', 'dashboard', 'users_manage',
+        ]);
+        const allAllowed = perms.every(p => adminTechPerms.has(p));
+        if (allAllowed) return true;
+      }
     }
+
     const userPerms = state.user.permissions || [];
     return perms.some(p => userPerms.includes(p));
   }, [state.user]);

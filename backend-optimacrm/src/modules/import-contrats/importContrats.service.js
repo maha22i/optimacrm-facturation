@@ -1,11 +1,47 @@
 import { pool, query, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
-import { CONTRATS_FIELD_GROUPS, getAllContratFields, RUBRIQUE_FIELD_TO_CATEGORIE } from '../../config/contratsFieldSynonyms.js';
+import {
+  CONTRATS_FIELD_GROUPS, getAllContratFields, RUBRIQUE_FIELD_TO_CATEGORIE,
+  matchAutoIgnoredHeader,
+} from '../../config/contratsFieldSynonyms.js';
 import { getCategoriesForType } from '../../config/contratCategories.js';
+import { planifierAugmentation } from '../contrats/augmentationAnnuelle.service.js';
+import { recalculerRenouvellement } from '../contrats/renouvellement.service.js';
 import fs from 'fs/promises';
 import path from 'path';
 
 const TEMP_DIR = path.resolve('uploads/import-temp');
+
+/**
+ * Repose la planification de l'augmentation d'un contrat mis à jour par import :
+ * le taux importé ne rattrape jamais les anniversaires déjà écoulés.
+ */
+async function replanifierAugmentationImport(client, contratId) {
+  const { rows: [contrat] } = await client.query(
+    `SELECT date_installation, date_signature, date_debut,
+            augmentation_active, augmentation_pourcentage,
+            augmentation_derniere_date, augmentation_prochaine_date
+     FROM contrats WHERE id = $1`,
+    [contratId],
+  );
+  if (!contrat) return;
+
+  // Un anniversaire échu non encore appliqué reste dû (cf. contrat.service.js).
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  if (contrat.augmentation_active
+      && parseFloat(contrat.augmentation_pourcentage) > 0
+      && contrat.augmentation_prochaine_date
+      && contrat.augmentation_prochaine_date <= aujourdhui) {
+    return;
+  }
+
+  const plan = planifierAugmentation({ ...contrat, augmentation_date_reference: null }, aujourdhui);
+  await client.query(
+    `UPDATE contrats SET augmentation_date_reference = $1, augmentation_prochaine_date = $2
+     WHERE id = $3`,
+    [plan.augmentation_date_reference, plan.augmentation_prochaine_date, contratId],
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UTILS
@@ -129,6 +165,21 @@ const KNOWN_BRANDS = [
   'samsung', 'oki', 'dell', 'panasonic', 'olivetti',
 ];
 
+const TYPES_CONTRAT = ['Copieur', 'Telephonie', 'Informatique', 'Securite'];
+
+// Le type vient soit du fichier, soit du query param `type_contrat` du wizard.
+// Sans passage par la forme canonique, "copieur" ou "Copieur " échoue sur la
+// comparaison stricte de l'insert contrat_machines → table vide, sans erreur.
+function canonicalTypeContrat(val) {
+  if (val == null || String(val).trim() === '') return null;
+  const n = normalize(val);
+  return TYPES_CONTRAT.find(t => normalize(t) === n) || null;
+}
+
+function isCopieur(val) {
+  return canonicalTypeContrat(val) === 'Copieur';
+}
+
 function mapStatut(val) {
   if (!val) return 'Actif';
   const key = normalize(val);
@@ -144,6 +195,11 @@ function mapPeriodicite(val) {
 function mapLocationInterne(val) {
   if (!val) return false;
   return normalize(val) === 'location interne';
+}
+
+function isFlagTrue(val) {
+  if (val == null) return false;
+  return ['1', 'x', 'oui', 'yes', 'true', 'vrai'].includes(String(val).trim().toLowerCase());
 }
 
 function extractBrandModel(designation) {
@@ -260,7 +316,19 @@ async function loadCustomFields() {
 
 function autoMapField(sourceHeader, allTargetFields) {
   const normalizedSource = normalize(sourceHeader);
-  if (!normalizedSource) return { suggested_field: null, confidence: 0, field_group: null, is_custom_field: false };
+  if (!normalizedSource) return { suggested_field: null, confidence: 0, field_group: null, is_custom_field: false, auto_ignored: false };
+
+  const autoIgnored = matchAutoIgnoredHeader(normalizedSource);
+  if (autoIgnored) {
+    return {
+      suggested_field: null,
+      confidence: 0,
+      field_group: null,
+      is_custom_field: false,
+      auto_ignored: true,
+      ignore_reason: autoIgnored.reason,
+    };
+  }
 
   let bestMatch = null;
   let bestConfidence = 0;
@@ -310,10 +378,11 @@ function autoMapField(sourceHeader, allTargetFields) {
       confidence: bestConfidence,
       field_group: bestMatch.group,
       is_custom_field: bestMatch.key.startsWith('custom_'),
+      auto_ignored: false,
     };
   }
 
-  return { suggested_field: null, confidence: 0, field_group: null, is_custom_field: false };
+  return { suggested_field: null, confidence: 0, field_group: null, is_custom_field: false, auto_ignored: false };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -406,7 +475,8 @@ export async function parseFile(file, typeContrat = null) {
 
   const usedFields = new Set();
   const mappings = headers.map(header => {
-    // If we have a saved mapping hint, use it first
+    // If we have a saved mapping hint, use it first — un mapping explicitement
+    // enregistré prime sur la liste des en-têtes auto-ignorés.
     if (savedMappingHint && savedMappingHint[header]) {
       const savedField = savedMappingHint[header];
       usedFields.add(savedField);
@@ -416,6 +486,7 @@ export async function parseFile(file, typeContrat = null) {
         confidence: 0.95,
         field_group: null,
         is_custom_field: savedField.startsWith('custom_'),
+        auto_ignored: false,
       };
     }
     const result = autoMapField(header, allTargetFields.filter(f => !usedFields.has(f.key)));
@@ -484,12 +555,13 @@ function parseFieldValue(field, rawVal, customFieldsFlat) {
     'service_connectic', 'service_collecteur', 'service_divers', 'service_autre',
     'derniere_facture_montant',
     'ligne_prix_unitaire_ht', 'ligne_montant_ht',
-    'ftc', 'ect',
+    'ftc', 'ect', 'augmentation_pourcentage',
   ];
   const integerFields = [
     'duree_contrat_mois',
     'volume_forfait_nb', 'volume_forfait_couleur',
     'volume_forfait_t1', 'volume_forfait_t2',
+    'compteur_initial_nb', 'compteur_initial_couleur',
     'ligne_quantite',
   ];
   const dateFields = [
@@ -610,6 +682,89 @@ function generateContratLignesRubriques(parsed, defaultTva) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// LOTS COPIEUR
+// ═══════════════════════════════════════════════════════════════════════════════
+// La principale d'un lot ne peut pas être déterminée ligne par ligne : elle
+// dépend des autres machines du lot. D'où cette passe de consolidation, une
+// fois toutes les lignes validées. Clé de regroupement : (contrat, lot).
+
+function consoliderLots(validatedRows) {
+  const lots = new Map();         // "CONTRAT::LOT" → [row]
+  const lotContrats = new Map();  // "LOT"          → Set(contrat)
+
+  for (const vr of validatedRows) {
+    const d = vr.data;
+    if (vr.status !== 'valid' || !isCopieur(d.type_contrat) || !d.identifiant_lot) continue;
+    d._est_principale = false;
+    const contrat = String(d.numero_contrat || '').toUpperCase();
+    const lot = String(d.identifiant_lot).toUpperCase();
+    const key = `${contrat}::${lot}`;
+    if (!lots.has(key)) lots.set(key, []);
+    lots.get(key).push(vr);
+    if (!lotContrats.has(lot)) lotContrats.set(lot, new Set());
+    lotContrats.get(lot).add(contrat);
+  }
+
+  let lotsMultiForfait = 0;
+  let lotsSansForfait = 0;
+
+  for (const membres of lots.values()) {
+    const lot = membres[0].data.identifiant_lot;
+    const porteuses = membres.filter(vr =>
+      Number(vr.data.volume_forfait_nb) > 0 || Number(vr.data.volume_forfait_couleur) > 0
+    );
+
+    if (porteuses.length === 1) {
+      porteuses[0].data._est_principale = true;
+      const flagP = membres.find(vr => vr.data._lot_role === 'P');
+      if (flagP && flagP !== porteuses[0]) {
+        porteuses[0].warnings.push(
+          `Lot "${lot}" : le flag P du fichier désigne une autre machine que celle qui porte le forfait`
+        );
+      }
+    } else if (porteuses.length === 0) {
+      lotsSansForfait++;
+      for (const vr of membres) {
+        vr.warnings.push(`Lot "${lot}" : aucune machine ne porte de forfait — facturation au compteur, machine par machine`);
+      }
+    } else {
+      lotsMultiForfait++;
+      for (const vr of porteuses) {
+        vr.warnings.push(`Lot "${lot}" : ${porteuses.length} machines portent un forfait — principale indéterminée, facturation à vérifier`);
+      }
+    }
+
+    // Sans principale unique, le premier membre porte quand même les lignes
+    // d'abonnement du lot : mieux vaut un contrat avec des lignes à vérifier
+    // qu'un contrat sans aucune ligne.
+    if (porteuses.length !== 1) membres[0].data._lot_porte_lignes = true;
+  }
+
+  const lotsInterContrats = [];
+  for (const [lot, contrats] of lotContrats) {
+    if (contrats.size > 1) lotsInterContrats.push({ identifiant_lot: lot, contrats: [...contrats] });
+  }
+  if (lotsInterContrats.length > 0) {
+    const parLot = new Map(lotsInterContrats.map(l => [l.identifiant_lot, l.contrats]));
+    for (const vr of validatedRows) {
+      const lot = vr.data.identifiant_lot ? String(vr.data.identifiant_lot).toUpperCase() : null;
+      if (lot && parLot.has(lot)) {
+        vr.warnings.push(
+          `Lot "${vr.data.identifiant_lot}" réparti sur les contrats ${parLot.get(lot).join(', ')} — chaque contrat sera facturé séparément`
+        );
+      }
+    }
+  }
+
+  return {
+    lots_detectes: lots.size,
+    lots_multi_forfait: lotsMultiForfait,
+    lots_sans_forfait: lotsSansForfait,
+    lots_inter_contrats: lotsInterContrats,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // VALIDATE
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -692,12 +847,11 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
 
     // --- type_contrat ---
     if (effectiveType) {
-      parsed.type_contrat = effectiveType;
+      parsed.type_contrat = canonicalTypeContrat(effectiveType) || effectiveType;
     } else {
       const typeContratVal = cleanText(data.type_contrat);
       if (typeContratVal) {
-        const validTypes = ['Copieur', 'Telephonie', 'Informatique', 'Securite'];
-        const normalized = validTypes.find(t => normalize(t) === normalize(typeContratVal));
+        const normalized = canonicalTypeContrat(typeContratVal);
         parsed.type_contrat = normalized || 'Copieur';
         if (!normalized) warnings.push(`Type contrat "${typeContratVal}" inconnu, défaut: Copieur`);
       } else {
@@ -765,7 +919,7 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     const defaultTva = parsed.taux_tva != null ? parsed.taux_tva : 20;
 
     // --- Brand/model — uniquement pour Copieur ---
-    if (parsed.type_contrat === 'Copieur') {
+    if (isCopieur(parsed.type_contrat)) {
       const designation = cleanText(data.designation_produit);
       if (designation) {
         const { marque, modele, designation_clean } = extractBrandModel(designation);
@@ -773,13 +927,17 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
         parsed._machine_modele = modele;
         parsed._machine_designation = designation_clean;
       }
+      parsed._lot_role = isFlagTrue(parsed.lot_flag_principale) ? 'P'
+        : isFlagTrue(parsed.lot_flag_attachee) ? 'A' : null;
     }
 
     // --- Duplicate detection ---
     if (numContrat) {
       const upperNum = numContrat.toUpperCase();
       if (seenContrats.has(upperNum)) {
-        if (!isLigneParLigne) {
+        if (isCopieur(parsed.type_contrat) && parsed.identifiant_lot) {
+          warnings.push(`Machine supplémentaire du lot "${parsed.identifiant_lot}" — même contrat, pas un doublon`);
+        } else if (!isLigneParLigne) {
           duplicateContrats++;
           duplicatesInFile.push({
             numero_contrat: numContrat,
@@ -801,7 +959,7 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
           warnings.push(`Contrat "${numContrat}" existant — sera mis à jour`);
         } else {
           parsed._existing_contrat_id = existingContrats.get(upperNum);
-          if (parsed.type_contrat === 'Copieur') {
+          if (isCopieur(parsed.type_contrat)) {
             warnings.push(`Contrat "${numContrat}" existant — machine ajoutée au contrat`);
           } else {
             warnings.push(`Contrat "${numContrat}" existant — lignes d'abonnement mises à jour`);
@@ -862,7 +1020,7 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     parsed._default_tva = defaultTva;
     totalLignes += autoLignes.length;
 
-    if (parsed.type_contrat === 'Copieur' && (parsed.numero_serie || cleanText(data.designation_produit))) {
+    if (isCopieur(parsed.type_contrat) && (parsed.numero_serie || cleanText(data.designation_produit))) {
       totalMachines++;
     }
 
@@ -876,6 +1034,8 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     validatedRows.push({ row_number: rowNumber, status, data: parsed, errors, warnings });
   }
 
+  const lotStats = consoliderLots(validatedRows);
+
   return {
     file_id,
     total: rows.length,
@@ -887,6 +1047,10 @@ export async function validateData({ file_id, mappings, options = {}, typeContra
     missing_clients: [...missingClients],
     client_errors: clientErrors,
     total_machines: totalMachines,
+    lots_detectes: lotStats.lots_detectes,
+    lots_multi_forfait: lotStats.lots_multi_forfait,
+    lots_sans_forfait: lotStats.lots_sans_forfait,
+    lots_inter_contrats: lotStats.lots_inter_contrats,
     total_lignes_auto: totalLignes,
     contrats_without_lines: contratsWithoutLines,
     format: isLigneParLigne ? 'ligne_par_rubrique' : isRubriqueFormat ? 'colonnes_rubriques' : 'standard',
@@ -916,6 +1080,14 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
     throw ApiError.badRequest('Aucune ligne valide à importer');
   }
 
+  // contrat_machines n'est alimentée que pour les Copieur : on trace l'attendu
+  // avant la boucle pour pouvoir détecter un écart en sortie.
+  const machinesExpected = validRows.filter(r => isCopieur(r.data.type_contrat)).length;
+  console.log(
+    `[import-contrats] ${validRows.length} ligne(s) valide(s) — ${machinesExpected} de type Copieur → ${machinesExpected} contrat_machines attendue(s)` +
+    ` — ${validationResult.lots_detectes} lot(s), ${validRows.filter(r => r.data._est_principale).length} principale(s)`
+  );
+
   const alsClient = getClient();
   const client = alsClient || await pool.connect();
   const ownConnection = !alsClient;
@@ -937,6 +1109,16 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
 
     // Track contrats whose existing lignes have been cleared (for ligne_par_ligne upsert)
     const clearedContratsLignes = new Set();
+    // Un lot ne doit produire qu'un seul jeu de contrat_lignes, porté par sa
+    // principale — sinon un lot de 30 machines crée 30 lignes pour un contrat.
+    const lotLignesFaites = new Set();
+    let lignesLotIgnorees = 0;
+    // Un contrat portant deux lots reçoit deux jeux de lignes. Les forfaits
+    // restent distincts (un par lot), mais un service comme le Pass ne doit
+    // être facturé qu'une fois par contrat. Clé référence+désignation :
+    // Collecteur, Divers et Autre partagent la référence AUT.
+    const servicesParContrat = new Set();
+    let servicesDedupliques = 0;
 
     for (const row of validRows) {
       try {
@@ -959,6 +1141,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               client_id = COALESCE($4, client_id),
               periodicite = COALESCE($5, periodicite),
               date_signature = COALESCE($6, date_signature),
+              date_installation = COALESCE($18, date_installation),
               date_debut = COALESCE($7, date_debut),
               date_echeance = COALESCE($8, date_echeance),
               date_prochaine_facture = COALESCE($9, date_prochaine_facture),
@@ -970,6 +1153,7 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               ftc = COALESCE($14, ftc),
               ect = COALESCE($15, ect),
               terme_facturation = COALESCE($16, terme_facturation),
+              augmentation_pourcentage = COALESCE($17, augmentation_pourcentage),
               updated_at = NOW()
             WHERE id = $1`,
             [
@@ -989,8 +1173,21 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.ftc || null,
               d.ect || null,
               d.terme_facturation || null,
+              d.augmentation_pourcentage || null,
+              d.date_installation || null,
             ]
           );
+
+          // Le taux d'augmentation vient peut-être de changer : la planification
+          // repart du prochain anniversaire, jamais des anniversaires passés.
+          if (d.augmentation_pourcentage || d.date_installation || d.date_signature || d.date_debut) {
+            await replanifierAugmentationImport(client, contratId);
+          }
+
+          // Échéance et renouvellement sont recalculés depuis la mise en
+          // service : les colonnes du fichier ne font plus foi. Sans durée
+          // exploitable, les dates importées restent en place.
+          await recalculerRenouvellement(contratId, { dbClient: client });
 
           // Clear old lignes once per contrat when we have new data to insert
           const autoLignesForCheck = d._auto_lignes || [];
@@ -1012,6 +1209,12 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
           }
         } else {
           // --- CREATE new contrat ---
+          const planAugmentationImport = planifierAugmentation({
+            date_installation: d.date_installation || null,
+            date_signature: d.date_signature || null,
+            date_debut: d.date_debut,
+          });
+
           const insertRes = await client.query(
             `INSERT INTO contrats (
               numero_contrat, type_contrat, type_facturation, client_id,
@@ -1021,9 +1224,11 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               duree_contrat_mois, numero_dossier_financement, organisme_credit,
               montant_finance, loyer_ht, location_interne, statut,
               derniere_facture_date, derniere_facture_numero, derniere_facture_montant_ht,
-              notes, ftc, ect, terme_facturation
+              notes, ftc, ect, terme_facturation,
+              augmentation_pourcentage, augmentation_date_reference, augmentation_prochaine_date
             ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
+              $26,$27,$28
             ) RETURNING id`,
             [
               d.numero_contrat,
@@ -1051,17 +1256,31 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.ftc || 0,
               d.ect || 0,
               d.terme_facturation || null,
+              d.augmentation_pourcentage || 0,
+              planAugmentationImport.augmentation_date_reference,
+              planAugmentationImport.augmentation_prochaine_date,
             ]
           );
           contratId = insertRes.rows[0].id;
           contratsCreated++;
           createdContratsMap.set(d.numero_contrat.toUpperCase(), contratId);
+
+          await recalculerRenouvellement(contratId, { dbClient: client });
         }
 
-        // --- INSERT contrat_lignes ---
-        const autoLignes = d._auto_lignes || [];
-        if (autoLignes.length === 0) {
-          contratsWithoutLines++;
+        // --- INSERT contrat_lignes — une seule fois par lot ---
+        const lotKey = (isCopieur(d.type_contrat) && d.identifiant_lot)
+          ? `${contratId}::${String(d.identifiant_lot).toUpperCase()}`
+          : null;
+        const porteLesLignes = !lotKey || d._est_principale === true || d._lot_porte_lignes === true;
+        const insererLignes = porteLesLignes && !(lotKey && lotLignesFaites.has(lotKey));
+        const autoLignes = insererLignes ? (d._auto_lignes || []) : [];
+
+        if (insererLignes) {
+          if (lotKey) lotLignesFaites.add(lotKey);
+          if (autoLignes.length === 0) contratsWithoutLines++;
+        } else if (lotKey) {
+          lignesLotIgnorees++;
         }
 
         let currentOrdre = 0;
@@ -1074,6 +1293,15 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
         }
 
         for (const ligne of autoLignes) {
+          const estService = ligne.reference === 'CNTC' || ligne.reference === 'AUT';
+          if (estService) {
+            const cle = `${contratId}::${ligne.reference}::${ligne.designation}`;
+            if (servicesParContrat.has(cle)) {
+              servicesDedupliques++;
+              continue;
+            }
+            servicesParContrat.add(cle);
+          }
           await client.query(
             `INSERT INTO contrat_lignes (
               contrat_id, ordre, categorie_ligne, reference, designation,
@@ -1096,15 +1324,17 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
         }
 
         // --- Machine — uniquement pour Copieur ---
-        if (d.type_contrat === 'Copieur') {
+        if (isCopieur(d.type_contrat)) {
           const numSerie = d.numero_serie || `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
           await client.query(
             `INSERT INTO contrat_machines (
               contrat_id, numero_serie, modele, marque, designation,
               cout_copie_nb, cout_copie_couleur, cout_copie_t1, cout_copie_t2, cout_copie_t3,
               volume_forfait_nb, volume_forfait_couleur, volume_forfait_t1, volume_forfait_t2,
+              compteur_initial_nb, compteur_initial_couleur,
+              identifiant_lot, est_principale, lot_role_fichier,
               service_connectic, service_collecteur, service_divers, service_autre
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING id`,
             [
               contratId, numSerie,
               d._machine_modele || null, d._machine_marque || null,
@@ -1113,6 +1343,11 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
               d.cout_copie_t1 || 0, d.cout_copie_t2 || 0, d.cout_copie_t3 || 0,
               d.volume_forfait_nb || 0, d.volume_forfait_couleur || 0,
               d.volume_forfait_t1 || 0, d.volume_forfait_t2 || 0,
+              // NULL = absent du fichier, 0 = compteur réellement à zéro
+              d.compteur_initial_nb ?? null, d.compteur_initial_couleur ?? null,
+              d.identifiant_lot || null,
+              d._est_principale === true,
+              d._lot_role || null,
               d.service_connectic || 0, d.service_collecteur || 0,
               d.service_divers || 0, d.service_autre || 0,
             ]
@@ -1163,6 +1398,32 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
       }
     }
 
+    const importWarnings = [];
+    if (machinesExpected > 0 && machinesCreated === 0) {
+      importWarnings.push(
+        `${machinesExpected} contrat(s) de type Copieur importé(s) mais aucune machine créée dans contrat_machines : la facturation au compteur ne pourra pas fonctionner.`
+      );
+    } else if (machinesCreated < machinesExpected) {
+      importWarnings.push(
+        `${machinesExpected - machinesCreated} machine(s) sur ${machinesExpected} n'ont pas été créées dans contrat_machines.`
+      );
+    }
+    if (validationResult.lots_multi_forfait > 0) {
+      importWarnings.push(
+        `${validationResult.lots_multi_forfait} lot(s) comportent plusieurs machines à forfait : principale indéterminée, facturation à vérifier.`
+      );
+    }
+    if (validationResult.lots_inter_contrats?.length > 0) {
+      importWarnings.push(
+        `${validationResult.lots_inter_contrats.length} lot(s) répartis sur plusieurs contrats : ` +
+        validationResult.lots_inter_contrats.map(l => `${l.identifiant_lot} (${l.contrats.join(', ')})`).join(' ; ')
+      );
+    }
+    if (servicesDedupliques > 0) {
+      console.log(`[import-contrats] ${servicesDedupliques} ligne(s) de service déjà présentes sur leur contrat, non réinsérées`);
+    }
+    if (importWarnings.length > 0) console.warn('[import-contrats]', importWarnings.join(' '));
+
     // Log the import
     await client.query(
       `INSERT INTO import_logs (entity_type, filename, total_rows, success_count, error_count, skipped_count, mapping_used, options_used, errors_detail, created_by)
@@ -1189,14 +1450,19 @@ export async function executeImport({ file_id, mappings, options = {}, user_id, 
       contrats_created: contratsCreated,
       contrats_updated: contratsUpdated,
       machines_created: machinesCreated,
+      machines_expected: machinesExpected,
       lignes_created: lignesCreated,
       contrats_without_lines: contratsWithoutLines,
+      lots_detectes: validationResult.lots_detectes,
+      lignes_lot_ignorees: lignesLotIgnorees,
+      services_dedupliques: servicesDedupliques,
       errors: importErrors.length,
       skipped: validationResult.skipped,
       duplicates_in_file: validationResult.duplicates_in_file,
       missing_clients: validationResult.missing_clients,
       format: validationResult.format,
       type_contrat: typeContrat,
+      warnings: importWarnings,
       error_details: importErrors,
     };
   } catch (err) {
@@ -1236,9 +1502,9 @@ export async function saveMappingConfig({ name, mapping, user_id, typeContrat = 
 
 export async function deleteSavedMapping(id) {
   const result = await query(
-    "DELETE FROM import_mappings_saved WHERE id = $1 AND entity_type = 'contrats' RETURNING id",
+    "DELETE FROM import_mappings_saved WHERE id = $1 AND entity_type = 'contrats' RETURNING id, name",
     [id]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Mapping non trouvé');
-  return { deleted: true };
+  return result.rows[0];
 }

@@ -1,20 +1,48 @@
 import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { CONTRAT_CATEGORIES, getCategoriesForType } from '../../config/contratCategories.js';
+import { MODULES } from '../../config/activityModules.js';
 import { getValeurs as getChampsPersoValeurs, saveValeurs as saveChampsPersoValeurs } from '../champs-config/champsConfig.service.js';
+import { planifierAugmentation } from './augmentationAnnuelle.service.js';
+import {
+  calculerRenouvellement,
+  estTypeConcerne as estTypeRenouvelable,
+  recalculerRenouvellement,
+  RECONDUCTION_DEFAUT,
+  PREAVIS_DEFAUT,
+} from './renouvellement.service.js';
 
 // ---------------------------------------------------------------------------
 // Constantes
 // ---------------------------------------------------------------------------
+
+// Statuts d'un contrat encore en vigueur (facturable ou affiché comme actif
+// sur le portail client) : un client inactif ne doit en garder aucun.
+export const STATUTS_CONTRAT_EN_VIGUEUR = ['Actif', 'Suspendu', 'Renouvelé'];
+
+async function assertClientPeutAvoirContratEnVigueur(clientId, statut, db = { query }) {
+  if (!STATUTS_CONTRAT_EN_VIGUEUR.includes(statut)) return;
+  const res = await db.query('SELECT statut FROM clients WHERE id = $1', [clientId]);
+  if (res.rows[0]?.statut === 'INACTIF') {
+    throw ApiError.badRequest(
+      `Le client est inactif : un contrat ne peut pas être « ${statut} ». Réactivez d'abord le client.`,
+    );
+  }
+}
 
 const CONTRAT_FIELDS = `
   c.id, c.numero_contrat, c.type_contrat, c.type_facturation, c.client_id,
   c.periodicite, c.date_signature, c.date_installation, c.date_debut,
   c.date_echeance, c.date_prochaine_facture, c.date_renouvellement,
   c.duree_contrat_mois, c.numero_dossier_financement, c.organisme_credit,
-  c.montant_finance, c.loyer_ht, c.location_interne, c.statut,
+  c.montant_finance, c.loyer_ht, c.location_interne, c.calage, c.date_calage, c.statut,
   c.derniere_facture_date, c.derniere_facture_numero, c.derniere_facture_montant_ht,
-  c.ftc, c.ect, c.notes, c.devis_id, c.terme_facturation, c.created_at, c.updated_at
+  c.ftc, c.ect, c.notes, c.devis_id, c.terme_facturation,
+  c.augmentation_active, c.augmentation_pourcentage, c.augmentation_date_reference,
+  c.augmentation_prochaine_date, c.augmentation_derniere_date, c.augmentation_nb_appliquees,
+  c.duree_reconduction_mois, c.preavis_renouvellement_mois,
+  c.renouvellement_traite_echeance, c.renouvellement_traite_date, c.renouvellement_traite_par,
+  c.created_at, c.updated_at
 `;
 
 const TYPE_PREFIXES = {
@@ -43,6 +71,70 @@ async function generateNumeroContrat(typeContrat) {
   return `${prefix}-${String(seq).padStart(4, '0')}`;
 }
 
+/** Taux d'augmentation annuelle borné à [0 ; 100], 0 valant « pas d'augmentation ». */
+function normaliserPourcentageAugmentation(valeur) {
+  const taux = parseFloat(valeur);
+  if (!Number.isFinite(taux) || taux <= 0) return 0;
+  return Math.min(100, Math.round(taux * 100) / 100);
+}
+
+/** Durée en mois bornée, `defaut` si la valeur est absente ou inexploitable. */
+function normaliserMois(valeur, defaut, max) {
+  if (valeur === undefined || valeur === null || valeur === '') return defaut;
+  const mois = parseInt(valeur, 10);
+  if (!Number.isFinite(mois) || mois < 0) return defaut;
+  return Math.min(max, mois);
+}
+
+const CHAMPS_PLANIFIANTS = [
+  'date_installation', 'date_signature', 'date_debut',
+  'augmentation_active', 'augmentation_pourcentage',
+];
+
+async function lireEtatAugmentation(contratId) {
+  const { rows: [contrat] } = await query(
+    `SELECT date_installation, date_signature, date_debut,
+            augmentation_active, augmentation_pourcentage,
+            augmentation_derniere_date, augmentation_prochaine_date
+     FROM contrats WHERE id = $1`,
+    [contratId],
+  );
+  return contrat || null;
+}
+
+function planificationImpactee(avant, apres) {
+  if (!avant || !apres) return false;
+  return CHAMPS_PLANIFIANTS.some(champ => String(avant[champ]) !== String(apres[champ]));
+}
+
+/**
+ * (Re)pose la planification de l'augmentation à la date du jour : changer le
+ * taux, le toggle ou la date anniversaire redémarre le compte au prochain
+ * anniversaire, jamais sur les anniversaires déjà écoulés.
+ *
+ * Un anniversaire déjà échu mais pas encore appliqué reste dû : le repousser
+ * d'un an ferait disparaître une augmentation légitime si le contrat est
+ * enregistré le jour même, avant le passage du job.
+ */
+async function replanifierAugmentation(contratId) {
+  const contrat = await lireEtatAugmentation(contratId);
+  if (!contrat) return;
+
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const echuNonApplique = contrat.augmentation_active
+    && parseFloat(contrat.augmentation_pourcentage) > 0
+    && contrat.augmentation_prochaine_date
+    && contrat.augmentation_prochaine_date <= aujourdhui;
+  if (echuNonApplique) return;
+
+  const plan = planifierAugmentation({ ...contrat, augmentation_date_reference: null }, aujourdhui);
+  await query(
+    `UPDATE contrats SET augmentation_date_reference = $1, augmentation_prochaine_date = $2
+     WHERE id = $3`,
+    [plan.augmentation_date_reference, plan.augmentation_prochaine_date, contratId],
+  );
+}
+
 function buildUpdateQuery(data, allowedFields) {
   const sets = [];
   const vals = [];
@@ -56,6 +148,71 @@ function buildUpdateQuery(data, allowedFields) {
   }
 
   return { sets, vals, nextIndex: i };
+}
+
+// ---------------------------------------------------------------------------
+// Recherche plein texte (chaque mot doit correspondre à au moins un champ)
+// ---------------------------------------------------------------------------
+
+function buildContratSearchConditions(search, startIndex) {
+  const terms = String(search || '').trim().split(/\s+/).filter(Boolean);
+  const conditions = [];
+  const params = [];
+  let i = startIndex;
+
+  for (const term of terms) {
+    const p = `$${i++}`;
+    params.push(`%${term}%`);
+    conditions.push(`(
+      c.numero_contrat ILIKE ${p} OR
+      c.type_contrat ILIKE ${p} OR
+      c.statut ILIKE ${p} OR
+      c.periodicite ILIKE ${p} OR
+      c.numero_dossier_financement ILIKE ${p} OR
+      c.organisme_credit ILIKE ${p} OR
+      c.derniere_facture_numero ILIKE ${p} OR
+      c.notes ILIKE ${p} OR
+      to_char(c.date_debut, 'DD/MM/YYYY') ILIKE ${p} OR
+      to_char(c.date_echeance, 'DD/MM/YYYY') ILIKE ${p} OR
+      to_char(c.date_signature, 'DD/MM/YYYY') ILIKE ${p} OR
+      to_char(c.date_installation, 'DD/MM/YYYY') ILIKE ${p} OR
+      cl.raison_sociale ILIKE ${p} OR
+      cl.numero_client ILIKE ${p} OR
+      cl.siret ILIKE ${p} OR
+      cl.siren ILIKE ${p} OR
+      cl.tva_intracommunautaire ILIKE ${p} OR
+      cl.email_principal ILIKE ${p} OR
+      cl.email_comptabilite ILIKE ${p} OR
+      cl.telephone_principal ILIKE ${p} OR
+      EXISTS (
+        SELECT 1 FROM contrat_machines cm WHERE cm.contrat_id = c.id AND (
+          cm.numero_serie ILIKE ${p} OR cm.modele ILIKE ${p} OR
+          cm.marque ILIKE ${p} OR cm.designation ILIKE ${p}
+        )
+      ) OR
+      EXISTS (
+        SELECT 1 FROM contrat_lignes lg WHERE lg.contrat_id = c.id AND (
+          lg.designation ILIKE ${p} OR lg.reference ILIKE ${p} OR
+          lg.categorie_ligne ILIKE ${p} OR lg.complement_info ILIKE ${p}
+        )
+      ) OR
+      EXISTS (
+        SELECT 1 FROM client_contacts cc WHERE cc.client_id = cl.id AND (
+          cc.nom ILIKE ${p} OR cc.prenom ILIKE ${p} OR
+          (cc.prenom || ' ' || cc.nom) ILIKE ${p} OR
+          cc.email ILIKE ${p} OR cc.telephone ILIKE ${p} OR cc.mobile ILIKE ${p}
+        )
+      ) OR
+      EXISTS (
+        SELECT 1 FROM client_adresses ca WHERE ca.client_id = cl.id AND (
+          ca.ligne1 ILIKE ${p} OR ca.ligne2 ILIKE ${p} OR
+          ca.code_postal ILIKE ${p} OR ca.ville ILIKE ${p}
+        )
+      )
+    )`);
+  }
+
+  return { conditions, params, nextIndex: i };
 }
 
 // ---------------------------------------------------------------------------
@@ -84,13 +241,10 @@ export async function listContrats({ page = 1, limit = 20, type_contrat, statut,
   }
 
   if (search) {
-    conditions.push(`(
-      c.numero_contrat ILIKE $${i} OR
-      cl.raison_sociale ILIKE $${i} OR
-      EXISTS (SELECT 1 FROM contrat_machines cm WHERE cm.contrat_id = c.id AND cm.numero_serie ILIKE $${i})
-    )`);
-    params.push(`%${search}%`);
-    i++;
+    const s = buildContratSearchConditions(search, i);
+    conditions.push(...s.conditions);
+    params.push(...s.params);
+    i = s.nextIndex;
   }
 
   if (echeance_avant) {
@@ -117,7 +271,7 @@ export async function listContrats({ page = 1, limit = 20, type_contrat, statut,
      FROM contrats c
      JOIN clients cl ON cl.id = c.client_id
      ${where}
-     ORDER BY c.created_at DESC
+     ORDER BY LOWER(TRIM(cl.raison_sociale)) ASC NULLS LAST, c.numero_contrat ASC, c.id ASC
      LIMIT $${i} OFFSET $${i + 1}`,
     [...params, limit, offset],
   );
@@ -173,6 +327,7 @@ export async function createContrat(data) {
 
     const clientCheck = await client.query('SELECT id FROM clients WHERE id = $1', [data.client_id]);
     if (clientCheck.rows.length === 0) throw ApiError.badRequest('Client non trouvé');
+    await assertClientPeutAvoirContratEnVigueur(data.client_id, data.statut || 'Brouillon', client);
 
     const numero_contrat = data.numero_contrat || await generateNumeroContrat(data.type_contrat);
 
@@ -181,14 +336,44 @@ export async function createContrat(data) {
 
     const termeFacturation = ['TAE', 'TEC'].includes(data.terme_facturation) ? data.terme_facturation : 'TEC';
 
+    const augmentationPourcentage = normaliserPourcentageAugmentation(data.augmentation_pourcentage);
+    const planAugmentation = planifierAugmentation({
+      date_installation: data.date_installation || null,
+      date_signature: data.date_signature || null,
+      date_debut: data.date_debut,
+    });
+
+    // Calage : purement déclaratif, la date n'est conservée que si la case est
+    // cochée pour éviter de garder une date orpheline après un décochage.
+    const calage = data.calage ?? false;
+
+    const dureeContratMois = data.duree_contrat_mois ?? 63;
+    const dureeReconduction = normaliserMois(data.duree_reconduction_mois, RECONDUCTION_DEFAUT, 120);
+    const preavisRenouvellement = normaliserMois(data.preavis_renouvellement_mois, PREAVIS_DEFAUT, 60);
+
+    // Sur les copieurs, échéance et renouvellement sont calculés depuis la mise
+    // en service : ce que le formulaire enverrait pour ces deux dates est ignoré.
+    const renouvellement = estTypeRenouvelable(data.type_contrat)
+      ? calculerRenouvellement({
+        date_installation: data.date_installation || null,
+        date_debut: data.date_debut,
+        duree_contrat_mois: dureeContratMois,
+        duree_reconduction_mois: dureeReconduction,
+        preavis_renouvellement_mois: preavisRenouvellement,
+      })
+      : null;
+
     const contratRes = await client.query(
       `INSERT INTO contrats (
         numero_contrat, type_contrat, type_facturation, client_id, periodicite,
         date_signature, date_installation, date_debut, date_echeance,
         date_prochaine_facture, date_renouvellement, duree_contrat_mois,
         numero_dossier_financement, organisme_credit, montant_finance, loyer_ht,
-        location_interne, statut, ftc, ect, notes, devis_id, terme_facturation
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+        location_interne, calage, date_calage, statut, ftc, ect, notes, devis_id, terme_facturation,
+        augmentation_active, augmentation_pourcentage,
+        augmentation_date_reference, augmentation_prochaine_date,
+        duree_reconduction_mois, preavis_renouvellement_mois
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
       RETURNING *`,
       [
         numero_contrat,
@@ -199,21 +384,31 @@ export async function createContrat(data) {
         data.date_signature || null,
         data.date_installation || null,
         data.date_debut,
-        data.date_echeance || null,
+        // Durée à zéro ou point de départ absent : le calcul ne donne rien et on
+        // retombe sur ce qui a été transmis.
+        renouvellement?.date_echeance || data.date_echeance || null,
         data.date_prochaine_facture || null,
-        data.date_renouvellement || null,
-        data.duree_contrat_mois ?? 63,
+        renouvellement?.date_renouvellement || data.date_renouvellement || null,
+        dureeContratMois,
         data.numero_dossier_financement || null,
         data.organisme_credit || null,
         data.montant_finance ?? 0,
         data.loyer_ht ?? 0,
         data.location_interne ?? false,
+        calage,
+        calage ? data.date_calage || null : null,
         data.statut || 'Brouillon',
         data.ftc ?? 0,
         data.ect ?? 0,
         data.notes || null,
         data.devis_id || null,
         termeFacturation,
+        data.augmentation_active ?? true,
+        augmentationPourcentage,
+        planAugmentation.augmentation_date_reference,
+        planAugmentation.augmentation_prochaine_date,
+        dureeReconduction,
+        preavisRenouvellement,
       ],
     );
 
@@ -300,9 +495,39 @@ export async function createContrat(data) {
   }
 }
 
-export async function updateContrat(id, data) {
-  const existing = await query('SELECT id FROM contrats WHERE id = $1 AND deleted_at IS NULL', [id]);
+export async function updateContrat(id, data, { allowNumeroChange = false } = {}) {
+  const existing = await query(
+    'SELECT id, numero_contrat, client_id, statut FROM contrats WHERE id = $1 AND deleted_at IS NULL',
+    [id],
+  );
   if (existing.rows.length === 0) throw ApiError.notFound('Contrat non trouvé');
+
+  if (data.statut !== undefined || data.client_id) {
+    await assertClientPeutAvoirContratEnVigueur(
+      data.client_id || existing.rows[0].client_id,
+      data.statut ?? existing.rows[0].statut,
+    );
+  }
+
+  // Le formulaire renvoie toujours le numéro. On ne bloque que s'il change
+  // vraiment : enregistrer le reste de la fiche doit rester possible.
+  if (data.numero_contrat !== undefined && data.numero_contrat !== null) {
+    const demande = String(data.numero_contrat).trim();
+    const actuel = String(existing.rows[0].numero_contrat ?? '').trim();
+    if (demande !== actuel) {
+      if (!allowNumeroChange) {
+        throw ApiError.forbidden(
+          'La modification du numéro de contrat requiert une autorisation dédiée, qui doit vous être accordée par un administrateur.',
+        );
+      }
+      if (!demande) {
+        throw ApiError.badRequest('Le numéro de contrat ne peut pas être vide');
+      }
+      data.numero_contrat = demande;
+    } else {
+      delete data.numero_contrat;
+    }
+  }
 
   if (data.numero_contrat) {
     const dup = await query('SELECT id FROM contrats WHERE numero_contrat = $1 AND id != $2', [data.numero_contrat, id]);
@@ -318,14 +543,33 @@ export async function updateContrat(id, data) {
     throw ApiError.badRequest('terme_facturation doit être TAE ou TEC');
   }
 
+  if (data.augmentation_pourcentage !== undefined) {
+    data.augmentation_pourcentage = normaliserPourcentageAugmentation(data.augmentation_pourcentage);
+  }
+
+  if (data.duree_reconduction_mois !== undefined) {
+    data.duree_reconduction_mois = normaliserMois(data.duree_reconduction_mois, RECONDUCTION_DEFAUT, 120);
+  }
+
+  if (data.preavis_renouvellement_mois !== undefined) {
+    data.preavis_renouvellement_mois = normaliserMois(data.preavis_renouvellement_mois, PREAVIS_DEFAUT, 60);
+  }
+
+  // Calage décoché : on efface la date pour ne pas laisser une valeur qui ne
+  // s'affiche plus nulle part.
+  if (data.calage === false) {
+    data.date_calage = null;
+  }
+
   const allowedFields = [
     'numero_contrat', 'type_contrat', 'type_facturation', 'client_id', 'periodicite',
     'date_signature', 'date_installation', 'date_debut', 'date_echeance',
     'date_prochaine_facture', 'date_renouvellement', 'duree_contrat_mois',
     'numero_dossier_financement', 'organisme_credit', 'montant_finance', 'loyer_ht',
-    'location_interne', 'statut', 'ftc', 'ect', 'notes', 'devis_id',
+    'location_interne', 'calage', 'date_calage', 'statut', 'ftc', 'ect', 'notes', 'devis_id',
     'derniere_facture_date', 'derniere_facture_numero', 'derniere_facture_montant_ht',
-    'terme_facturation',
+    'terme_facturation', 'augmentation_active', 'augmentation_pourcentage',
+    'duree_reconduction_mois', 'preavis_renouvellement_mois',
   ];
 
   const { sets, vals, nextIndex } = buildUpdateQuery(data, allowedFields);
@@ -334,10 +578,24 @@ export async function updateContrat(id, data) {
   sets.push('updated_at = NOW()');
   vals.push(id);
 
+  // Le formulaire renvoie tous les champs à chaque enregistrement : on compare
+  // l'avant et l'après pour ne replanifier que sur un vrai changement.
+  const etatAvant = CHAMPS_PLANIFIANTS.some(champ => data[champ] !== undefined)
+    ? await lireEtatAugmentation(id)
+    : null;
+
   await query(
     `UPDATE contrats SET ${sets.join(', ')} WHERE id = $${nextIndex} AND deleted_at IS NULL`,
     vals,
   );
+
+  if (etatAvant && planificationImpactee(etatAvant, await lireEtatAugmentation(id))) {
+    await replanifierAugmentation(id);
+  }
+
+  // Échéance et renouvellement sont calculés : ils sont réécrits après coup,
+  // que le formulaire les ait renvoyés ou non. Sans effet hors copieur.
+  await recalculerRenouvellement(id);
 
   if (data.champs_personnalises && Object.keys(data.champs_personnalises).length > 0) {
     await saveChampsPersoValeurs('CONTRAT', id, data.champs_personnalises);
@@ -369,6 +627,19 @@ export async function bulkDeleteContrats(ids) {
 export async function bulkUpdateStatut(ids, statut) {
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     throw ApiError.badRequest('Aucun contrat sélectionné');
+  }
+  if (STATUTS_CONTRAT_EN_VIGUEUR.includes(statut)) {
+    const bloques = await query(
+      `SELECT c.numero_contrat FROM contrats c JOIN clients cl ON cl.id = c.client_id
+       WHERE c.id = ANY($1) AND c.deleted_at IS NULL AND cl.statut = 'INACTIF'
+       ORDER BY c.numero_contrat`,
+      [ids],
+    );
+    if (bloques.rows.length > 0) {
+      throw ApiError.badRequest(
+        `Client inactif : impossible de passer en « ${statut} » les contrats ${bloques.rows.map(r => r.numero_contrat).join(', ')}. Réactivez d'abord le client.`,
+      );
+    }
   }
   const result = await query(
     `UPDATE contrats SET statut = $1, updated_at = NOW() WHERE id = ANY($2) AND deleted_at IS NULL RETURNING id, numero_contrat, statut`,
@@ -436,11 +707,13 @@ export async function updateLigne(contratId, ligneId, data) {
 
 export async function deleteLigne(contratId, ligneId) {
   const result = await query(
-    'DELETE FROM contrat_lignes WHERE id = $1 AND contrat_id = $2 RETURNING id',
+    `DELETE FROM contrat_lignes WHERE id = $1 AND contrat_id = $2
+     RETURNING id, designation, categorie_ligne, quantite, prix_unitaire_ht`,
     [ligneId, contratId],
   );
   if (result.rows.length === 0) throw ApiError.notFound('Ligne non trouvée');
   await query('UPDATE contrats SET updated_at = NOW() WHERE id = $1', [contratId]);
+  return result.rows[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -520,11 +793,19 @@ export async function updateMachine(contratId, machineId, data) {
 
 export async function deleteMachine(contratId, machineId) {
   const result = await query(
-    'DELETE FROM contrat_machines WHERE id = $1 AND contrat_id = $2 RETURNING id',
+    `DELETE FROM contrat_machines WHERE id = $1 AND contrat_id = $2
+     RETURNING id, numero_serie, designation, modele`,
     [machineId, contratId],
   );
   if (result.rows.length === 0) throw ApiError.notFound('Machine non trouvée');
   await query('UPDATE contrats SET updated_at = NOW() WHERE id = $1', [contratId]);
+  return result.rows[0];
+}
+
+/** Numéro d'un contrat, pour libeller une entrée de journal sans le recharger. */
+export async function getNumeroContrat(contratId) {
+  const { rows } = await query('SELECT numero_contrat FROM contrats WHERE id = $1', [contratId]);
+  return rows[0]?.numero_contrat || `#${contratId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -547,9 +828,13 @@ export async function getStats() {
      WHERE statut = 'Actif' AND deleted_at IS NULL AND date_prochaine_facture <= $1`,
     [endOfMonth.toISOString().split('T')[0]],
   );
+  // Sur les copieurs, date_renouvellement porte la prochaine échéance réelle
+  // (reconductions comprises) ; date_echeance reste la fin de période initiale,
+  // souvent déjà passée. Repli sur elle pour les types sans calcul.
   const echeanceRes = await query(
     `SELECT COUNT(*)::int AS total FROM contrats
-     WHERE statut = 'Actif' AND deleted_at IS NULL AND date_echeance <= $1`,
+     WHERE statut = 'Actif' AND deleted_at IS NULL
+       AND COALESCE(date_renouvellement, date_echeance) <= $1`,
     [in3Months.toISOString().split('T')[0]],
   );
   const caRes = await query(`
@@ -594,10 +879,16 @@ export async function duplicateContrat(id) {
     montant_finance: original.montant_finance,
     loyer_ht: original.loyer_ht,
     location_interne: original.location_interne,
+    calage: original.calage,
+    date_calage: original.date_calage,
     statut: 'Brouillon',
     ftc: original.ftc,
     ect: original.ect,
     terme_facturation: original.terme_facturation || 'TEC',
+    augmentation_active: original.augmentation_active,
+    augmentation_pourcentage: original.augmentation_pourcentage,
+    duree_reconduction_mois: original.duree_reconduction_mois,
+    preavis_renouvellement_mois: original.preavis_renouvellement_mois,
     notes: original.notes ? `[Copie de ${original.numero_contrat}] ${original.notes}` : `Copie de ${original.numero_contrat}`,
     date_debut: new Date().toISOString().split('T')[0],
     lignes: original.lignes.map(l => ({
@@ -671,9 +962,10 @@ export async function getContratsForExport({ type_contrat, statut, search, inclu
   if (type_contrat) { conditions.push(`c.type_contrat = $${i++}`); params.push(type_contrat); }
   if (statut) { conditions.push(`c.statut = $${i++}`); params.push(statut); }
   if (search) {
-    conditions.push(`(c.numero_contrat ILIKE $${i} OR cl.raison_sociale ILIKE $${i})`);
-    params.push(`%${search}%`);
-    i++;
+    const s = buildContratSearchConditions(search, i);
+    conditions.push(...s.conditions);
+    params.push(...s.params);
+    i = s.nextIndex;
   }
 
   const where = `WHERE ${conditions.join(' AND ')}`;
@@ -1348,7 +1640,7 @@ export async function importContrats(buffer, typeContrat, userId, userName, ipAd
       userId,
       userNom: userName,
       action: `import_contrats_${typeContrat.toLowerCase()}`,
-      module: 'contrats',
+      module: MODULES.CONTRATS,
       description: `Import de ${rapport.contrats_crees} contrats ${typeContrat} depuis fichier XLSX (format: ${rapport.format})`,
       entityType: 'contrat',
       details: rapport,
@@ -1502,7 +1794,6 @@ async function importInformatique(dataRows, headers, typeContrat, logicielsMap, 
         || new Date().toISOString().split('T')[0];
 
       const notes = [
-        augmentation > 0 ? `Augmentation: ${augmentation}%` : '',
         terme ? `Terme facturation: ${terme}` : '',
         totalAccessoireIdx != null && parseNumber(row[totalAccessoireIdx]) > 0 ? `Total accessoire: ${parseNumber(row[totalAccessoireIdx])}€ HT` : '',
         adresseIdx != null && row[adresseIdx] ? `Adresse: ${String(row[adresseIdx]).trim()}${cpIdx != null ? ' ' + String(row[cpIdx] || '').trim() : ''}${villeIdx != null ? ' ' + String(row[villeIdx] || '').trim() : ''}` : '',
@@ -1511,12 +1802,19 @@ async function importInformatique(dataRows, headers, typeContrat, logicielsMap, 
         emailIdx != null && row[emailIdx] ? `Email: ${String(row[emailIdx]).trim()}` : '',
       ].filter(Boolean).join('\n') || null;
 
+      const dateSignature = parseExcelDate(dateSignatureIdx != null ? row[dateSignatureIdx] : null);
+      const planAugmentation = planifierAugmentation({
+        date_signature: dateSignature,
+        date_debut: dateDebut,
+      });
+
       const contratRes = await dbClient.query(
         `INSERT INTO contrats (
           numero_contrat, type_contrat, type_facturation, client_id, periodicite,
           date_signature, date_debut, date_echeance, date_renouvellement,
-          date_prochaine_facture, duree_contrat_mois, statut, ftc, notes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          date_prochaine_facture, duree_contrat_mois, statut, ftc, notes,
+          augmentation_pourcentage, augmentation_date_reference, augmentation_prochaine_date
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
         RETURNING id`,
         [
           numContrat,
@@ -1524,7 +1822,7 @@ async function importInformatique(dataRows, headers, typeContrat, logicielsMap, 
           'Periodique',
           clientInfo.id,
           periodicite,
-          parseExcelDate(dateSignatureIdx != null ? row[dateSignatureIdx] : null),
+          dateSignature,
           dateDebut,
           parseExcelDate(dateEcheanceIdx != null ? row[dateEcheanceIdx] : null),
           null,
@@ -1533,6 +1831,9 @@ async function importInformatique(dataRows, headers, typeContrat, logicielsMap, 
           statut,
           ftcMontant,
           notes,
+          normaliserPourcentageAugmentation(augmentation),
+          planAugmentation.augmentation_date_reference,
+          planAugmentation.augmentation_prochaine_date,
         ],
       );
 
@@ -1676,12 +1977,20 @@ async function importFormatB(dataRows, headers, typeContrat, rapport) {
       const pourcentageAugm = parseNumber(firstRow[augmentationIdx]);
       const ftcMontant = ftcIdx != null ? parseNumber(firstRow[ftcIdx]) : 0;
 
+      const dateSignature = parseExcelDate(firstRow[dateSignatureIdx]);
+      const dateDebut = parseExcelDate(firstRow[dateDebutIdx]) || dateSignature || new Date().toISOString().split('T')[0];
+      const planAugmentation = planifierAugmentation({
+        date_signature: dateSignature,
+        date_debut: dateDebut,
+      });
+
       const contratRes = await dbClient.query(
         `INSERT INTO contrats (
           numero_contrat, type_contrat, type_facturation, client_id, periodicite,
           date_signature, date_debut, date_echeance, date_renouvellement,
-          date_prochaine_facture, duree_contrat_mois, statut, ftc, notes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          date_prochaine_facture, duree_contrat_mois, statut, ftc, notes,
+          augmentation_pourcentage, augmentation_date_reference, augmentation_prochaine_date
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
         RETURNING id`,
         [
           numContrat,
@@ -1689,18 +1998,18 @@ async function importFormatB(dataRows, headers, typeContrat, rapport) {
           'Periodique',
           clientInfo.id,
           periodicite,
-          parseExcelDate(firstRow[dateSignatureIdx]),
-          parseExcelDate(firstRow[dateDebutIdx]) || parseExcelDate(firstRow[dateSignatureIdx]) || new Date().toISOString().split('T')[0],
+          dateSignature,
+          dateDebut,
           parseExcelDate(firstRow[dateEcheanceIdx]),
           parseExcelDate(firstRow[renouvellementIdx]),
           parseExcelDate(firstRow[prochaineFactIdx]),
           firstRow[dureeMoisIdx] ? parseInt(firstRow[dureeMoisIdx]) || null : null,
           statut,
           ftcMontant,
-          [
-            pourcentageAugm > 0 ? `Augmentation: ${pourcentageAugm}%` : '',
-            typeFacturation ? `Terme facturation: ${typeFacturation}` : '',
-          ].filter(Boolean).join('\n') || null,
+          typeFacturation ? `Terme facturation: ${typeFacturation}` : null,
+          normaliserPourcentageAugmentation(pourcentageAugm),
+          planAugmentation.augmentation_date_reference,
+          planAugmentation.augmentation_prochaine_date,
         ],
       );
 
@@ -1802,14 +2111,22 @@ async function importFormatFlags(dataRows, typeContrat, rapport) {
       const iban = String(row[34] || '').trim() || null;
       const email = String(row[35] || '').trim() || null;
 
+      const dateSignature = parseExcelDate(row[4]);
+      const dateDebut = parseExcelDate(row[36]) || dateSignature || new Date().toISOString().split('T')[0];
+      const planAugmentation = planifierAugmentation({
+        date_signature: dateSignature,
+        date_debut: dateDebut,
+      });
+
       const contratRes = await dbClient.query(
         `INSERT INTO contrats (
           numero_contrat, type_contrat, type_facturation, client_id, periodicite,
           date_signature, date_debut, date_echeance, date_renouvellement,
           date_prochaine_facture, duree_contrat_mois, statut,
           numero_dossier_financement, organisme_credit, montant_finance, loyer_ht,
-          ftc, notes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          ftc, notes,
+          augmentation_pourcentage, augmentation_date_reference, augmentation_prochaine_date
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING id`,
         [
           numContrat,
@@ -1817,8 +2134,8 @@ async function importFormatFlags(dataRows, typeContrat, rapport) {
           'Periodique',
           clientInfo.id,
           periodicite,
-          parseExcelDate(row[4]),
-          parseExcelDate(row[36]) || parseExcelDate(row[4]) || new Date().toISOString().split('T')[0],
+          dateSignature,
+          dateDebut,
           parseExcelDate(row[10]),
           parseExcelDate(row[5]),
           parseExcelDate(row[7]),
@@ -1833,13 +2150,15 @@ async function importFormatFlags(dataRows, typeContrat, rapport) {
             montantAbonnement > 0 ? `Montant abonnement total: ${montantAbonnement}€ HT` : '',
             montantMateriel > 0 ? `Montant matériel: ${montantMateriel}€ HT` : '',
             montantLogiciel > 0 ? `Montant logiciel: ${montantLogiciel}€ HT` : '',
-            pourcentageAugm > 0 ? `Augmentation: ${pourcentageAugm}%` : '',
             row[9] ? `Adresse site: ${String(row[9]).trim()}` : '',
             row[23] ? `Prochaine visite: ${String(row[23]).trim()}` : '',
             iban ? `IBAN: ${iban}` : '',
             email ? `Email facturation: ${email}` : '',
             typeFacturation ? `Terme facturation: ${typeFacturation}` : '',
           ].filter(Boolean).join('\n') || null,
+          normaliserPourcentageAugmentation(pourcentageAugm),
+          planAugmentation.augmentation_date_reference,
+          planAugmentation.augmentation_prochaine_date,
         ],
       );
 

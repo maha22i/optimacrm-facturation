@@ -51,11 +51,12 @@ const STATUT_CONFIG: Record<ReleveLigneStatut, { label: string; icon: string; bg
   ANOMALIE: { label: 'Anomalie', icon: '🔴', bg: 'bg-red-50', text: 'text-red-700', rowBg: 'bg-red-50/40' },
   PREMIER_RELEVE: { label: '1er relevé', icon: 'ℹ️', bg: 'bg-blue-50', text: 'text-blue-700', rowBg: 'bg-blue-50/40' },
   AU_COMPTEUR: { label: 'Au compteur', icon: '💠', bg: 'bg-indigo-50', text: 'text-indigo-700', rowBg: 'bg-indigo-50/40' },
+  LOT_ATTACHEE: { label: 'Machine de lot', icon: '🧩', bg: 'bg-violet-50', text: 'text-violet-700', rowBg: 'bg-violet-50/40' },
   SANS_CONTRAT: { label: 'Sans contrat', icon: '🟡', bg: 'bg-gray-50', text: 'text-gray-600', rowBg: 'bg-gray-50/40' },
   HORS_CONTRAT: { label: 'Hors contrat', icon: '🟢', bg: 'bg-gray-50', text: 'text-gray-500', rowBg: 'bg-gray-50/40' },
 };
 
-type FilterKey = 'all' | 'DEPASSEMENT' | 'ANOMALIE' | 'SANS_CONTRAT' | 'AU_COMPTEUR' | 'PREMIER_RELEVE';
+type FilterKey = 'all' | 'DEPASSEMENT' | 'ANOMALIE' | 'SANS_CONTRAT' | 'AU_COMPTEUR' | 'LOT_ATTACHEE' | 'PREMIER_RELEVE';
 
 const STEPS = [
   { label: 'Upload', icon: '1' },
@@ -205,6 +206,7 @@ export default function ImportRelevesPage() {
       else if (filter === 'ANOMALIE') arr = arr.filter(l => l.statut === 'ANOMALIE');
       else if (filter === 'SANS_CONTRAT') arr = arr.filter(l => l.statut === 'SANS_CONTRAT' || l.statut === 'HORS_CONTRAT');
       else if (filter === 'AU_COMPTEUR') arr = arr.filter(l => l.statut === 'AU_COMPTEUR');
+      else if (filter === 'LOT_ATTACHEE') arr = arr.filter(l => l.statut === 'LOT_ATTACHEE');
       else if (filter === 'PREMIER_RELEVE') arr = arr.filter(l => l.statut === 'PREMIER_RELEVE');
     }
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -478,6 +480,7 @@ export default function ImportRelevesPage() {
                   { key: 'DEPASSEMENT' as FilterKey, label: 'Dépassements ⚠️', count: analyseResult.summary.avec_depassement },
                   { key: 'ANOMALIE' as FilterKey, label: 'Anomalies 🔴', count: analyseResult.summary.anomalies },
                   { key: 'AU_COMPTEUR' as FilterKey, label: 'Au compteur 💠', count: analyseResult.summary.au_compteur || 0 },
+                  { key: 'LOT_ATTACHEE' as FilterKey, label: 'Machines de lot 🧩', count: analyseResult.summary.lot_attachees || 0 },
                   { key: 'SANS_CONTRAT' as FilterKey, label: 'Sans contrat', count: analyseResult.summary.sans_contrat + analyseResult.summary.hors_contrat },
                   { key: 'PREMIER_RELEVE' as FilterKey, label: '1er relevé', count: analyseResult.summary.premier_releve },
                 ]).map(f => (

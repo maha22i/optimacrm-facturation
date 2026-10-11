@@ -1,7 +1,14 @@
 import * as planningService from './planning.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { notifyTicketAssigned } from '../tickets/ticketNotification.service.js';
 import { sendSuccess } from '../../utils/response.js';
+
+// Les créneaux sont journalisés sur le ticket qu'ils planifient, pour qu'ils
+// remontent dans son historique, mais rangés dans le module planning.
+function nomTechnicien(creneau) {
+  return `${creneau.technicien_prenom || ''} ${creneau.technicien_nom_famille || ''}`.trim();
+}
 
 export async function listCreneaux(req, res, next) {
   try {
@@ -32,8 +39,8 @@ export async function createCreneau(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'planification',
-        module: 'tickets',
-        description: `Ticket ${creneau.ticket_numero} planifié pour ${creneau.technicien_prenom || ''} ${creneau.technicien_nom_famille || ''}`.trim(),
+        module: MODULES.PLANNING,
+        description: `Ticket ${creneau.ticket_numero} planifié pour ${nomTechnicien(creneau)}`,
         entityType: 'ticket',
         entityId: creneau.ticket_id,
         entityLabel: creneau.ticket_numero,
@@ -63,6 +70,20 @@ export async function createCreneau(req, res, next) {
 export async function updateCreneau(req, res, next) {
   try {
     const creneau = await planningService.updateCreneau(req.params.id, req.body, req.user);
+    await activityLog.logRequest(req, {
+      action: 'planification_modifiee',
+      module: MODULES.PLANNING,
+      description: `Créneau du ticket ${creneau.ticket_numero} modifié (${nomTechnicien(creneau)})`,
+      entityType: 'ticket',
+      entityId: creneau.ticket_id,
+      entityLabel: creneau.ticket_numero,
+      details: {
+        creneau_id: creneau.id,
+        technicien_id: creneau.technicien_id,
+        date_debut: creneau.date_debut,
+        date_fin: creneau.date_fin,
+      },
+    });
     sendSuccess(res, creneau, 'Créneau mis à jour');
   } catch (err) { next(err); }
 }
@@ -70,6 +91,15 @@ export async function updateCreneau(req, res, next) {
 export async function deleteCreneau(req, res, next) {
   try {
     const creneau = await planningService.deleteCreneau(req.params.id, req.user);
+    await activityLog.logRequest(req, {
+      action: 'planification_annulee',
+      module: MODULES.PLANNING,
+      description: `Ticket ${creneau.ticket_numero} retiré du planning`,
+      entityType: 'ticket',
+      entityId: creneau.ticket_id,
+      entityLabel: creneau.ticket_numero,
+      details: { creneau_id: creneau.id, technicien_id: creneau.technicien_id },
+    });
     sendSuccess(res, creneau, 'Créneau retiré du planning');
   } catch (err) { next(err); }
 }

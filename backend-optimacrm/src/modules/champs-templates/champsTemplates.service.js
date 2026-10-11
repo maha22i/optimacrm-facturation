@@ -94,8 +94,9 @@ export async function updateTemplate(id, data) {
 
 export async function deleteTemplate(id) {
   const result = await query(
-    'DELETE FROM champs_personnalises_templates WHERE id = $1 RETURNING id',
+    'DELETE FROM champs_personnalises_templates WHERE id = $1 RETURNING id, label, categorie',
     [id]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Template non trouvé');
+  return result.rows[0];
 }

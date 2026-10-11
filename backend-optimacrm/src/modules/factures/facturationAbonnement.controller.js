@@ -1,6 +1,7 @@
 import * as service from './facturationAbonnement.service.js';
 import { sendSuccess } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function getContratsAbonnement(req, res, next) {
   try {
@@ -29,7 +30,7 @@ export async function genererFacturesAbonnement(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'facturation_periodique_abonnement',
-        module: 'factures',
+        module: MODULES.FACTURES,
         description: `Génération facturation périodique ${typeLabel} : ${rapport.factures_creees} facture(s) créée(s) pour ${rapport.montant_total_ht.toLocaleString('fr-FR')} € HT`,
         entityType: 'facture',
         details: {

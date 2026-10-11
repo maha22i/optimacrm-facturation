@@ -67,7 +67,7 @@ router.post(
 );
 
 router.put('/:id', checkPermission('factures_write'), ctrl.updateFacture);
-router.delete('/:id', checkPermission('factures_write'), ctrl.deleteFacture);
+router.delete('/:id', checkPermission('factures_delete'), ctrl.deleteFacture);
 
 // ── Gestion des lignes ───────────────────────────────────────────────────
 
@@ -96,6 +96,6 @@ router.post('/generer-lot', checkPermission('factures_write'), ctrl.executerGene
 router.post('/valider-lot', checkPermission('factures_write'), ctrl.validerLot);
 router.post('/envoyer-lot', checkPermission('factures_write'), ctrl.envoyerLot);
 router.post('/telecharger-lot', checkPermission('factures_write'), ctrl.telechargerLot);
-router.post('/supprimer-lot', checkPermission('factures_write'), ctrl.supprimerLot);
+router.post('/supprimer-lot', checkPermission('factures_delete'), ctrl.supprimerLot);
 
 export default router;

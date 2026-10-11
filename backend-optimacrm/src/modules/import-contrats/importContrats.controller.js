@@ -1,6 +1,7 @@
 import { sendSuccess } from '../../utils/response.js';
 import * as service from './importContrats.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function parse(req, res, next) {
   try {
@@ -38,7 +39,7 @@ export async function execute(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'contrats_importes', module: 'contrats',
+        action: 'contrats_importes', module: MODULES.CONTRATS,
         description: `Import ${type_contrat || 'contrats'} : ${result.contrats_created} créés, ${result.contrats_updated} mis à jour, ${result.lignes_created} lignes`,
         details: {
           fichier: file_id,
@@ -77,13 +78,30 @@ export async function saveMapping(req, res, next) {
       user_id: req.user?.id,
       typeContrat: type_contrat || null,
     });
+    await activityLog.logRequest(req, {
+      action: 'mapping_import_enregistre',
+      module: MODULES.CONTRATS,
+      description: `Enregistrement du mapping d'import contrats « ${name} »`,
+      entityType: 'mapping_import',
+      entityId: result?.id ?? null,
+      entityLabel: name,
+      details: { type_contrat: type_contrat || null },
+    });
     sendSuccess(res, result, 'Mapping sauvegardé');
   } catch (err) { next(err); }
 }
 
 export async function deleteMapping(req, res, next) {
   try {
-    await service.deleteSavedMapping(req.params.id);
+    const supprime = await service.deleteSavedMapping(req.params.id);
+    await activityLog.logRequest(req, {
+      action: 'mapping_import_supprime',
+      module: MODULES.CONTRATS,
+      description: `Suppression du mapping d'import contrats « ${supprime.name} »`,
+      entityType: 'mapping_import',
+      entityId: supprime.id,
+      entityLabel: supprime.name,
+    });
     sendSuccess(res, null, 'Mapping supprimé');
   } catch (err) { next(err); }
 }

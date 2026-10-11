@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { Contrat, ContratStats, PaginatedResponse, ApiResponse, TypeContrat, StatutContrat } from '@/lib/types';
 
 const TYPE_BADGES: Record<TypeContrat, { label: string; color: string; icon: string }> = {
@@ -42,17 +43,18 @@ function formatMoney(n: number | string | null | undefined) {
 
 export default function ContratsPage() {
   const router = useRouter();
+  const { hasPermission } = useAuth();
+  const canDeleteContrats = hasPermission('contrats_delete');
   const [contrats, setContrats] = useState<Contrat[]>([]);
   const [stats, setStats] = useState<ContratStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const fetchSeq = useRef(0);
 
   const [search, setSearch] = useState('');
   const [searchDebounce, setSearchDebounce] = useState('');
   const [filterType, setFilterType] = useState('');
-  const [filterStatut, setFilterStatut] = useState('');
+  const [filterStatut, setFilterStatut] = useState('Actif');
   const [filterEcheance, setFilterEcheance] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -87,34 +89,50 @@ export default function ContratsPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [searchDebounce, filterType, filterStatut, filterEcheance]);
-
   const loadContrats = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('page', String(page));
-      params.set('limit', '20');
-      if (searchDebounce) params.set('search', searchDebounce);
-      if (filterType) params.set('type_contrat', filterType);
-      if (filterStatut) params.set('statut', filterStatut);
-      if (filterEcheance) {
-        const d = new Date();
-        d.setMonth(d.getMonth() + parseInt(filterEcheance));
-        params.set('echeance_avant', d.toISOString().split('T')[0]);
+      const buildParams = (pageNum: number) => {
+        const params = new URLSearchParams();
+        params.set('page', String(pageNum));
+        params.set('limit', '100');
+        if (searchDebounce) params.set('search', searchDebounce);
+        if (filterType) params.set('type_contrat', filterType);
+        if (filterStatut) params.set('statut', filterStatut);
+        if (filterEcheance) {
+          const d = new Date();
+          d.setMonth(d.getMonth() + parseInt(filterEcheance));
+          params.set('echeance_avant', d.toISOString().split('T')[0]);
+        }
+        return params;
+      };
+
+      const first = await api.get<PaginatedResponse<Contrat>>(`/contrats?${buildParams(1)}`);
+      const pages = [first.data];
+      if (first.pagination.totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: first.pagination.totalPages - 1 }, (_, i) =>
+            api.get<PaginatedResponse<Contrat>>(`/contrats?${buildParams(i + 2)}`),
+          ),
+        );
+        pages.push(...rest.map(r => r.data));
       }
 
-      const res = await api.get<PaginatedResponse<Contrat>>(`/contrats?${params}`);
-      setContrats(res.data);
-      setTotalPages(res.pagination.totalPages);
-      setTotal(res.pagination.total);
+      if (seq !== fetchSeq.current) return;
+      const byId = new Map<number, Contrat>();
+      for (const contrat of pages.flat()) byId.set(contrat.id, contrat);
+      setContrats([...byId.values()]);
+      setTotal(first.pagination.total);
       setSelectedIds(new Set());
     } catch {
-      // silently fail
+      if (seq !== fetchSeq.current) return;
+      setContrats([]);
+      setTotal(0);
     } finally {
-      setLoading(false);
+      if (seq === fetchSeq.current) setLoading(false);
     }
-  }, [page, searchDebounce, filterType, filterStatut, filterEcheance]);
+  }, [searchDebounce, filterType, filterStatut, filterEcheance]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -231,19 +249,6 @@ export default function ContratsPage() {
     }
   };
 
-  const pageNumbers = (): (number | string)[] => {
-    const pages: (number | string)[] = [];
-    const delta = 2;
-    for (let i = 1; i <= totalPages; i++) {
-      if (i === 1 || i === totalPages || (i >= page - delta && i <= page + delta)) {
-        pages.push(i);
-      } else if (pages[pages.length - 1] !== '...') {
-        pages.push('...');
-      }
-    }
-    return pages;
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -260,7 +265,7 @@ export default function ContratsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {total > 0 && (
+          {canDeleteContrats && total > 0 && (
             <button
               onClick={() => setDeleteAllStep(1)}
               className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-100 transition cursor-pointer"
@@ -386,7 +391,7 @@ export default function ContratsPage() {
             </svg>
             <input
               type="text"
-              placeholder="Rechercher par n° contrat, client, n° série..."
+              placeholder="Rechercher : n° contrat, n° client, nom, contact, ville, n° série, modèle..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-gray-200 py-2.5 pl-10 pr-4 text-sm text-gray-700 placeholder-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
@@ -448,6 +453,7 @@ export default function ContratsPage() {
               </svg>
               Rendre inactif
             </button>
+            {canDeleteContrats && (
             <button
               onClick={() => setShowBulkDeleteConfirm(true)}
               className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition cursor-pointer"
@@ -457,6 +463,7 @@ export default function ContratsPage() {
               </svg>
               Supprimer la sélection
             </button>
+            )}
           </div>
           <button
             onClick={() => setSelectedIds(new Set())}
@@ -521,7 +528,13 @@ export default function ContratsPage() {
                 return (
                   <tr
                     key={c.id}
-                    onClick={() => router.push(`/dashboard/contrats/${c.id}`)}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey) window.open(`/dashboard/contrats/${c.id}`, '_blank', 'noopener');
+                      else router.push(`/dashboard/contrats/${c.id}`);
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) window.open(`/dashboard/contrats/${c.id}`, '_blank', 'noopener');
+                    }}
                     className={`hover:bg-blue-50/30 cursor-pointer transition-colors ${selectedIds.has(c.id) ? 'bg-blue-50/50' : ''}`}
                   >
                     <td className="w-12 px-4 py-3">
@@ -574,6 +587,18 @@ export default function ContratsPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                           </svg>
                         </button>
+                        <a
+                          href={`/dashboard/contrats/${c.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onAuxClick={(e) => e.stopPropagation()}
+                          className="p-1.5 rounded-md text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors cursor-pointer"
+                          title="Ouvrir dans un nouvel onglet"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                          </svg>
+                        </a>
                         <button
                           onClick={() => handleDuplicate(c.id)}
                           className="p-1.5 rounded-md text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
@@ -583,6 +608,7 @@ export default function ContratsPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
                           </svg>
                         </button>
+                        {canDeleteContrats && (
                         <button
                           onClick={() => setDeleteId(c.id)}
                           className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
@@ -592,6 +618,7 @@ export default function ContratsPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                           </svg>
                         </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -600,50 +627,6 @@ export default function ContratsPage() {
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4">
-            <p className="text-sm text-gray-500">
-              Page <span className="font-medium text-gray-700">{page}</span> sur{' '}
-              <span className="font-medium text-gray-700">{totalPages}</span>{' '}
-              ({total} résultat{total > 1 ? 's' : ''})
-            </p>
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-                className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-              {pageNumbers().map((p, i) =>
-                typeof p === 'string' ? (
-                  <span key={`e-${i}`} className="px-2 text-gray-400 text-sm">...</span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    className={`h-9 min-w-[36px] rounded-xl text-sm font-medium transition cursor-pointer ${p === page ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}`}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-                className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Export Modal */}

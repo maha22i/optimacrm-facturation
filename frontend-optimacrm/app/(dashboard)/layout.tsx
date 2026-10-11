@@ -9,7 +9,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import SuspendedScreen from '@/components/SuspendedScreen';
 
-import type { PermissionKey, ApiResponse, TicketStats, UserRole } from '@/lib/types';
+import type { PermissionKey, ApiResponse, TicketStats, UserRole, AlertesRenouvellement } from '@/lib/types';
 
 interface NavChild {
   label: string;
@@ -211,6 +211,7 @@ const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
     children: [
+      { label: 'Renouvellements', href: '/dashboard/contrats/renouvellements', requiredPermission: 'contrats_read', moduleKey: 'contrats' },
       { label: 'Importer (Capasoft)', href: '/dashboard/contrats/import', requiredPermission: 'contrats_import', moduleKey: 'contrats' },
       { label: 'Import Téléphonie', href: '/dashboard/contrats/import-telephonie', requiredPermission: 'contrats_write', moduleKey: 'contrats' },
       { label: 'Import Informatique', href: '/dashboard/contrats/import-informatique', requiredPermission: 'contrats_write', moduleKey: 'contrats' },
@@ -334,11 +335,21 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [ticketsNouveaux, setTicketsNouveaux] = useState(0);
   const [clientRejected, setClientRejected] = useState(false);
+  const [alertes, setAlertes] = useState<AlertesRenouvellement>({ total: 0, contrats: [] });
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifMenuRef = useRef<HTMLDivElement>(null);
 
   const fetchTicketsBadge = useCallback(async () => {
     try {
       const res = await api.get<ApiResponse<TicketStats>>('/tickets/stats');
       setTicketsNouveaux(res.data?.par_statut?.nouveau || 0);
+    } catch { /* silently ignore */ }
+  }, []);
+
+  const fetchAlertes = useCallback(async () => {
+    try {
+      const res = await api.get<ApiResponse<AlertesRenouvellement>>('/contrats/renouvellements/alertes');
+      setAlertes(res.data);
     } catch { /* silently ignore */ }
   }, []);
 
@@ -351,6 +362,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     const interval = setInterval(fetchTicketsBadge, 60000);
     return () => clearInterval(interval);
   }, [user, hasPermission, fetchTicketsBadge]);
+
+  // Même garde que pour les tickets : ne jamais interroger la route si la
+  // permission manque ou si le module contrats est désactivé, sinon on
+  // enchaîne les 403 toutes les cinq minutes.
+  useEffect(() => {
+    if (!user || !hasPermission('contrats_read') || user.modules_actifs?.contrats === false) return;
+    fetchAlertes();
+    const interval = setInterval(fetchAlertes, 300000);
+    return () => clearInterval(interval);
+  }, [user, hasPermission, fetchAlertes]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -407,6 +428,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     function handleClickOutside(e: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
+      }
+      if (notifMenuRef.current && !notifMenuRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -665,7 +689,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:ml-[68px]' : 'lg:ml-[250px]'}`}>
+      <div className={`flex min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:ml-[68px]' : 'lg:ml-[250px]'}`}>
         {/* Top bar */}
         <header className="sticky top-0 z-30 bg-white border-b border-gray-100">
           <div className="flex items-center justify-between h-16 px-4 lg:px-6">
@@ -683,13 +707,71 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Notifications */}
-              <button className="relative p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-200 cursor-pointer">
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-                </svg>
-                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full ring-2 ring-white" style={{ backgroundColor: primaryColor }} />
-              </button>
+              {/* Notifications — contrats copieur dont le préavis est ouvert */}
+              <div className="relative" ref={notifMenuRef}>
+                <button
+                  onClick={() => setNotifOpen(!notifOpen)}
+                  className="relative p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-200 cursor-pointer"
+                  title="Renouvellements à venir"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+                  </svg>
+                  {alertes.total > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-white" style={{ backgroundColor: primaryColor }}>
+                      {alertes.total > 9 ? '9+' : alertes.total}
+                    </span>
+                  )}
+                </button>
+
+                {notifOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-80 rounded-xl bg-white border border-gray-100 shadow-xl shadow-black/[0.08] py-1.5 z-50">
+                    <div className="px-3 py-2 border-b border-gray-50">
+                      <p className="text-[13px] font-semibold text-gray-800">Renouvellements</p>
+                      <p className="text-[11px] text-gray-400">
+                        {alertes.total > 0
+                          ? `${alertes.total} contrat${alertes.total > 1 ? 's' : ''} en préavis`
+                          : 'Aucun préavis en cours'}
+                      </p>
+                    </div>
+
+                    {alertes.contrats.length === 0 ? (
+                      <p className="px-3 py-4 text-[12.5px] text-gray-400">Rien à relancer pour le moment.</p>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto">
+                        {alertes.contrats.map(c => (
+                          <Link
+                            key={c.id}
+                            href={`/dashboard/contrats/${c.id}`}
+                            onClick={() => setNotifOpen(false)}
+                            className="block px-3 py-2 hover:bg-gray-50 transition-colors"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-[13px] font-semibold text-gray-800 truncate">{c.client_raison_sociale}</p>
+                              <span className={`shrink-0 text-[11px] font-semibold ${c.jours_restants <= 31 ? 'text-red-600' : 'text-amber-600'}`}>
+                                {c.jours_restants < 0 ? 'échue' : `${c.jours_restants} j`}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-400">
+                              {c.numero_contrat} — échéance le {c.date_renouvellement.split('-').reverse().join('/')}
+                            </p>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="border-t border-gray-50 mt-1 pt-1">
+                      <Link
+                        href="/dashboard/contrats/renouvellements"
+                        onClick={() => setNotifOpen(false)}
+                        className="block px-3 py-2 text-[12.5px] font-medium text-blue-600 hover:bg-blue-50/60 transition-colors"
+                      >
+                        Voir tous les renouvellements
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="h-6 w-px bg-gray-100 mx-1" />
 
@@ -749,7 +831,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-4 lg:p-6">
+        <main className="min-w-0 flex-1 p-4 lg:p-6">
           {children}
         </main>
       </div>

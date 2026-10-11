@@ -2,6 +2,7 @@ import { ZipArchive } from 'archiver';
 import * as factureService from './facture.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { sendFactureEmail, getRenderedTemplate } from '../email/email.service.js';
 import { generateFacturePdf } from './pdf.service.js';
 
@@ -50,7 +51,7 @@ export async function createFacture(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_creee', module: 'factures',
+        action: 'facture_creee', module: MODULES.FACTURES,
         description: `Création de la facture ${facture.numero_facture || ''} pour ${facture.client_raison_sociale || ''}`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         details: { montant_ht: facture.total_ht, client: facture.client_raison_sociale },
@@ -67,7 +68,7 @@ export async function updateFacture(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_modifiee', module: 'factures',
+        action: 'facture_modifiee', module: MODULES.FACTURES,
         description: `Modification de la facture ${facture.numero_facture || ''}`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         ipAddress: activityLog.getClientIp(req),
@@ -86,7 +87,7 @@ export async function deleteFacture(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_supprimee', module: 'factures',
+        action: 'facture_supprimee', module: MODULES.FACTURES,
         description: `Suppression de la facture ${fLabel}`,
         entityType: 'facture', entityId: fId, entityLabel: fLabel,
         ipAddress: activityLog.getClientIp(req),
@@ -103,6 +104,15 @@ export async function deleteFacture(req, res, next) {
 export async function validerFacture(req, res, next) {
   try {
     const facture = await factureService.validerFacture(parseInt(req.params.id), req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'facture_validee',
+      module: MODULES.FACTURES,
+      description: `Validation de la facture ${facture.numero_facture} (${facture.total_ttc} € TTC)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { total_ttc: facture.total_ttc, client: facture.client_raison_sociale },
+    });
     sendSuccess(res, facture, 'Facture validée');
   } catch (err) { next(err); }
 }
@@ -113,7 +123,7 @@ export async function envoyerFacture(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_envoyee', module: 'factures',
+        action: 'facture_envoyee', module: MODULES.FACTURES,
         description: `Facture ${facture.numero_facture || ''} envoyée`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         ipAddress: activityLog.getClientIp(req),
@@ -126,6 +136,15 @@ export async function envoyerFacture(req, res, next) {
 export async function annulerFacture(req, res, next) {
   try {
     const facture = await factureService.annulerFacture(parseInt(req.params.id), req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'facture_annulee',
+      module: MODULES.FACTURES,
+      description: `Annulation de la facture ${facture.numero_facture} (${facture.total_ttc} € TTC)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { total_ttc: facture.total_ttc, client: facture.client_raison_sociale },
+    });
     sendSuccess(res, facture, 'Facture annulée');
   } catch (err) { next(err); }
 }
@@ -133,6 +152,15 @@ export async function annulerFacture(req, res, next) {
 export async function dupliquerFacture(req, res, next) {
   try {
     const facture = await factureService.dupliquerFacture(parseInt(req.params.id), req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'facture_dupliquee',
+      module: MODULES.FACTURES,
+      description: `Duplication de la facture #${req.params.id} vers ${facture.numero_facture}`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { facture_source_id: parseInt(req.params.id), total_ttc: facture.total_ttc },
+    });
     sendSuccess(res, facture, 'Facture dupliquée', 201);
   } catch (err) { next(err); }
 }
@@ -143,7 +171,7 @@ export async function creerAvoir(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'avoir_cree', module: 'factures',
+        action: 'avoir_cree', module: MODULES.FACTURES,
         description: `Avoir ${avoir.numero_facture || ''} créé sur la facture #${req.params.id}`,
         entityType: 'facture', entityId: avoir.id, entityLabel: avoir.numero_facture,
         ipAddress: activityLog.getClientIp(req),
@@ -170,7 +198,7 @@ export async function ajouterReglement(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_payee', module: 'factures',
+        action: 'facture_payee', module: MODULES.FACTURES,
         description: `Paiement de ${req.body.montant || ''} € enregistré sur ${facture.numero_facture || ''}`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         details: { montant: req.body.montant, mode: req.body.mode_paiement },
@@ -186,6 +214,15 @@ export async function supprimerReglement(req, res, next) {
     const facture = await factureService.supprimerReglement(
       parseInt(req.params.id), parseInt(req.params.rid), req.user.id
     );
+    await activityLog.logRequest(req, {
+      action: 'facture_reglement_supprime',
+      module: MODULES.FACTURES,
+      description: `Suppression d'un règlement sur la facture ${facture.numero_facture} (reste ${facture.net_a_payer} € à payer)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { reglement_id: parseInt(req.params.rid), net_a_payer: facture.net_a_payer },
+    });
     sendSuccess(res, facture, 'Paiement supprimé');
   } catch (err) { next(err); }
 }
@@ -203,6 +240,15 @@ export async function genererDepuisContrat(req, res, next) {
       releve_compteur_coul_id: req.body.releve_compteur_coul_id || undefined,
     };
     const facture = await factureService.genererDepuisContrat(parseInt(req.params.contratId), req.user.id, options);
+    await activityLog.logRequest(req, {
+      action: 'facture_generee_depuis_contrat',
+      module: MODULES.FACTURES,
+      description: `Génération de la facture ${facture.numero_facture} depuis le contrat ${facture.numero_contrat || `#${req.params.contratId}`}`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { contrat_id: parseInt(req.params.contratId), total_ttc: facture.total_ttc, ...options },
+    });
     sendSuccess(res, facture, 'Facture générée depuis le contrat', 201);
   } catch (err) { next(err); }
 }
@@ -210,6 +256,15 @@ export async function genererDepuisContrat(req, res, next) {
 export async function genererDepuisDevis(req, res, next) {
   try {
     const facture = await factureService.genererDepuisDevis(parseInt(req.params.devisId), req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'facture_generee_depuis_devis',
+      module: MODULES.FACTURES,
+      description: `Génération de la facture ${facture.numero_facture} depuis le devis #${req.params.devisId}`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { devis_id: parseInt(req.params.devisId), total_ttc: facture.total_ttc },
+    });
     sendSuccess(res, facture, 'Facture générée depuis le devis', 201);
   } catch (err) { next(err); }
 }
@@ -229,7 +284,7 @@ export async function executerGenerationLot(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'factures_generees', module: 'factures',
+        action: 'factures_generees', module: MODULES.FACTURES,
         description: `Génération en lot de ${result.generees?.length || 0} facture(s)`,
         details: { nb_generees: result.generees?.length, nb_erreurs: result.erreurs?.length },
         statut: result.erreurs?.length ? 'partiel' : 'succes',
@@ -275,7 +330,7 @@ export async function envoyerFactureEmail(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_envoyee_email', module: 'factures',
+        action: 'facture_envoyee_email', module: MODULES.FACTURES,
         description: `Facture ${facture.numero_facture} envoyée par email à ${destinataire}`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         details: { destinataire, sujet },
@@ -304,7 +359,7 @@ export async function validerLot(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'factures_validees_lot', module: 'factures',
+        action: 'factures_validees_lot', module: MODULES.FACTURES,
         description: `Validation en lot : ${result.valides} validée(s), ${result.erreurs.length} erreur(s)`,
         details: { nb_demandees: ids.length, nb_validees: result.valides, nb_erreurs: result.erreurs.length },
         statut: result.erreurs.length ? 'partiel' : 'succes',
@@ -333,7 +388,7 @@ export async function envoyerLot(req, res, next) {
       }
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'factures_envoyees_lot', module: 'factures',
+        action: 'factures_envoyees_lot', module: MODULES.FACTURES,
         description: `Envoi groupé de factures : ${result.envoyees} envoyée(s), ${result.erreurs.length} erreur(s)`,
         details: {
           nb_demandees: ids.length,
@@ -362,7 +417,7 @@ export async function supprimerLot(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'factures_supprimees_lot', module: 'factures',
+        action: 'factures_supprimees_lot', module: MODULES.FACTURES,
         description: `Suppression en lot : ${result.supprimees} supprimée(s), ${result.erreurs.length} erreur(s)`,
         details: { nb_demandees: ids.length, nb_supprimees: result.supprimees, nb_erreurs: result.erreurs.length },
         statut: result.erreurs.length ? 'partiel' : 'succes',
@@ -410,7 +465,7 @@ export async function telechargerLot(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'factures_telecharger_lot', module: 'factures',
+        action: 'factures_telecharger_lot', module: MODULES.FACTURES,
         description: `Téléchargement groupé de ${ids.length} facture(s) en ZIP`,
         details: { nb_factures: ids.length },
         ipAddress: activityLog.getClientIp(req),
@@ -436,7 +491,7 @@ export async function ajouterLigne(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'facture_ligne_ajoutee', module: 'factures',
+        action: 'facture_ligne_ajoutee', module: MODULES.FACTURES,
         description: `Ligne ajoutée sur la facture ${facture.numero_facture || ''}`,
         entityType: 'facture', entityId: facture.id, entityLabel: facture.numero_facture,
         ipAddress: activityLog.getClientIp(req),
@@ -451,6 +506,15 @@ export async function modifierLigne(req, res, next) {
     const facture = await factureService.modifierLigne(
       parseInt(req.params.id), parseInt(req.params.lid), req.body, req.user.id
     );
+    await activityLog.logRequest(req, {
+      action: 'facture_ligne_modifiee',
+      module: MODULES.FACTURES,
+      description: `Modification d'une ligne de la facture ${facture.numero_facture} (nouveau total ${facture.total_ttc} € TTC)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { ligne_id: parseInt(req.params.lid), champs_modifies: Object.keys(req.body), total_ttc: facture.total_ttc },
+    });
     sendSuccess(res, facture, 'Ligne modifiée');
   } catch (err) { next(err); }
 }
@@ -460,6 +524,15 @@ export async function supprimerLigne(req, res, next) {
     const facture = await factureService.supprimerLigne(
       parseInt(req.params.id), parseInt(req.params.lid), req.user.id
     );
+    await activityLog.logRequest(req, {
+      action: 'facture_ligne_supprimee',
+      module: MODULES.FACTURES,
+      description: `Suppression d'une ligne de la facture ${facture.numero_facture} (nouveau total ${facture.total_ttc} € TTC)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { ligne_id: parseInt(req.params.lid), total_ttc: facture.total_ttc },
+    });
     sendSuccess(res, facture, 'Ligne supprimée');
   } catch (err) { next(err); }
 }
@@ -467,6 +540,15 @@ export async function supprimerLigne(req, res, next) {
 export async function recalculerTotaux(req, res, next) {
   try {
     const facture = await factureService.recalculerTotaux(parseInt(req.params.id));
+    await activityLog.logRequest(req, {
+      action: 'facture_totaux_recalcules',
+      module: MODULES.FACTURES,
+      description: `Recalcul des totaux de la facture ${facture.numero_facture} (${facture.total_ttc} € TTC)`,
+      entityType: 'facture',
+      entityId: facture.id,
+      entityLabel: facture.numero_facture,
+      details: { total_ht: facture.total_ht, total_ttc: facture.total_ttc },
+    });
     sendSuccess(res, facture, 'Totaux recalculés');
   } catch (err) { next(err); }
 }

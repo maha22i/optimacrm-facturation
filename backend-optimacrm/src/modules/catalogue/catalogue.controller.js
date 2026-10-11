@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import * as catalogueService from './catalogue.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function listProduits(req, res, next) {
   try {
@@ -36,7 +37,7 @@ export async function createProduit(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'produit_cree',
-        module: 'catalogue',
+        module: MODULES.CATALOGUE,
         description: `Création du produit ${produit.designation || produit.reference || ''}`,
         entityType: 'produit',
         entityId: produit.id,
@@ -57,7 +58,7 @@ export async function updateProduit(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'produit_modifie',
-        module: 'catalogue',
+        module: MODULES.CATALOGUE,
         description: `Modification du produit ${produit.designation || produit.reference || ''}`,
         entityType: 'produit',
         entityId: produit.id,
@@ -78,7 +79,7 @@ export async function deleteProduit(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'produit_supprime',
-        module: 'catalogue',
+        module: MODULES.CATALOGUE,
         description: `Suppression du produit ${produit.designation || produit.reference || ''}`,
         entityType: 'produit',
         entityId: produit.id,
@@ -101,7 +102,7 @@ export async function deleteAllProduits(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'catalogue_tout_supprime',
-        module: 'catalogue',
+        module: MODULES.CATALOGUE,
         description: `Suppression de tout le catalogue (${result.deletedCount} produits)`,
         entityType: 'produit',
         entityId: null,
@@ -117,8 +118,32 @@ export async function deleteAllProduits(req, res, next) {
 export async function duplicateProduit(req, res, next) {
   try {
     const produit = await catalogueService.duplicateProduit(parseInt(req.params.id));
+    await activityLog.logRequest(req, {
+      action: 'produit_duplique',
+      module: MODULES.CATALOGUE,
+      description: `Duplication du produit ${produit.designation || produit.reference}`,
+      entityType: 'produit',
+      entityId: produit.id,
+      entityLabel: produit.designation || produit.reference,
+      details: { produit_source_id: parseInt(req.params.id), reference: produit.reference },
+    });
     sendSuccess(res, produit, 'Produit dupliqué', 201);
   } catch (err) { next(err); }
+}
+
+// Les tarifs client et l'image sont journalisés sur le produit porteur : c'est
+// sa fiche qui sert de point d'entrée à l'historique.
+async function logSurProduit(req, produitId, { action, resume, details }) {
+  const libelle = await catalogueService.getLibelleProduit(produitId);
+  await activityLog.logRequest(req, {
+    action,
+    module: MODULES.CATALOGUE,
+    description: `${resume} du produit ${libelle}`,
+    entityType: 'produit',
+    entityId: produitId,
+    entityLabel: libelle,
+    details,
+  });
 }
 
 export async function listTarifsClients(req, res, next) {
@@ -130,28 +155,46 @@ export async function listTarifsClients(req, res, next) {
 
 export async function createTarifClient(req, res, next) {
   try {
-    const tarif = await catalogueService.createTarifClient(parseInt(req.params.id), req.body);
+    const produitId = parseInt(req.params.id);
+    const tarif = await catalogueService.createTarifClient(produitId, req.body);
+    await logSurProduit(req, produitId, {
+      action: 'tarif_client_cree',
+      resume: `Création d'un tarif client (${tarif.prix_vente} € HT)`,
+      details: { tarif_id: tarif.id, client_id: tarif.client_id, prix_vente: tarif.prix_vente },
+    });
     sendSuccess(res, tarif, 'Tarif client créé', 201);
   } catch (err) { next(err); }
 }
 
 export async function updateTarifClient(req, res, next) {
   try {
+    const produitId = parseInt(req.params.id);
     const tarif = await catalogueService.updateTarifClient(
-      parseInt(req.params.id),
+      produitId,
       parseInt(req.params.tid),
       req.body
     );
+    await logSurProduit(req, produitId, {
+      action: 'tarif_client_modifie',
+      resume: `Modification d'un tarif client (${tarif.prix_vente} € HT)`,
+      details: { tarif_id: tarif.id, client_id: tarif.client_id, prix_vente: tarif.prix_vente, champs_modifies: Object.keys(req.body) },
+    });
     sendSuccess(res, tarif, 'Tarif client mis à jour');
   } catch (err) { next(err); }
 }
 
 export async function deleteTarifClient(req, res, next) {
   try {
+    const produitId = parseInt(req.params.id);
     const result = await catalogueService.deleteTarifClient(
-      parseInt(req.params.id),
+      produitId,
       parseInt(req.params.tid)
     );
+    await logSurProduit(req, produitId, {
+      action: 'tarif_client_supprime',
+      resume: 'Suppression d\'un tarif client',
+      details: { tarif_id: parseInt(req.params.tid) },
+    });
     sendSuccess(res, result, 'Tarif client supprimé');
   } catch (err) { next(err); }
 }
@@ -159,14 +202,25 @@ export async function deleteTarifClient(req, res, next) {
 export async function uploadImage(req, res, next) {
   try {
     if (!req.file) return sendSuccess(res, null, 'Aucun fichier envoyé', 400);
-    const result = await catalogueService.uploadImage(parseInt(req.params.id), req.file);
+    const produitId = parseInt(req.params.id);
+    const result = await catalogueService.uploadImage(produitId, req.file);
+    await logSurProduit(req, produitId, {
+      action: 'produit_image_modifiee',
+      resume: 'Mise à jour de l\'image',
+      details: { fichier: req.file.originalname },
+    });
     sendSuccess(res, result, 'Image uploadée');
   } catch (err) { next(err); }
 }
 
 export async function deleteImage(req, res, next) {
   try {
-    const result = await catalogueService.deleteImage(parseInt(req.params.id));
+    const produitId = parseInt(req.params.id);
+    const result = await catalogueService.deleteImage(produitId);
+    await logSurProduit(req, produitId, {
+      action: 'produit_image_supprimee',
+      resume: 'Suppression de l\'image',
+    });
     sendSuccess(res, result, 'Image supprimée');
   } catch (err) { next(err); }
 }

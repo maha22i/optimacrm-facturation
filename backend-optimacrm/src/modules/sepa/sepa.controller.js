@@ -1,5 +1,6 @@
 import * as sepaService from './sepa.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 // ── Créancier ─────────────────────────────────────────────────────────────────
 
@@ -18,7 +19,7 @@ export async function upsertCreancier(req, res, next) {
       userId: req.user?.id,
       userNom: activityLog.getUserName(req.user),
       action: 'UPSERT',
-      module: 'SEPA',
+      module: MODULES.SEPA,
       description: 'Mise à jour des paramètres créancier SEPA',
       entityType: 'sepa_creancier',
       entityId: data.id,
@@ -54,7 +55,7 @@ export async function genererRemise(req, res, next) {
       userId: req.user?.id,
       userNom: activityLog.getUserName(req.user),
       action: 'GENERER',
-      module: 'SEPA',
+      module: MODULES.SEPA,
       description: `Génération remise SEPA : ${result.nb_transactions} prélèvements pour ${result.montant_total} €`,
       entityType: 'sepa_remise',
       entityId: result.remise_id,

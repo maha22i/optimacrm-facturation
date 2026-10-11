@@ -18,6 +18,7 @@ router.use(tenantMiddleware);
 
 router.get('/', checkPermission('activity_logs'), ctrl.listLogs);
 router.get('/stats', checkPermission('activity_logs'), ctrl.getStats);
+router.get('/auteurs', checkPermission('activity_logs'), ctrl.listAuteurs);
 router.get('/:entityType/:entityId', checkPermission('activity_logs'), ctrl.getEntityHistory);
 
 export default router;

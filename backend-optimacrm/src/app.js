@@ -49,6 +49,13 @@ import clientPortalRoutes from './modules/client-portal/clientPortal.routes.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// Derrière un reverse proxy, req.ip vaut l'IP du proxy pour toutes les
+// requêtes : express-rate-limit compterait alors tous les clients sur une
+// seule clé. TRUST_PROXY = nombre de proxys entre le client et l'app.
+if (process.env.TRUST_PROXY) {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY));
+}
+
 const allowedOrigins = [
   process.env.LEGACY_FRONTEND_URL,
   process.env.FRONTEND_URL || 'http://localhost:3000',

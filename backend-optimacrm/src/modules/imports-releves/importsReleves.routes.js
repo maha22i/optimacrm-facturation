@@ -17,6 +17,6 @@ router.get('/:id', checkPermission('parc_read'), ctrl.getImport);
 router.get('/:id/releves', checkPermission('parc_read'), ctrl.getImportReleves);
 router.get('/:id/factures', checkPermission('parc_read'), ctrl.getImportFactures);
 router.get('/:id/rapport', checkPermission('parc_read'), ctrl.getImportRapport);
-router.delete('/:id', checkPermission('parc_write'), ctrl.annulerImport);
+router.delete('/:id', checkPermission('parc_delete'), ctrl.annulerImport);
 
 export default router;

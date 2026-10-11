@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "node --env-file=.env --test \"tests/**/*.test.mjs\"",
     "migrate": "node --env-file=.env src/database/migrate.js",
+    "audit:journal": "node scripts/audit-journal.mjs --verbose",
     "bootstrap:superadmin": "node --env-file=.env src/database/bootstrapSuperAdmin.js"
   },
   "keywords": [],

@@ -3,6 +3,7 @@ import * as ctrl from './auth.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
+import { checkPermission } from '../../middleware/checkPermission.js';
 import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { ApiError } from '../../utils/ApiError.js';
 
@@ -115,7 +116,7 @@ router.put(
   ctrl.updateUser,
 );
 
-router.delete('/users/:id', authenticate, tenantMiddleware, authorize('admin'), ctrl.deleteUser);
+router.delete('/users/:id', authenticate, tenantMiddleware, authorize('admin'), checkPermission('users_delete'), ctrl.deleteUser);
 
 router.post('/users/:id/reset-password-link', authenticate, tenantMiddleware, authorize('admin', 'admin_technique'), ctrl.sendResetPasswordLink);
 

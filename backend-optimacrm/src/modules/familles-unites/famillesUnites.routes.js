@@ -36,7 +36,7 @@ router.put(
   ctrl.updateFamille,
 );
 
-router.delete('/familles/:id', checkPermission('familles_unites'), ctrl.deleteFamille);
+router.delete('/familles/:id', checkPermission('catalogue_delete'), ctrl.deleteFamille);
 
 // ── Unités ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,6 @@ router.post(
   ctrl.createUnite,
 );
 
-router.delete('/unites/:id', checkPermission('familles_unites'), ctrl.deleteUnite);
+router.delete('/unites/:id', checkPermission('catalogue_delete'), ctrl.deleteUnite);
 
 export default router;

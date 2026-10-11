@@ -56,8 +56,8 @@ router.put(
   ctrl.updateClient,
 );
 
-router.delete('/all', checkPermission('clients_write'), ctrl.deleteAllClients);
-router.delete('/:id', checkPermission('clients_write'), ctrl.deleteClient);
+router.delete('/all', checkPermission('clients_delete'), ctrl.deleteAllClients);
+router.delete('/:id', checkPermission('clients_delete'), ctrl.deleteClient);
 
 // ── Adresses ───────────────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ router.put(
   ctrl.updateAdresse,
 );
 
-router.delete('/:id/adresses/:adresseId', checkPermission('clients_write'), ctrl.deleteAdresse);
+router.delete('/:id/adresses/:adresseId', checkPermission('clients_delete'), ctrl.deleteAdresse);
 
 // ── Contacts ───────────────────────────────────────────────────────────────
 
@@ -121,7 +121,7 @@ router.put(
   ctrl.updateContact,
 );
 
-router.delete('/:id/contacts/:contactId', checkPermission('clients_write'), ctrl.deleteContact);
+router.delete('/:id/contacts/:contactId', checkPermission('clients_delete'), ctrl.deleteContact);
 
 // ── Documents ──────────────────────────────────────────────────────────────
 
@@ -134,6 +134,6 @@ router.post(
   ctrl.createDocument,
 );
 
-router.delete('/:id/documents/:documentId', checkPermission('clients_write'), ctrl.deleteDocument);
+router.delete('/:id/documents/:documentId', checkPermission('clients_delete'), ctrl.deleteDocument);
 
 export default router;

@@ -1,8 +1,11 @@
 import * as XLSX from 'xlsx';
 import * as contratService from './contrat.service.js';
+import * as augmentationService from './augmentationAnnuelle.service.js';
+import * as renouvellementService from './renouvellement.service.js';
 import * as factureService from '../factures/facture.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { CONTRAT_CATEGORIES, getCategoriesForType } from '../../config/contratCategories.js';
 
 // ---------------------------------------------------------------------------
@@ -29,6 +32,88 @@ export async function getContrat(req, res, next) {
   } catch (err) { next(err); }
 }
 
+export async function getHistoriqueAugmentations(req, res, next) {
+  try {
+    const historique = await augmentationService.getHistoriqueAugmentations(parseInt(req.params.id));
+    sendSuccess(res, historique);
+  } catch (err) { next(err); }
+}
+
+// ---------------------------------------------------------------------------
+// RENOUVELLEMENTS (contrats copieur à renouveler / resigner)
+// ---------------------------------------------------------------------------
+
+/** Nombre d'entrées dans la cloche : uniquement les alertes non traitées. */
+const NB_ALERTES_CLOCHE = 6;
+
+function parseHorizon(raw) {
+  if (raw == null || raw === '') return null;
+  const mois = parseInt(raw, 10);
+  if (!Number.isFinite(mois) || mois < 0) return null;
+  return Math.min(60, mois);
+}
+
+export async function listRenouvellements(req, res, next) {
+  try {
+    const contrats = await renouvellementService.listerRenouvellements({
+      horizonMois: parseHorizon(req.query.horizon),
+      inclureTraites: req.query.traites === '1',
+    });
+    const enAlerte = await renouvellementService.compterAlertesRenouvellement();
+    sendSuccess(res, { contrats, en_alerte: enAlerte });
+  } catch (err) { next(err); }
+}
+
+export async function getAlertesRenouvellement(req, res, next) {
+  try {
+    const total = await renouvellementService.compterAlertesRenouvellement();
+    const contrats = total > 0
+      ? await renouvellementService.listerRenouvellements({ limit: NB_ALERTES_CLOCHE })
+      : [];
+    sendSuccess(res, { total, contrats });
+  } catch (err) { next(err); }
+}
+
+export async function marquerRenouvellementTraite(req, res, next) {
+  try {
+    const contrat = await renouvellementService.marquerTraite(parseInt(req.params.id), {
+      userNom: activityLog.getUserName(req.user),
+    });
+    if (!contrat) return res.status(404).json({ success: false, message: 'Contrat introuvable ou sans date de renouvellement' });
+    try {
+      await activityLog.log({
+        userId: req.user?.id,
+        userNom: activityLog.getUserName(req.user),
+        action: 'contrat_renouvellement_traite',
+        module: MODULES.CONTRATS,
+        description: `Relance de renouvellement traitée pour le contrat ${contrat.numero_contrat} (échéance ${contrat.date_renouvellement})`,
+        entityType: 'contrat',
+        entityId: contrat.id,
+        entityLabel: contrat.numero_contrat,
+        details: { echeance: contrat.date_renouvellement },
+        ipAddress: activityLog.getClientIp(req),
+      });
+    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    sendSuccess(res, contrat, 'Relance marquée comme traitée');
+  } catch (err) { next(err); }
+}
+
+export async function annulerRenouvellementTraite(req, res, next) {
+  try {
+    const contrat = await renouvellementService.annulerTraitement(parseInt(req.params.id));
+    if (!contrat) return res.status(404).json({ success: false, message: 'Contrat introuvable' });
+    await activityLog.logRequest(req, {
+      action: 'renouvellement_remis_en_attente',
+      module: MODULES.CONTRATS,
+      description: `Relance de renouvellement remise en attente pour le contrat ${contrat.numero_contrat}`,
+      entityType: 'contrat',
+      entityId: contrat.id,
+      entityLabel: contrat.numero_contrat,
+    });
+    sendSuccess(res, contrat, 'Relance remise en attente');
+  } catch (err) { next(err); }
+}
+
 export async function createContrat(req, res, next) {
   try {
     const contrat = await contratService.createContrat(req.body);
@@ -37,7 +122,7 @@ export async function createContrat(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrat_cree',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Création du contrat ${contrat.numero_contrat || ''} pour ${contrat.client_raison_sociale || ''}`,
         entityType: 'contrat',
         entityId: contrat.id,
@@ -52,13 +137,20 @@ export async function createContrat(req, res, next) {
 
 export async function updateContrat(req, res, next) {
   try {
-    const contrat = await contratService.updateContrat(parseInt(req.params.id), req.body);
+    // Même règle que la suppression : le rôle admin ne suffit pas, la
+    // permission doit être cochée explicitement sur l'utilisateur.
+    const allowNumeroChange = (req.user?.permissions || []).includes('contrats_renumber');
+    const contrat = await contratService.updateContrat(
+      parseInt(req.params.id),
+      req.body,
+      { allowNumeroChange },
+    );
     try {
       await activityLog.log({
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrat_modifie',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Modification du contrat ${contrat.numero_contrat || ''}`,
         entityType: 'contrat',
         entityId: contrat.id,
@@ -79,7 +171,7 @@ export async function deleteContrat(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrat_supprime',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Suppression du contrat ${contrat.numero_contrat || ''}`,
         entityType: 'contrat',
         entityId: contrat.id,
@@ -100,7 +192,7 @@ export async function bulkDeleteContrats(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrats_supprimes_en_masse',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Suppression de ${result.deletedCount} contrat(s) sélectionné(s)`,
         entityType: 'contrat',
         details: { ids, numeros: result.deleted.map(c => c.numero_contrat) },
@@ -120,7 +212,7 @@ export async function bulkUpdateStatut(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrats_statut_modifie_en_masse',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Passage de ${result.updatedCount} contrat(s) en statut "${statut}"`,
         entityType: 'contrat',
         details: { ids, statut, numeros: result.updated.map(c => c.numero_contrat) },
@@ -139,7 +231,7 @@ export async function deleteAllContrats(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'contrats_tous_supprimes',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Suppression de tous les contrats (${result.deletedCount})`,
         entityType: 'contrat',
         ipAddress: activityLog.getClientIp(req),
@@ -151,7 +243,17 @@ export async function deleteAllContrats(req, res, next) {
 
 export async function duplicateContrat(req, res, next) {
   try {
-    const contrat = await contratService.duplicateContrat(parseInt(req.params.id));
+    const sourceId = parseInt(req.params.id);
+    const contrat = await contratService.duplicateContrat(sourceId);
+    await activityLog.logRequest(req, {
+      action: 'contrat_duplique',
+      module: MODULES.CONTRATS,
+      description: `Duplication du contrat ${await contratService.getNumeroContrat(sourceId)} vers ${contrat.numero_contrat}`,
+      entityType: 'contrat',
+      entityId: contrat.id,
+      entityLabel: contrat.numero_contrat,
+      details: { contrat_source_id: sourceId },
+    });
     sendSuccess(res, contrat, 'Contrat dupliqué avec succès', 201);
   } catch (err) { next(err); }
 }
@@ -209,6 +311,8 @@ export async function exportContrats(req, res, next) {
       'Loyer HT': c.loyer_ht,
       'Montant HT': parseFloat(c.montant_ht) || 0,
       'Location interne': c.location_interne ? 'Oui' : 'Non',
+      'Calage': c.calage ? 'Oui' : 'Non',
+      'Date calage': fmtDate(c.date_calage),
       'N° dossier financement': c.numero_dossier_financement || '',
       'Organisme crédit': c.organisme_credit || '',
       'Montant financé': c.montant_finance || 0,
@@ -307,7 +411,7 @@ export async function genererFacture(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'facture_generee_contrat',
-        module: 'contrats',
+        module: MODULES.CONTRATS,
         description: `Facture ${facture.numero_facture} générée depuis contrat #${contratId}`,
         entityType: 'contrat',
         entityId: contratId,
@@ -378,27 +482,78 @@ export async function importContratsTelephonie(req, res, next) {
 // LIGNES
 // ---------------------------------------------------------------------------
 
+// Les lignes et machines sont journalisées sur le contrat porteur
+// (entityType 'contrat') plutôt que sur elles-mêmes : c'est le contrat qu'on
+// consulte pour reconstituer l'historique, et une ligne supprimée n'a plus
+// d'écran où afficher le sien.
+async function logSurContrat(req, contratId, { action, resume, details }) {
+  const numero = await contratService.getNumeroContrat(contratId);
+  await activityLog.logRequest(req, {
+    action,
+    module: MODULES.CONTRATS,
+    description: `${resume} du contrat ${numero}`,
+    entityType: 'contrat',
+    entityId: contratId,
+    entityLabel: numero,
+    details,
+  });
+}
+
 export async function addLigne(req, res, next) {
   try {
-    const ligne = await contratService.addLigne(parseInt(req.params.id), req.body);
+    const contratId = parseInt(req.params.id);
+    const ligne = await contratService.addLigne(contratId, req.body);
+    await logSurContrat(req, contratId, {
+      action: 'contrat_ligne_ajoutee',
+      resume: `Ajout de la ligne « ${ligne.designation || ligne.categorie_ligne} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        categorie: ligne.categorie_ligne,
+        quantite: ligne.quantite,
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+      },
+    });
     sendSuccess(res, ligne, 'Ligne ajoutée', 201);
   } catch (err) { next(err); }
 }
 
 export async function updateLigne(req, res, next) {
   try {
+    const contratId = parseInt(req.params.id);
     const ligne = await contratService.updateLigne(
-      parseInt(req.params.id),
+      contratId,
       parseInt(req.params.ligneId),
       req.body,
     );
+    await logSurContrat(req, contratId, {
+      action: 'contrat_ligne_modifiee',
+      resume: `Modification de la ligne « ${ligne.designation || ligne.categorie_ligne} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        champs_modifies: Object.keys(req.body),
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+      },
+    });
     sendSuccess(res, ligne, 'Ligne mise à jour');
   } catch (err) { next(err); }
 }
 
 export async function deleteLigne(req, res, next) {
   try {
-    await contratService.deleteLigne(parseInt(req.params.id), parseInt(req.params.ligneId));
+    const contratId = parseInt(req.params.id);
+    const ligne = await contratService.deleteLigne(contratId, parseInt(req.params.ligneId));
+    await logSurContrat(req, contratId, {
+      action: 'contrat_ligne_supprimee',
+      resume: `Suppression de la ligne « ${ligne.designation || ligne.categorie_ligne} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        categorie: ligne.categorie_ligne,
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+      },
+    });
     sendSuccess(res, null, 'Ligne supprimée');
   } catch (err) { next(err); }
 }
@@ -409,25 +564,57 @@ export async function deleteLigne(req, res, next) {
 
 export async function addMachine(req, res, next) {
   try {
-    const machine = await contratService.addMachine(parseInt(req.params.id), req.body);
+    const contratId = parseInt(req.params.id);
+    const machine = await contratService.addMachine(contratId, req.body);
+    await logSurContrat(req, contratId, {
+      action: 'contrat_machine_ajoutee',
+      resume: `Ajout de la machine ${machine.numero_serie}`,
+      details: {
+        machine_id: machine.id,
+        numero_serie: machine.numero_serie,
+        modele: machine.modele,
+        cout_copie_nb: machine.cout_copie_nb,
+        cout_copie_couleur: machine.cout_copie_couleur,
+      },
+    });
     sendSuccess(res, machine, 'Machine ajoutée', 201);
   } catch (err) { next(err); }
 }
 
 export async function updateMachine(req, res, next) {
   try {
+    const contratId = parseInt(req.params.id);
     const machine = await contratService.updateMachine(
-      parseInt(req.params.id),
+      contratId,
       parseInt(req.params.machineId),
       req.body,
     );
+    await logSurContrat(req, contratId, {
+      action: 'contrat_machine_modifiee',
+      resume: `Modification de la machine ${machine.numero_serie}`,
+      details: {
+        machine_id: machine.id,
+        numero_serie: machine.numero_serie,
+        champs_modifies: Object.keys(req.body),
+      },
+    });
     sendSuccess(res, machine, 'Machine mise à jour');
   } catch (err) { next(err); }
 }
 
 export async function deleteMachine(req, res, next) {
   try {
-    await contratService.deleteMachine(parseInt(req.params.id), parseInt(req.params.machineId));
+    const contratId = parseInt(req.params.id);
+    const machine = await contratService.deleteMachine(contratId, parseInt(req.params.machineId));
+    await logSurContrat(req, contratId, {
+      action: 'contrat_machine_supprimee',
+      resume: `Suppression de la machine ${machine.numero_serie}`,
+      details: {
+        machine_id: machine.id,
+        numero_serie: machine.numero_serie,
+        modele: machine.modele,
+      },
+    });
     sendSuccess(res, null, 'Machine supprimée');
   } catch (err) { next(err); }
 }

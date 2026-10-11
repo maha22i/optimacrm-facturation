@@ -6,6 +6,8 @@ import { query, runWithTenantContext } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { sendSuccess } from '../../utils/response.js';
 import { toDateStr } from '../../utils/dateUtils.js';
+import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,6 +76,27 @@ async function appliquerReglesAcces(devis, { strict = true } = {}) {
 
 function getEmailDestinataire(devis, contact) {
   return devis.signataire_email || contact?.email || devis.client_email_principal || null;
+}
+
+/**
+ * Journalise une action réalisée par le client depuis le lien public du devis.
+ * Aucun utilisateur interne n'est à l'origine de l'action : `user_id` reste nul
+ * et le nom affiché est celui du destinataire. À appeler depuis l'intérieur du
+ * runWithTenantContext, pour que le tenant soit résolu par le contexte.
+ */
+async function logActionPublique(req, devis, { action, description, details, auteur, statut = 'succes' }) {
+  await activityLog.log({
+    userNom: auteur || devis.client_raison_sociale || 'Client',
+    action,
+    module: MODULES.DEVIS,
+    description,
+    entityType: 'devis',
+    entityId: devis.id,
+    entityLabel: devis.numero_devis,
+    details,
+    statut,
+    ipAddress: getClientIp(req),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +219,13 @@ export async function demanderCode(req, res, next) {
 
       await sendDevisVerificationEmail({ devis, destinataire, code, signataire });
 
+      await logActionPublique(req, devis, {
+        action: 'devis_code_verification_demande',
+        description: `Code de vérification envoyé à ${masquerEmail(destinataire)} pour le devis ${devis.numero_devis}`,
+        details: { email_masque: masquerEmail(destinataire) },
+        auteur: signataire,
+      });
+
       sendSuccess(res, { email_masque: masquerEmail(destinataire) }, 'Code de vérification envoyé');
     });
   } catch (err) { next(err); }
@@ -219,8 +249,18 @@ export async function verifierCode(req, res, next) {
 
       const ok = await devisService.validerCodeVerification(devis.id, code);
       if (!ok) {
+        await logActionPublique(req, devis, {
+          action: 'devis_code_verification_refuse',
+          description: `Code de vérification incorrect ou expiré pour le devis ${devis.numero_devis}`,
+          statut: 'echec',
+        });
         throw ApiError.badRequest('Code incorrect ou expiré');
       }
+
+      await logActionPublique(req, devis, {
+        action: 'devis_email_verifie',
+        description: `Email vérifié pour la signature du devis ${devis.numero_devis}`,
+      });
 
       sendSuccess(res, { email_verifie: true }, 'Email vérifié');
     });
@@ -255,6 +295,17 @@ export async function signerDevis(req, res, next) {
         signatureBase64,
         ip: getClientIp(req),
         userAgent: req.headers['user-agent'] || null,
+      });
+
+      await logActionPublique(req, devis, {
+        action: 'devis_signe',
+        description: `Devis ${devis.numero_devis} signé électroniquement par ${signataireNom}`,
+        details: {
+          signataire: signataireNom,
+          montant_ttc: devis.montant_ttc,
+          user_agent: req.headers['user-agent'] || null,
+        },
+        auteur: signataireNom,
       });
 
       // PDF régénéré avec le bloc signature, puis email de confirmation.

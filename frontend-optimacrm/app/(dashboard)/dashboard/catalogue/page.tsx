@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -42,9 +42,10 @@ const CATEGORIE_COLORS: Record<string, string> = {
 
 export default function CataloguePage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [produits, setProduits] = useState<CatalogueProduit[]>([]);
-  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 });
+  const [total, setTotal] = useState(0);
+  const fetchSeq = useRef(0);
   const [search, setSearch] = useState('');
   const [searchDebounce, setSearchDebounce] = useState('');
   const [categorieFilter, setCategorieFilter] = useState('');
@@ -69,6 +70,7 @@ export default function CataloguePage() {
   const [deletingAll, setDeletingAll] = useState(false);
 
   const isAdmin = user?.role === 'admin';
+  const canDeleteCatalogue = hasPermission('catalogue_delete');
   const DELETE_ALL_PHRASE = 'SUPPRIMER TOUT LE CATALOGUE';
 
   const handleDeleteAll = async () => {
@@ -79,7 +81,7 @@ export default function CataloguePage() {
       setDeleteAllStep(0);
       setDeleteAllConfirmText('');
       setToast({ message: 'Tout le catalogue a été supprimé', type: 'success' });
-      fetchProduits(1);
+      fetchProduits();
     } catch (err: unknown) {
       setToast({ message: err instanceof Error ? err.message : 'Erreur lors de la suppression', type: 'error' });
     } finally {
@@ -106,27 +108,46 @@ export default function CataloguePage() {
     } catch { setFournisseurs([]); }
   }, []);
 
-  const fetchProduits = useCallback(async (page: number) => {
+  const fetchProduits = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), limit: '20' });
-      if (searchDebounce) params.set('search', searchDebounce);
-      if (categorieFilter) params.set('categorie', categorieFilter);
-      if (actifFilter) params.set('actif', actifFilter);
-      if (fournisseurFilter) params.set('fournisseur_id', fournisseurFilter);
+      const buildParams = (page: number) => {
+        const params = new URLSearchParams({ page: String(page), limit: '100' });
+        if (searchDebounce) params.set('search', searchDebounce);
+        if (categorieFilter) params.set('categorie', categorieFilter);
+        if (actifFilter) params.set('actif', actifFilter);
+        if (fournisseurFilter) params.set('fournisseur_id', fournisseurFilter);
+        return params;
+      };
 
-      const res = await api.get<PaginatedResponse<CatalogueProduit>>(`/catalogue?${params}`);
-      setProduits(res.data);
-      setPagination(res.pagination);
+      const first = await api.get<PaginatedResponse<CatalogueProduit>>(`/catalogue?${buildParams(1)}`);
+      const pages = [first.data];
+      if (first.pagination.totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: first.pagination.totalPages - 1 }, (_, i) =>
+            api.get<PaginatedResponse<CatalogueProduit>>(`/catalogue?${buildParams(i + 2)}`),
+          ),
+        );
+        pages.push(...rest.map(r => r.data));
+      }
+
+      if (seq !== fetchSeq.current) return;
+      const byId = new Map<number, CatalogueProduit>();
+      for (const produit of pages.flat()) byId.set(produit.id, produit);
+      setProduits([...byId.values()]);
+      setTotal(first.pagination.total);
     } catch {
+      if (seq !== fetchSeq.current) return;
       setProduits([]);
+      setTotal(0);
     } finally {
-      setLoading(false);
+      if (seq === fetchSeq.current) setLoading(false);
     }
   }, [searchDebounce, categorieFilter, actifFilter, fournisseurFilter]);
 
   useEffect(() => { fetchCategories(); fetchFournisseurs(); }, [fetchCategories, fetchFournisseurs]);
-  useEffect(() => { fetchProduits(1); }, [fetchProduits]);
+  useEffect(() => { fetchProduits(); }, [fetchProduits]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -153,7 +174,7 @@ export default function CataloguePage() {
       await api.delete<ApiResponse<null>>(`/catalogue/${id}`);
       setToast({ message: 'Produit/service désactivé', type: 'success' });
       setDeleteConfirmId(null);
-      fetchProduits(pagination.page);
+      fetchProduits();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur lors de la suppression';
       setToast({ message, type: 'error' });
@@ -164,21 +185,6 @@ export default function CataloguePage() {
 
   const formatPrice = (value: number) =>
     new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value);
-
-  const pageNumbers = () => {
-    const pages: (number | string)[] = [];
-    const { page, totalPages } = pagination;
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (page > 3) pages.push('...');
-      for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
-      if (page < totalPages - 2) pages.push('...');
-      pages.push(totalPages);
-    }
-    return pages;
-  };
 
   const catBadge = (cat: string | null) => {
     if (!cat) return <span className="text-xs text-gray-300">&mdash;</span>;
@@ -202,11 +208,11 @@ export default function CataloguePage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Catalogue</h1>
-            <p className="mt-0.5 text-sm text-gray-500">Gérez vos produits et services · {pagination.total} produit{pagination.total > 1 ? 's' : ''} au total</p>
+            <p className="mt-0.5 text-sm text-gray-500">Gérez vos produits et services · {total} produit{total > 1 ? 's' : ''} au total</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {isAdmin && pagination.total > 0 && (
+          {isAdmin && canDeleteCatalogue && total > 0 && (
             <button
               onClick={() => setDeleteAllStep(1)}
               title="Supprimer tout le catalogue"
@@ -225,7 +231,7 @@ export default function CataloguePage() {
             <span className="hidden xl:inline">Exporter</span>
           </button>
           <button
-            onClick={() => fetchProduits(pagination.page)}
+            onClick={() => fetchProduits()}
             title="Actualiser"
             className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition cursor-pointer"
           >
@@ -353,7 +359,7 @@ export default function CataloguePage() {
 
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm text-gray-500">
-          <span className="font-semibold text-gray-700">{pagination.total}</span> produit{pagination.total > 1 ? 's' : ''}/service{pagination.total > 1 ? 's' : ''}
+          <span className="font-semibold text-gray-700">{total}</span> produit{total > 1 ? 's' : ''}/service{total > 1 ? 's' : ''}
         </p>
       </div>
 
@@ -457,6 +463,7 @@ export default function CataloguePage() {
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
                       </button>
+                      {canDeleteCatalogue && (
                       <button
                         onClick={e => { e.stopPropagation(); setDeleteConfirmId(produit.id); }}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
@@ -464,6 +471,7 @@ export default function CataloguePage() {
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                       </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -471,49 +479,6 @@ export default function CataloguePage() {
             </tbody>
           </table>
         </div>
-
-        {pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4">
-            <p className="text-sm text-gray-500">
-              Affichage de <span className="font-medium text-gray-700">{(pagination.page - 1) * pagination.limit + 1}</span> à{' '}
-              <span className="font-medium text-gray-700">{Math.min(pagination.page * pagination.limit, pagination.total)}</span> sur{' '}
-              <span className="font-medium text-gray-700">{pagination.total}</span>
-            </p>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={pagination.page <= 1}
-                onClick={() => fetchProduits(pagination.page - 1)}
-                className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-              </button>
-              {pageNumbers().map((p, i) =>
-                typeof p === 'string' ? (
-                  <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm">...</span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => fetchProduits(p)}
-                    className={`h-8 w-8 rounded-lg text-sm font-medium transition cursor-pointer ${
-                      p === pagination.page
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
-              <button
-                disabled={pagination.page >= pagination.totalPages}
-                onClick={() => fetchProduits(pagination.page + 1)}
-                className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Export Modal */}
@@ -591,7 +556,7 @@ export default function CataloguePage() {
             </div>
 
             <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4 bg-gray-50/50">
-              <p className="text-xs text-gray-400">{pagination.total} produit{pagination.total > 1 ? 's' : ''}/service{pagination.total > 1 ? 's' : ''} au total</p>
+              <p className="text-xs text-gray-400">{total} produit{total > 1 ? 's' : ''}/service{total > 1 ? 's' : ''} au total</p>
               <div className="flex items-center gap-3">
                 <button onClick={() => { setShowExportModal(false); setExportError(''); }} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">Annuler</button>
                 <button onClick={handleExport} disabled={exporting} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
@@ -659,7 +624,7 @@ export default function CataloguePage() {
             <div className="p-6">
               <p className="text-sm text-gray-700">
                 Vous êtes sur le point de supprimer <strong className="text-red-600">définitivement</strong> la totalité des{' '}
-                <strong className="text-red-600">{pagination.total} produit(s)/service(s)</strong> du catalogue, ainsi que leurs détails techniques, tarifs clients et données comptables.
+                <strong className="text-red-600">{total} produit(s)/service(s)</strong> du catalogue, ainsi que leurs détails techniques, tarifs clients et données comptables.
               </p>
               <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-3">
                 <div className="flex gap-2">
@@ -709,7 +674,7 @@ export default function CataloguePage() {
             </div>
             <div className="p-6">
               <p className="text-sm text-gray-700 mb-4">
-                Pour confirmer la suppression de <strong>{pagination.total} produit(s)/service(s)</strong>, tapez exactement :
+                Pour confirmer la suppression de <strong>{total} produit(s)/service(s)</strong>, tapez exactement :
               </p>
               <div className="rounded-lg bg-gray-100 px-3 py-2 text-center mb-4">
                 <code className="text-sm font-bold text-red-600 select-all">{DELETE_ALL_PHRASE}</code>

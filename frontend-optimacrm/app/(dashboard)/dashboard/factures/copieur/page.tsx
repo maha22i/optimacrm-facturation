@@ -20,6 +20,8 @@ const RAISON_LABELS: Record<string, { label: string; icon: string; color: string
   aucune_machine_active: { label: 'Aucune machine active', icon: '🖥️', color: 'text-gray-600 bg-gray-50 border-gray-200' },
   pas_de_tarification: { label: 'Tarification non définie', icon: '💰', color: 'text-amber-700 bg-amber-50 border-amber-200' },
   releves_manquants: { label: 'Relevés compteurs manquants ou déjà facturés', icon: '📊', color: 'text-blue-700 bg-blue-50 border-blue-200' },
+  lot_multi_forfait: { label: 'Lot avec plusieurs forfaits — machine principale indéterminée', icon: '🧩', color: 'text-orange-700 bg-orange-50 border-orange-200' },
+  premier_releve_initialisation: { label: "Premier relevé d'initialisation — rien à facturer", icon: 'ℹ️', color: 'text-sky-700 bg-sky-50 border-sky-200' },
   inconnu: { label: 'Raison non déterminée', icon: '❓', color: 'text-gray-600 bg-gray-50 border-gray-200' },
 };
 

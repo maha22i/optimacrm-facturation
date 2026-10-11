@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type {
   ApiResponse,
   ImportReleve,
@@ -248,6 +249,8 @@ function DropdownMenu({ imp, onCancel }: { imp: ImportReleve; onCancel: () => vo
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { hasPermission } = useAuth();
+  const canDeleteParc = hasPermission('parc_delete');
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -296,7 +299,7 @@ function DropdownMenu({ imp, onCancel }: { imp: ImportReleve; onCancel: () => vo
             </button>
           )}
           <div className="my-1.5 border-t border-gray-100" />
-          {imp.statut === 'Actif' && (
+          {canDeleteParc && imp.statut === 'Actif' && (
             <button
               onClick={() => { setOpen(false); onCancel(); }}
               className="cursor-pointer flex w-full items-center gap-2.5 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"

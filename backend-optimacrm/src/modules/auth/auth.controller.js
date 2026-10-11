@@ -1,6 +1,7 @@
 import * as authService from './auth.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 const COOKIE_OPTIONS = {
@@ -19,6 +20,22 @@ export async function register(req, res, next) {
   try {
     const result = await authService.register(req.body);
     setTokenCookie(res, result.token);
+    const nom = `${result.user?.first_name || ''} ${result.user?.last_name || ''}`.trim();
+    // Route publique : tenant_id explicite, cf. login.
+    if (result.user?.tenant_id) {
+      await activityLog.log({
+        userId: result.user.id,
+        userNom: nom,
+        action: 'inscription',
+        module: MODULES.UTILISATEURS,
+        description: `Inscription de ${nom} (${result.user.email})`,
+        entityType: 'utilisateur',
+        entityId: result.user.id,
+        entityLabel: nom,
+        ipAddress: activityLog.getClientIp(req),
+        tenantId: result.user.tenant_id,
+      });
+    }
     sendSuccess(res, { user: result.user }, 'Registration successful', 201);
   } catch (err) { next(err); }
 }
@@ -27,28 +44,79 @@ export async function login(req, res, next) {
   try {
     const result = await authService.login(req.body.email, req.body.password);
     setTokenCookie(res, result.token);
-    try {
-      const nom = `${result.user?.first_name || ''} ${result.user?.last_name || ''}`.trim();
-      await activityLog.log({
-        userId: result.user?.id,
-        userNom: nom,
-        action: 'connexion',
-        module: 'parametres',
-        description: `Connexion de ${nom}`,
-        ipAddress: activityLog.getClientIp(req),
-        // Login public (avant tenantMiddleware) : aucun SET LOCAL n'a été posé
-        // sur la connexion, il faut donc fournir tenant_id explicitement
-        // (cf. commentaire de activityLog.service.js). NULL pour un
-        // super_admin, comportement inchangé (colonne omise par log()).
-        tenantId: result.user?.tenant_id || null,
-      });
-    } catch (logErr) { console.error('[ActivityLog]', logErr.message); }
+    const nom = `${result.user?.first_name || ''} ${result.user?.last_name || ''}`.trim();
+    await activityLog.log({
+      userId: result.user?.id,
+      userNom: nom,
+      action: 'connexion',
+      module: MODULES.AUTHENTIFICATION,
+      description: `Connexion de ${nom}`,
+      ipAddress: activityLog.getClientIp(req),
+      // Login public (avant tenantMiddleware) : aucun SET LOCAL n'a été posé
+      // sur la connexion, il faut donc fournir tenant_id explicitement
+      // (cf. commentaire de activityLog.service.js). NULL pour un
+      // super_admin, comportement inchangé (colonne omise par log()).
+      tenantId: result.user?.tenant_id || null,
+    });
     sendSuccess(res, { user: result.user }, 'Login successful');
-  } catch (err) { next(err); }
+  } catch (err) {
+    await logEchecConnexion(req, err);
+    next(err);
+  }
 }
 
-export async function logout(_req, res) {
+/**
+ * Trace une tentative de connexion refusée (mot de passe faux, compte
+ * désactivé, tenant suspendu) : c'est le signal d'alerte d'une attaque par
+ * force brute. L'email inconnu ne peut pas être stocké — activity_logs.tenant_id
+ * est NOT NULL et aucun tenant ne lui correspond — il part alors en console.
+ */
+async function logEchecConnexion(req, err) {
+  const email = req.body?.email;
+  const identite = await authService.getIdentiteParEmail(email).catch(() => null);
+
+  if (!identite?.tenant_id) {
+    console.warn(`[Auth] Tentative de connexion refusée sur un compte inconnu : ${email} (${activityLog.getClientIp(req)})`);
+    return;
+  }
+
+  const nom = `${identite.first_name || ''} ${identite.last_name || ''}`.trim();
+  await activityLog.log({
+    userId: identite.id,
+    userNom: nom,
+    action: 'connexion_echouee',
+    module: MODULES.AUTHENTIFICATION,
+    description: `Échec de connexion pour ${nom || email}`,
+    statut: 'echec',
+    details: { email, motif: err?.message || 'Identifiants invalides' },
+    ipAddress: activityLog.getClientIp(req),
+    tenantId: identite.tenant_id,
+  });
+}
+
+export async function logout(req, res) {
+  // Route publique (pas de middleware authenticate) : le cookie doit pouvoir
+  // être purgé même avec un token expiré. On décode donc le token au mieux
+  // pour savoir qui se déconnecte, sans jamais faire échouer la déconnexion.
+  const identite = await authService.getIdentiteDepuisToken(
+    req.cookies?.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null),
+  ).catch(() => null);
+
   res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
+
+  if (identite?.tenant_id) {
+    const nom = `${identite.first_name || ''} ${identite.last_name || ''}`.trim();
+    await activityLog.log({
+      userId: identite.id,
+      userNom: nom,
+      action: 'deconnexion',
+      module: MODULES.AUTHENTIFICATION,
+      description: `Déconnexion de ${nom}`,
+      ipAddress: activityLog.getClientIp(req),
+      tenantId: identite.tenant_id,
+    });
+  }
+
   sendSuccess(res, null, 'Logged out');
 }
 
@@ -62,6 +130,15 @@ export async function getProfile(req, res, next) {
 export async function updateProfile(req, res, next) {
   try {
     const user = await authService.updateProfile(req.user.id, req.body);
+    await activityLog.logRequest(req, {
+      action: 'profil_modifie',
+      module: MODULES.UTILISATEURS,
+      description: `Modification de son propre profil par ${activityLog.getUserName(req.user)}`,
+      entityType: 'utilisateur',
+      entityId: user.id,
+      entityLabel: `${user.first_name} ${user.last_name}`,
+      details: { champs_modifies: Object.keys(req.body) },
+    });
     sendSuccess(res, user, 'Profile updated');
   } catch (err) { next(err); }
 }
@@ -69,6 +146,14 @@ export async function updateProfile(req, res, next) {
 export async function changePassword(req, res, next) {
   try {
     await authService.changePassword(req.user.id, req.body.old_password, req.body.new_password);
+    await activityLog.logRequest(req, {
+      action: 'mot_de_passe_modifie',
+      module: MODULES.AUTHENTIFICATION,
+      description: `Changement de son mot de passe par ${activityLog.getUserName(req.user)}`,
+      entityType: 'utilisateur',
+      entityId: req.user.id,
+      entityLabel: activityLog.getUserName(req.user),
+    });
     sendSuccess(res, null, 'Password changed successfully');
   } catch (err) { next(err); }
 }
@@ -98,7 +183,7 @@ export async function createUser(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'utilisateur_cree', module: 'utilisateurs',
+        action: 'utilisateur_cree', module: MODULES.UTILISATEURS,
         description: `Création de l'utilisateur ${user.first_name} ${user.last_name} (rôle : ${user.role})`,
         entityType: 'utilisateur', entityId: user.id, entityLabel: `${user.first_name} ${user.last_name}`,
         details: { role: user.role, email: user.email },
@@ -152,7 +237,7 @@ export async function updateUser(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'utilisateur_modifie', module: 'utilisateurs',
+        action: 'utilisateur_modifie', module: MODULES.UTILISATEURS,
         description: `Modification de l'utilisateur ${user.first_name} ${user.last_name}`,
         entityType: 'utilisateur', entityId: user.id, entityLabel: `${user.first_name} ${user.last_name}`,
         details: { champs_modifies: Object.keys(req.body) },
@@ -165,7 +250,17 @@ export async function updateUser(req, res, next) {
 
 export async function deleteUser(req, res, next) {
   try {
-    await authService.deleteUser(req.params.id);
+    const supprime = await authService.deleteUser(req.params.id);
+    const nom = `${supprime.first_name || ''} ${supprime.last_name || ''}`.trim();
+    await activityLog.logRequest(req, {
+      action: 'utilisateur_supprime',
+      module: MODULES.UTILISATEURS,
+      description: `Suppression de l'utilisateur ${nom} (${supprime.email})`,
+      entityType: 'utilisateur',
+      entityId: supprime.id,
+      entityLabel: nom,
+      details: { email: supprime.email, role: supprime.role },
+    });
     sendSuccess(res, null, 'User deleted');
   } catch (err) { next(err); }
 }
@@ -237,7 +332,7 @@ export async function sendResetPasswordLink(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'reset_password_link',
-        module: 'utilisateurs',
+        module: MODULES.UTILISATEURS,
         description: `Lien de réinitialisation envoyé à ${targetUser.email}`,
         entityType: 'utilisateur',
         entityId: targetUser.id,
@@ -273,6 +368,27 @@ export async function resetPasswordWithToken(req, res, next) {
     }
 
     await authService.updateUser(payload.userId, { password: new_password });
+
+    // Route publique (aucun contexte tenant posé) : tenant_id doit être fourni
+    // explicitement, comme pour le login.
+    const identite = await authService.getIdentiteParEmail(payload.email).catch(() => null)
+      || await authService.getIdentiteDepuisToken(token).catch(() => null);
+    const nom = identite ? `${identite.first_name || ''} ${identite.last_name || ''}`.trim() : '';
+    if (identite?.tenant_id) {
+      await activityLog.log({
+        userId: identite.id,
+        userNom: nom,
+        action: 'mot_de_passe_reinitialise',
+        module: MODULES.AUTHENTIFICATION,
+        description: `Réinitialisation du mot de passe de ${nom} via lien`,
+        entityType: 'utilisateur',
+        entityId: identite.id,
+        entityLabel: nom,
+        ipAddress: activityLog.getClientIp(req),
+        tenantId: identite.tenant_id,
+      });
+    }
+
     sendSuccess(res, null, 'Mot de passe modifié avec succès');
   } catch (err) { next(err); }
 }

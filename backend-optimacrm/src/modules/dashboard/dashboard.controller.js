@@ -1,5 +1,6 @@
 import * as dashboardService from './dashboard.service.js';
 import { sendSuccess } from '../../utils/response.js';
+import { peutVoirAuteur, masquerAuteur } from '../activity-logs/activityLog.service.js';
 
 export async function getStats(req, res, next) {
   try {
@@ -7,6 +8,9 @@ export async function getStats(req, res, next) {
     // coût nul) — undefined pour un super_admin, ce qui laisse le service
     // tout calculer (bypass naturel, cf. parcActive !== false ci-dessous).
     const stats = await dashboardService.getDashboardStats(req.tenantModulesActifs);
+    if (stats.activite?.recentes && !peutVoirAuteur(req.user)) {
+      stats.activite.recentes = stats.activite.recentes.map(masquerAuteur);
+    }
     sendSuccess(res, stats);
   } catch (err) { next(err); }
 }

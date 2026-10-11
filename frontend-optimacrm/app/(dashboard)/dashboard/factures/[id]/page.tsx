@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { FactureDetail, FactureLigne, ApiResponse, StatutFacture, EmailTemplate, AvoirsPossibles, AvoirsFacture, Avoir } from '@/lib/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -655,6 +656,8 @@ function CreateAvoirModal({ facture, onClose, onCreated }: { facture: FactureDet
 export default function FactureDetailPage() {
   const router = useRouter();
   const params = useParams();
+  const { hasPermission } = useAuth();
+  const canDeleteFactures = hasPermission('factures_delete');
   const id = params.id as string;
   const [facture, setFacture] = useState<FactureDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -805,7 +808,7 @@ export default function FactureDetailPage() {
             <>
               <button onClick={() => router.push(`/dashboard/factures/${facture.id}/modifier`)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">Modifier</button>
               <button onClick={() => handleAction('valider')} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition cursor-pointer">Valider</button>
-              <button onClick={() => handleAction('supprimer')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Supprimer</button>
+              {canDeleteFactures && <button onClick={() => handleAction('supprimer')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Supprimer</button>}
             </>
           )}
           {facture.statut === 'Validée' && (
@@ -836,7 +839,7 @@ export default function FactureDetailPage() {
           {isAnnulee && (
             <>
               <button onClick={() => router.push(`/dashboard/factures/${facture.id}/modifier`)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">Modifier</button>
-              <button onClick={() => handleAction('supprimer')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Supprimer</button>
+              {canDeleteFactures && <button onClick={() => handleAction('supprimer')} className="px-4 py-2 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer">Supprimer</button>}
             </>
           )}
           <button onClick={() => handleAction('dupliquer')} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer">Dupliquer</button>

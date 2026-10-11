@@ -314,6 +314,47 @@ export async function generateResetToken(userId) {
 }
 
 export async function deleteUser(id) {
-  const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+  const result = await query(
+    'DELETE FROM users WHERE id = $1 RETURNING id, email, first_name, last_name, role',
+    [id],
+  );
   if (result.rows.length === 0) throw ApiError.notFound('User not found');
+  return result.rows[0];
+}
+
+/**
+ * Identité minimale portée par un token, pour journaliser une déconnexion sans
+ * exiger un token encore valide. Renvoie null dès que le token est absent,
+ * illisible ou orphelin.
+ */
+export async function getIdentiteDepuisToken(token) {
+  if (!token) return null;
+  let payload;
+  try {
+    payload = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+  } catch {
+    return null;
+  }
+  if (!payload?.userId) return null;
+
+  const { rows } = await query(
+    'SELECT id, tenant_id, first_name, last_name FROM users WHERE id = $1',
+    [payload.userId],
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Identité minimale rattachée à un email, pour journaliser une tentative de
+ * connexion échouée. Renvoie null si l'email est inconnu : activity_logs.tenant_id
+ * est NOT NULL, une tentative sur un compte inexistant ne peut donc être
+ * rattachée à aucun tenant et n'est pas stockable.
+ */
+export async function getIdentiteParEmail(email) {
+  if (!email) return null;
+  const { rows } = await query(
+    'SELECT id, tenant_id, first_name, last_name FROM users WHERE email = $1',
+    [String(email).toLowerCase()],
+  );
+  return rows[0] || null;
 }

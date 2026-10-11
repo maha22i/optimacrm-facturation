@@ -1,4 +1,5 @@
 import { query } from '../../config/database.js';
+import { MODULES } from '../../config/activityModules.js';
 
 /**
  * Log une activité. Ne doit JAMAIS bloquer l'action appelante.
@@ -49,6 +50,24 @@ export async function log({
   }
 }
 
+/**
+ * Variante de `log()` qui déduit l'auteur et l'IP de la requête Express.
+ *
+ * `log()` avale déjà ses propres erreurs : pas besoin d'envelopper l'appel dans
+ * un try/catch côté appelant, contrairement aux premiers appels du projet qui
+ * le faisaient par précaution.
+ *
+ * @param {import('express').Request} req
+ */
+export async function logRequest(req, entry) {
+  await log({
+    userId: req?.user?.id ?? null,
+    userNom: getUserName(req?.user),
+    ipAddress: getClientIp(req),
+    ...entry,
+  });
+}
+
 export async function listLogs({
   page = 1,
   limit = 50,
@@ -67,17 +86,31 @@ export async function listLogs({
   // super-admin n'a pas de tenantMiddleware), donc l'escape clause RLS
   // renverrait TOUT sans ce filtre manuel — indispensable pour l'isolation.
   tenantId = null,
+  // Les actions du super-admin (suspension d'un tenant, activation de modules,
+  // création de comptes...) sont estampillées avec le tenant_id de la société
+  // ciblée, pour que la console super-admin puisse les filtrer par client. La
+  // RLS les rendrait donc visibles dans le journal de ce tenant : elles sont
+  // exclues par défaut, et ne sont réintégrées que pour la console super-admin.
+  inclureSuperAdmin = false,
+  // false pour un lecteur non-admin : l'auteur est retiré des lignes, et ni
+  // le filtre `user_id` ni la recherche ne portent sur lui (sinon on pourrait
+  // déduire qui a fait quoi en filtrant).
+  voirAuteur = true,
 }) {
   const conditions = [];
   const params = [];
   let i = 1;
 
   if (tenantId) {
-    conditions.push(`tenant_id = $${i++}`);
+    conditions.push(`a.tenant_id = $${i++}`);
     params.push(tenantId);
   }
+  if (!inclureSuperAdmin) {
+    conditions.push(`a.module <> $${i++}`);
+    params.push(MODULES.SUPER_ADMIN);
+  }
   if (moduleName) {
-    conditions.push(`module = $${i++}`);
+    conditions.push(`a.module = $${i++}`);
     params.push(moduleName);
   }
   if (action) {
@@ -85,27 +118,27 @@ export async function listLogs({
     // (sélectionné via un dropdown fermé, donc valeur exacte connue),
     // `action` reste un champ texte libre côté super-admin — taper "email"
     // doit trouver "notification_email", "facture_envoyee_email", etc.
-    conditions.push(`action ILIKE $${i++}`);
+    conditions.push(`a.action ILIKE $${i++}`);
     params.push(`%${action}%`);
   }
-  if (user_id) {
-    conditions.push(`user_id = $${i++}`);
+  if (user_id && voirAuteur) {
+    conditions.push(`a.user_id = $${i++}`);
     params.push(user_id);
   }
   if (statut) {
-    conditions.push(`statut = $${i++}`);
+    conditions.push(`a.statut = $${i++}`);
     params.push(statut);
   }
   if (date_debut) {
-    conditions.push(`created_at >= $${i++}`);
+    conditions.push(`a.created_at >= $${i++}`);
     params.push(date_debut);
   }
   if (date_fin) {
-    conditions.push(`created_at <= ($${i++})::timestamptz + interval '1 day'`);
+    conditions.push(`a.created_at <= ($${i++})::timestamptz + interval '1 day'`);
     params.push(date_fin);
   }
   if (search) {
-    conditions.push(`(description ILIKE $${i} OR entity_label ILIKE $${i})`);
+    conditions.push(searchCondition(i, voirAuteur));
     params.push(`%${search}%`);
     i++;
   }
@@ -114,18 +147,22 @@ export async function listLogs({
   const offset = (page - 1) * limit;
 
   const countResult = await query(
-    `SELECT COUNT(*) FROM activity_logs ${where}`,
+    `SELECT COUNT(*) FROM activity_logs a ${where}`,
     params,
   );
   const total = parseInt(countResult.rows[0].count, 10);
 
   const dataResult = await query(
-    `SELECT * FROM activity_logs ${where} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+    `SELECT a.*, u.email AS user_email, u.role AS user_role
+     FROM activity_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     ${where}
+     ORDER BY a.created_at DESC LIMIT $${i++} OFFSET $${i++}`,
     [...params, limit, offset],
   );
 
   return {
-    data: dataResult.rows,
+    data: voirAuteur ? dataResult.rows : dataResult.rows.map(masquerAuteur),
     pagination: {
       page,
       limit,
@@ -135,47 +172,53 @@ export async function listLogs({
   };
 }
 
-export async function getStats({ module: moduleName, date_debut, date_fin, search } = {}) {
-  const conditions = [];
-  const params = [];
-  let i = 1;
+// Toujours appelé depuis le journal d'un tenant : les actions super-admin en
+// sont exclues, sans quoi les compteurs contrediraient la liste affichée.
+export async function getStats({ module: moduleName, user_id, date_debut, date_fin, search, voirAuteur = true } = {}) {
+  const conditions = [`a.module <> $1`];
+  const params = [MODULES.SUPER_ADMIN];
+  let i = 2;
 
   if (moduleName) {
-    conditions.push(`module = $${i++}`);
+    conditions.push(`a.module = $${i++}`);
     params.push(moduleName);
   }
+  if (user_id && voirAuteur) {
+    conditions.push(`a.user_id = $${i++}`);
+    params.push(user_id);
+  }
   if (date_debut) {
-    conditions.push(`created_at >= $${i++}`);
+    conditions.push(`a.created_at >= $${i++}`);
     params.push(date_debut);
   }
   if (date_fin) {
-    conditions.push(`created_at <= ($${i++})::timestamptz + interval '1 day'`);
+    conditions.push(`a.created_at <= ($${i++})::timestamptz + interval '1 day'`);
     params.push(date_fin);
   }
   if (search) {
-    conditions.push(`(description ILIKE $${i} OR entity_label ILIKE $${i})`);
+    conditions.push(searchCondition(i, voirAuteur));
     params.push(`%${search}%`);
     i++;
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const totalR = await query(`SELECT COUNT(*) FROM activity_logs ${where}`, params);
+  const totalR = await query(`SELECT COUNT(*) FROM activity_logs a ${where}`, params);
   const todayR = await query(
-    `SELECT COUNT(*) FROM activity_logs ${where} ${conditions.length ? 'AND' : 'WHERE'} created_at >= CURRENT_DATE`,
+    `SELECT COUNT(*) FROM activity_logs a ${where} ${conditions.length ? 'AND' : 'WHERE'} a.created_at >= CURRENT_DATE`,
     params,
   );
   const weekR = await query(
-    `SELECT COUNT(*) FROM activity_logs ${where} ${conditions.length ? 'AND' : 'WHERE'} created_at >= date_trunc('week', CURRENT_DATE)`,
+    `SELECT COUNT(*) FROM activity_logs a ${where} ${conditions.length ? 'AND' : 'WHERE'} a.created_at >= date_trunc('week', CURRENT_DATE)`,
     params,
   );
   const monthR = await query(
-    `SELECT COUNT(*) FROM activity_logs ${where} ${conditions.length ? 'AND' : 'WHERE'} created_at >= date_trunc('month', CURRENT_DATE)`,
+    `SELECT COUNT(*) FROM activity_logs a ${where} ${conditions.length ? 'AND' : 'WHERE'} a.created_at >= date_trunc('month', CURRENT_DATE)`,
     params,
   );
 
   const byModuleR = await query(
-    `SELECT module, COUNT(*)::int AS count FROM activity_logs ${where} GROUP BY module ORDER BY count DESC`,
+    `SELECT a.module, COUNT(*)::int AS count FROM activity_logs a ${where} GROUP BY a.module ORDER BY count DESC`,
     params,
   );
 
@@ -195,7 +238,7 @@ export async function getStats({ module: moduleName, date_debut, date_fin, searc
 // dropdown de filtre du portail super-admin. Requête dynamique plutôt qu'une
 // liste statique de modules connus : ne propose jamais un module vide pour
 // ce tenant, et reste à jour automatiquement si de nouveaux modules
-// apparaissent (ex. activation d'un module optionnel).
+  // apparaissent (ex. activation d'un module optionnel).
 export async function listDistinctModules(tenantId) {
   const result = await query(
     `SELECT DISTINCT module FROM activity_logs WHERE tenant_id = $1 ORDER BY module`,
@@ -204,12 +247,46 @@ export async function listDistinctModules(tenantId) {
   return result.rows.map((r) => r.module);
 }
 
-export async function getEntityHistory(entityType, entityId) {
+// Historique affiché sur la fiche d'une entité, côté tenant : même exclusion
+// des actions super-admin que dans listLogs().
+export async function getEntityHistory(entityType, entityId, { voirAuteur = true } = {}) {
   const result = await query(
-    `SELECT * FROM activity_logs WHERE entity_type = $1 AND entity_id = $2 ORDER BY created_at DESC`,
-    [entityType, entityId],
+    `SELECT * FROM activity_logs
+     WHERE entity_type = $1 AND entity_id = $2 AND module <> $3
+     ORDER BY created_at DESC`,
+    [entityType, entityId, MODULES.SUPER_ADMIN],
   );
-  return result.rows;
+  return voirAuteur ? result.rows : result.rows.map(masquerAuteur);
+}
+
+// Auteurs distincts présents dans le journal du tenant courant, avec le nom
+// le plus récent enregistré pour chacun — alimente le filtre « Utilisateur ».
+export async function listAuteurs() {
+  const result = await query(
+    `SELECT DISTINCT ON (a.user_id) a.user_id, a.user_nom, u.role AS user_role
+     FROM activity_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     WHERE a.user_id IS NOT NULL AND a.module <> $1
+     ORDER BY a.user_id, a.created_at DESC`,
+    [MODULES.SUPER_ADMIN],
+  );
+  return result.rows.sort((x, y) => (x.user_nom || '').localeCompare(y.user_nom || '', 'fr'));
+}
+
+// Savoir qui a fait quoi est réservé aux administrateurs du tenant.
+export function peutVoirAuteur(user) {
+  return user?.role === 'admin' || user?.role === 'super_admin';
+}
+
+export function masquerAuteur(row) {
+  const { user_id, user_nom, user_email, user_role, ip_address, ...reste } = row;
+  return reste;
+}
+
+function searchCondition(i, voirAuteur) {
+  const champs = ['a.description', 'a.entity_label'];
+  if (voirAuteur) champs.push('a.user_nom');
+  return `(${champs.map((c) => `${c} ILIKE $${i}`).join(' OR ')})`;
 }
 
 export function getUserName(user) {

@@ -151,6 +151,20 @@ async function loadMigrations() {
   migrations.push(m76);
   const m77 = await import('./migrations/077_add_last_login_to_users.js');
   migrations.push(m77);
+  const m78 = await import('./migrations/078_add_compteur_initial_contrat_machines.js');
+  migrations.push(m78);
+  const m79 = await import('./migrations/079_add_lot_contrat_machines.js');
+  migrations.push(m79);
+  const m80 = await import('./migrations/080_augmentation_annuelle_contrats.js');
+  migrations.push(m80);
+  const m81 = await import('./migrations/081_renouvellement_contrats.js');
+  migrations.push(m81);
+  const m82 = await import('./migrations/082_add_calage_contrats.js');
+  migrations.push(m82);
+  const m83 = await import('./migrations/083_normalise_modules_activity_logs.js');
+  migrations.push(m83);
+  const m84 = await import('./migrations/084_reclasse_connexions_authentification.js');
+  migrations.push(m84);
 }
 
 async function ensureMigrationsTable(client) {

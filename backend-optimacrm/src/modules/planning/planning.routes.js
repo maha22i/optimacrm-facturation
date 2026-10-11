@@ -15,6 +15,6 @@ router.get('/', checkPermission('tickets_read'), ctrl.listCreneaux);
 router.get('/tickets-disponibles', checkPermission('tickets_read'), ctrl.listTicketsDisponibles);
 router.post('/', checkPermission('tickets_write'), ctrl.createCreneau);
 router.put('/:id', checkPermission('tickets_write'), ctrl.updateCreneau);
-router.delete('/:id', checkPermission('tickets_write'), ctrl.deleteCreneau);
+router.delete('/:id', checkPermission('tickets_delete'), ctrl.deleteCreneau);
 
 export default router;

@@ -1,5 +1,6 @@
 import * as service from './importsReleves.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 function sendSuccess(res, data, message = 'OK') {
   res.json({ success: true, message, data });
@@ -92,7 +93,7 @@ export async function annulerImport(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'import_releves_annule',
-        module: 'imports_releves',
+        module: MODULES.RELEVES,
         description: `Annulation import ${result.numero_batch} — ${result.nb_releves_crees} relevé(s) supprimé(s)`,
         entityType: 'import_releves',
         entityId: result.id,

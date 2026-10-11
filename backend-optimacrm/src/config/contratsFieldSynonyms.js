@@ -166,6 +166,16 @@ export const CONTRATS_FIELD_GROUPS = [
           'duree_mois', 'durée mois',
         ],
       },
+      {
+        key: 'augmentation_pourcentage',
+        label: 'Augmentation annuelle (%)',
+        required: false,
+        type: 'decimal',
+        synonyms: [
+          'augmentation', 'augmentation %', 'augmentation annuelle',
+          'taux augmentation', 'revalorisation', 'indexation',
+        ],
+      },
     ],
   },
   {
@@ -255,6 +265,41 @@ export const CONTRATS_FIELD_GROUPS = [
     ],
   },
   {
+    group: 'Lot',
+    icon: '🧩',
+    fields: [
+      {
+        key: 'identifiant_lot',
+        label: 'Identifiant du lot',
+        required: false,
+        type: 'text',
+        // Pas de synonyme 'lot' seul : 3 caractères suffisent à déclencher la
+        // règle d'inclusion à 0.85 sur tout en-tête contenant "lot".
+        synonyms: [
+          'identifiant du lot', 'identifiant lot', 'id lot',
+          'numero de lot', 'numero lot', 'no lot',
+        ],
+      },
+      {
+        // En-têtes d'un seul caractère dans l'export source : seule la règle
+        // d'égalité exacte les rattrape, inclusion et Levenshtein imposent
+        // respectivement 3 et 4 caractères minimum.
+        key: 'lot_flag_principale',
+        label: 'Lot — machine principale (P)',
+        required: false,
+        type: 'text',
+        synonyms: ['p', 'principale', 'machine principale'],
+      },
+      {
+        key: 'lot_flag_attachee',
+        label: 'Lot — machine attachée (A)',
+        required: false,
+        type: 'text',
+        synonyms: ['a', 'attachee', 'machine attachee', 'rattachee'],
+      },
+    ],
+  },
+  {
     group: 'Tarifs copie',
     icon: '📊',
     fields: [
@@ -265,6 +310,7 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'decimal6',
         synonyms: [
           'coût copie n / b', 'coût copie n/b', 'coût copie nb', 'cout copie nb',
+          'cout copie n b',
           'copie nb', 'copie noir', 'cout nb', 'cc nb',
         ],
       },
@@ -316,8 +362,13 @@ export const CONTRATS_FIELD_GROUPS = [
         label: 'Volume forfait N&B',
         required: false,
         type: 'integer',
+        // "volume offert nb" / "volume offert" retirés : dans l'export Lamia ces
+        // colonnes précèdent les "VOLUME FORFAITAIRE" et sont vides, mais elles
+        // réservaient la cible au détriment de celles qui portent les données.
         synonyms: [
-          'volume offert nb', 'volume nb', 'forfait nb', 'copies incluses nb', 'volume offert',
+          'volume forfaitaire nb', 'volume forfaitaire n/b', 'volume forfaitaire',
+          'forfait n b',
+          'volume nb', 'forfait nb', 'copies incluses nb',
         ],
       },
       {
@@ -326,7 +377,8 @@ export const CONTRATS_FIELD_GROUPS = [
         required: false,
         type: 'integer',
         synonyms: [
-          'volume offert couleur', 'volume couleur', 'forfait couleur', 'copies incluses couleur',
+          'volume forfaitaire couleur', 'volume forfaitaire coul',
+          'volume couleur', 'forfait couleur', 'copies incluses couleur',
         ],
       },
       {
@@ -345,6 +397,31 @@ export const CONTRATS_FIELD_GROUPS = [
         type: 'integer',
         synonyms: [
           'volume offert t2', 'volume t2', 'autres', 't2 / autres', 'volume offert t2 / autres',
+        ],
+      },
+    ],
+  },
+  {
+    group: 'Compteurs',
+    icon: '🔢',
+    fields: [
+      {
+        key: 'compteur_initial_nb',
+        label: 'Compteur initial N&B',
+        required: false,
+        type: 'integer',
+        synonyms: [
+          'compteur initial nb', 'compteur initial n/b', 'compteur initial n b',
+          'compteur depart nb',
+        ],
+      },
+      {
+        key: 'compteur_initial_couleur',
+        label: 'Compteur initial couleur',
+        required: false,
+        type: 'integer',
+        synonyms: [
+          'compteur initial couleur', 'compteur initial coul', 'compteur depart couleur',
         ],
       },
     ],
@@ -419,7 +496,7 @@ export const CONTRATS_FIELD_GROUPS = [
         required: false,
         type: 'decimal',
         synonyms: [
-          'montant ht', 'montant dernière facture', 'montant derniere facture', 'montant',
+          'montant ht', 'montant dernière facture', 'montant derniere facture',
         ],
       },
     ],
@@ -699,6 +776,30 @@ export const RUBRIQUE_FIELD_TO_CATEGORIE = {
   rubrique_services_it_ht: 'Services IT',
   rubrique_service_astreinte_ipbx_ht: 'Service Astreinte IPBX',
 };
+
+// En-têtes jamais auto-mappés.
+// Le moteur recalcule le forfait (volume × coût copie) : importer un montant
+// forfaitaire figé créerait une seconde source de vérité. Ces colonnes restent
+// proposées en "non mappé" — un mapping manuel ou sauvegardé reste possible.
+// Les motifs s'appliquent à l'en-tête normalisé (minuscules, sans accent ni
+// ponctuation) ; "FORFAITAIARE" est la coquille du fichier source.
+export const CONTRATS_AUTO_IGNORED_HEADERS = [
+  {
+    pattern: /^montant forfaita/,
+    reason: 'Montant forfaitaire recalculé par le moteur (volume × coût copie)',
+  },
+  {
+    // Colonnes vides de l'export Lamia, doublons des "VOLUME FORFAITAIRE" qui
+    // portent réellement les données. Sans ce garde-fou elles retombent sur
+    // volume_forfait_t1 par distance de Levenshtein ("nb" ↔ "t1" = 2).
+    pattern: /^volume offert (nb|couleur)$/,
+    reason: 'Doublon vide de VOLUME FORFAITAIRE',
+  },
+];
+
+export function matchAutoIgnoredHeader(normalizedHeader) {
+  return CONTRATS_AUTO_IGNORED_HEADERS.find(r => r.pattern.test(normalizedHeader)) || null;
+}
 
 export function getAllContratFields() {
   const fields = [];

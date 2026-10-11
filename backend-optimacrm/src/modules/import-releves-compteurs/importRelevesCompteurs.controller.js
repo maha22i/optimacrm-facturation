@@ -1,6 +1,7 @@
 import * as service from './importRelevesCompteurs.service.js';
 import { sendSuccess } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function parse(req, res, next) {
   try {
@@ -45,7 +46,7 @@ export async function execute(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'releves_importes', module: 'imports_releves',
+        action: 'releves_importes', module: MODULES.RELEVES,
         description: `Import ${result.numero_batch || ''} — ${result.imported} relevé(s) importé(s)${result.depassements ? ` (${result.depassements} dépassements)` : ''}`,
         entityType: 'import_releves',
         entityId: result.import_id,

@@ -154,11 +154,12 @@ function DraggableTicket({ ticket }: { ticket: TicketPlanifiable }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CreneauBlock({
-  creneau, dateStr, canEdit, suppressClickRef, onResizeEnd, onDelete, onOpen, compact,
+  creneau, dateStr, canEdit, canDelete, suppressClickRef, onResizeEnd, onDelete, onOpen, compact,
 }: {
   creneau: PlanningCreneau;
   dateStr: string;
   canEdit: boolean;
+  canDelete: boolean;
   suppressClickRef: React.MutableRefObject<boolean>;
   onResizeEnd: (creneau: PlanningCreneau, newFinIso: string) => void;
   onDelete: (creneau: PlanningCreneau) => void;
@@ -250,7 +251,7 @@ function CreneauBlock({
             )}
           </div>
         )}
-        {canEdit && (
+        {canEdit && canDelete && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(creneau); }}
@@ -299,7 +300,7 @@ function DroppableCell({ column, slotIndex }: { column: GridColumn; slotIndex: n
 
 export default function PlanningPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const isTechnicien = user?.role === 'technicien';
   const isManager = ['admin', 'admin_technique'].includes(user?.role || '');
 
@@ -529,6 +530,8 @@ export default function PlanningPage() {
     return `${rangeStart.getDate()} ${MOIS[rangeStart.getMonth()]} – ${end.getDate()} ${MOIS[end.getMonth()]} ${end.getFullYear()}`;
   }, [view, currentDate, rangeStart]);
 
+  const canDeleteCreneau = hasPermission('tickets_delete');
+
   const canEditCreneau = useCallback((c: PlanningCreneau) => {
     if (isManager) return true;
     return c.technicien_id === user?.id;
@@ -690,6 +693,7 @@ export default function PlanningPage() {
                             creneau={c}
                             dateStr={col.dateStr}
                             canEdit={canEditCreneau(c)}
+                            canDelete={canDeleteCreneau}
                             suppressClickRef={suppressClickRef}
                             onResizeEnd={resizeCreneau}
                             onDelete={deleteCreneau}

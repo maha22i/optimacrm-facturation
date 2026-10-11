@@ -14,6 +14,7 @@ export const CONTRAT_CATEGORIES = {
     'Forfait Copie N&B',
     'Forfait Copie Couleur',
     'Service Connectic',
+    'Maintenance Service Pass',
     'Location Matériel',
     'PLC',
     'Services',

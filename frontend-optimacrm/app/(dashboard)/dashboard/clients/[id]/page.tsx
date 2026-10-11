@@ -495,10 +495,13 @@ type Tab = 'infos' | 'adresses' | 'contacts' | 'contrats' | 'tickets' | 'documen
 export default function ClientDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const clientId = params.id as string;
 
   const canEditClient = ['admin', 'admin_technique', 'user'].includes(user?.role || '');
+  // Permission dédiée, jamais héritée du rôle : sans elle, aucun bouton de
+  // suppression n'est rendu (le backend refuse de toute façon en 403).
+  const canDeleteClient = hasPermission('clients_delete');
   // Onglet "Tickets" hors de la page dédiée /dashboard/tickets : ne jamais
   // afficher ni appeler /clients/:id/tickets pour un tenant qui a désactivé
   // le module tickets (le backend renvoie 403 sur cette route ad hoc de
@@ -595,13 +598,19 @@ export default function ClientDetailPage() {
     if (activeTab === 'tickets') fetchTickets();
   }, [activeTab, fetchHistorique, fetchTickets]);
 
+  // Changement de statut, pas une suppression : même appel que le bouton
+  // "Désactiver" de la liste clients, donc soumis à clients_write.
   const handleDelete = async () => {
     try {
-      await api.delete(`/clients/${clientId}`);
-      setToast({ message: 'Client passé en inactif', type: 'success' });
+      const res = await api.put<{ data: { contrats_resilies?: unknown[] } }>(`/clients/${clientId}`, { statut: 'INACTIF' });
+      const nb = res.data?.contrats_resilies?.length ?? 0;
+      setToast({
+        message: nb > 0 ? `Client passé en inactif, ${nb} contrat${nb > 1 ? 's' : ''} résilié${nb > 1 ? 's' : ''}` : 'Client passé en inactif',
+        type: 'success',
+      });
       setTimeout(() => router.push('/dashboard/clients'), 1000);
     } catch {
-      setToast({ message: 'Erreur lors de la suppression', type: 'error' });
+      setToast({ message: 'Erreur lors du changement de statut', type: 'error' });
     }
     setShowDeleteConfirm(false);
   };
@@ -730,8 +739,8 @@ export default function ClientDetailPage() {
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       {showDeleteConfirm && (
         <ConfirmModal
-          title="Supprimer ce client ?"
-          message={`Le client "${client.raison_sociale}" sera passé en inactif. Cette action est irréversible.`}
+          title="Passer ce client en inactif ?"
+          message={`Le client "${client.raison_sociale}" restera en base, avec ses contrats et ses factures. Ses contrats en cours (actifs, suspendus ou renouvelés) passeront en « Résilié ». Vous pourrez réactiver le client depuis la liste des clients, mais pas ses contrats automatiquement.`}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteConfirm(false)}
         />
@@ -808,6 +817,7 @@ export default function ClientDetailPage() {
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
                 Modifier
               </button>
+              {client.statut !== 'INACTIF' && (
               <div className="relative">
                 <button
                   onClick={() => setShowMenu(!showMenu)}
@@ -819,14 +829,15 @@ export default function ClientDetailPage() {
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl border border-gray-100 shadow-xl py-1.5 z-10">
                     <button
                       onClick={() => { setShowMenu(false); setShowDeleteConfirm(true); }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2.5 cursor-pointer"
+                      className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 transition flex items-center gap-2.5 cursor-pointer"
                     >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                      Supprimer
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                      Inactif
                     </button>
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
         </div>
@@ -1072,9 +1083,11 @@ export default function ClientDetailPage() {
                       <button onClick={() => setAdresseModal({ open: true, adresse: a })} className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition cursor-pointer">
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
                       </button>
+                      {canDeleteClient && (
                       <button onClick={() => handleDeleteAdresse(a.id)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer">
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                       </button>
+                      )}
                     </div>
                   </div>
                   <div className="ml-10">
@@ -1125,9 +1138,11 @@ export default function ClientDetailPage() {
                         <button onClick={() => setContactModal({ open: true, contact: c })} className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition cursor-pointer">
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" /></svg>
                         </button>
+                        {canDeleteClient && (
                         <button onClick={() => handleDeleteContact(c.id)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer">
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                         </button>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 mb-4">
@@ -1307,6 +1322,7 @@ export default function ClientDetailPage() {
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                       </button>
+                      {canDeleteClient && (
                       <button
                         onClick={() => handleDeleteDocument(d.id)}
                         className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
@@ -1314,6 +1330,7 @@ export default function ClientDetailPage() {
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                       </button>
+                      )}
                     </div>
                   </div>
                 );

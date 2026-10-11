@@ -43,8 +43,8 @@ router.put(
   ctrl.updateProduit,
 );
 
-router.delete('/all', checkPermission('catalogue_write'), ctrl.deleteAllProduits);
-router.delete('/:id', checkPermission('catalogue_write'), ctrl.deleteProduit);
+router.delete('/all', checkPermission('catalogue_delete'), ctrl.deleteAllProduits);
+router.delete('/:id', checkPermission('catalogue_delete'), ctrl.deleteProduit);
 
 router.post('/:id/duplicate', checkPermission('catalogue_write'), ctrl.duplicateProduit);
 

@@ -78,10 +78,10 @@ router.put(
   ctrl.updateConfig,
 );
 
-router.delete('/:id', requireChampsPerso, checkPermission('champs_personnalises'), ctrl.deleteConfig);
+router.delete('/:id', requireChampsPerso, checkPermission('config_delete'), ctrl.deleteConfig);
 
 router.put('/sections/:entite/ordre', requireChampsPerso, checkPermission('champs_personnalises'), ctrl.updateSectionOrdre);
 router.put('/sections/:entite/rename', requireChampsPerso, checkPermission('champs_personnalises'), ctrl.renameSection);
-router.delete('/sections/:entite/:section', requireChampsPerso, checkPermission('champs_personnalises'), ctrl.deleteSection);
+router.delete('/sections/:entite/:section', requireChampsPerso, checkPermission('config_delete'), ctrl.deleteSection);
 
 export default router;

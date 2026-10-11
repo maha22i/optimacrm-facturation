@@ -35,6 +35,6 @@ router.put(
   ctrl.update,
 );
 
-router.delete('/:id', checkPermission('fournisseurs'), ctrl.softDelete);
+router.delete('/:id', checkPermission('catalogue_delete'), ctrl.softDelete);
 
 export default router;

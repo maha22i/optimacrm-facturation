@@ -58,6 +58,6 @@ router.put(
   ctrl.updateTemplate,
 );
 
-router.delete('/:id', requireChampsPerso, checkPermission('champs_templates'), ctrl.deleteTemplate);
+router.delete('/:id', requireChampsPerso, checkPermission('config_delete'), ctrl.deleteTemplate);
 
 export default router;

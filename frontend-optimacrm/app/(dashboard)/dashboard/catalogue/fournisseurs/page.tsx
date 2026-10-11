@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { ApiResponse, PaginatedResponse, Fournisseur, TypeFournisseur } from '@/lib/types';
 
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
@@ -57,6 +58,9 @@ const inputCls = 'w-full rounded-xl border border-gray-200 focus:border-blue-400
 const labelCls = 'block text-sm font-semibold text-gray-700 mb-2';
 
 export default function FournisseursPage() {
+  const { hasPermission } = useAuth();
+  // Désactiver = DELETE /fournisseurs/:id ; réactiver = PUT, donc non gaté.
+  const canDeleteCatalogue = hasPermission('catalogue_delete');
   const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -225,9 +229,11 @@ export default function FournisseursPage() {
                         <button onClick={() => openEdit(f)} className="rounded-lg p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer" title="Modifier">
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
                         </button>
+                        {(!f.actif || canDeleteCatalogue) && (
                         <button onClick={() => handleToggle(f)} className={`rounded-lg p-2 transition cursor-pointer ${f.actif ? 'text-gray-400 hover:text-red-600 hover:bg-red-50' : 'text-gray-400 hover:text-emerald-600 hover:bg-emerald-50'}`} title={f.actif ? 'Désactiver' : 'Réactiver'}>
                           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" /></svg>
                         </button>
+                        )}
                       </div>
                     </td>
                   </tr>

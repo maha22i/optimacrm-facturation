@@ -1,6 +1,7 @@
 import * as superAdminService from './superAdmin.service.js';
 import * as authService from '../auth/auth.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { runWithTenantContext } from '../../config/database.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 
@@ -14,7 +15,7 @@ async function logTenantAction(req, { action, description, details }) {
       userId: req.user.id,
       userNom: activityLog.getUserName(req.user),
       action,
-      module: 'super-admin',
+      module: MODULES.SUPER_ADMIN,
       description,
       entityType: 'tenant',
       details,

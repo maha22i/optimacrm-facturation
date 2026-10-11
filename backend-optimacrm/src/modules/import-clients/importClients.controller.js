@@ -1,6 +1,7 @@
 import { sendSuccess } from '../../utils/response.js';
 import * as service from './importClients.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 export async function parse(req, res, next) {
   try {
@@ -39,7 +40,7 @@ export async function execute(req, res, next) {
       const total = result.total || result.summary?.total || 0;
       await activityLog.log({
         userId: req.user?.id, userNom: activityLog.getUserName(req.user),
-        action: 'clients_importes', module: 'clients',
+        action: 'clients_importes', module: MODULES.CLIENTS,
         description: `Import de ${total} clients (${created} créés, ${errors} erreurs)`,
         details: { fichier: file_id, lignes_total: total, lignes_ok: created, lignes_erreur: errors },
         statut: errors > 0 ? 'partiel' : 'succes',
@@ -57,6 +58,16 @@ export async function retryRows(req, res, next) {
       return res.status(400).json({ success: false, message: 'rows requis (tableau non vide)' });
     }
     const result = await service.retryImportRows({ rows, update_existing });
+    const crees = result.created || result.summary?.created || 0;
+    const erreurs = result.errors?.length || result.summary?.errors || 0;
+    await activityLog.logRequest(req, {
+      action: 'clients_reimportes',
+      module: MODULES.CLIENTS,
+      description: `Réimportation de ${rows.length} ligne(s) en erreur (${crees} client(s) créé(s), ${erreurs} erreur(s))`,
+      entityType: 'import_clients',
+      details: { lignes_rejouees: rows.length, lignes_ok: crees, lignes_erreur: erreurs, update_existing: !!update_existing },
+      statut: erreurs > 0 ? 'partiel' : 'succes',
+    });
     sendSuccess(res, result, 'Réimportation terminée');
   } catch (err) { next(err); }
 }
@@ -78,13 +89,29 @@ export async function saveMapping(req, res, next) {
       name, mapping,
       user_id: req.user?.id,
     });
+    await activityLog.logRequest(req, {
+      action: 'mapping_import_enregistre',
+      module: MODULES.CLIENTS,
+      description: `Enregistrement du mapping d'import clients « ${name} »`,
+      entityType: 'mapping_import',
+      entityId: result?.id ?? null,
+      entityLabel: name,
+    });
     sendSuccess(res, result, 'Mapping sauvegardé');
   } catch (err) { next(err); }
 }
 
 export async function deleteMapping(req, res, next) {
   try {
-    await service.deleteSavedMapping(req.params.id);
+    const supprime = await service.deleteSavedMapping(req.params.id);
+    await activityLog.logRequest(req, {
+      action: 'mapping_import_supprime',
+      module: MODULES.CLIENTS,
+      description: `Suppression du mapping d'import clients « ${supprime.name} »`,
+      entityType: 'mapping_import',
+      entityId: supprime.id,
+      entityLabel: supprime.name,
+    });
     sendSuccess(res, null, 'Mapping supprimé');
   } catch (err) { next(err); }
 }

@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CRM de facturation (interne) — frontend-optimacrm
+#
+# L'API est exposée sur la même origine que le front (/api, /uploads) et non
+# sur le sous-domaine backend : le cookie de session `token` est httpOnly +
+# SameSite=Lax et sans attribut Domain, donc lié à un seul hôte. En passant
+# par la même origine, il reste lisible par le middleware Next.js et aucune
+# requête n'est cross-origin.
+# ─────────────────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name facturationgroupinnov.optimacrm.fr;
+
+    # Imports Excel / CSV du catalogue, du parc et des relevés de compteurs.
+    client_max_body_size 25M;
+    client_body_timeout 120s;
+    client_header_timeout 120s;
+
+    access_log /var/log/nginx/facturation-crm.access.log;
+    error_log  /var/log/nginx/facturation-crm.error.log;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+
+        # Génération de PDF (puppeteer) et imports volumineux : le backend
+        # peut dépasser les 60 s par défaut.
+        proxy_connect_timeout 60s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+    }
+
+    location /api-docs {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+    }
+
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8402;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+    }
+}

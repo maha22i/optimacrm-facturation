@@ -87,8 +87,13 @@ export async function getDashboardStats(modulesActifs) {
     `SELECT COUNT(*)::int AS total FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL AND date_prochaine_facture <= $1`,
     [moisFin],
   ) : null;
+  // Copieurs : date_renouvellement est la prochaine échéance réelle, calculée
+  // (cf. renouvellement.service.js). date_echeance reste la fin de période
+  // initiale, souvent passée — d'où le COALESCE plutôt qu'elle seule.
   const contratsEcheance3m = contratsActive ? await query(
-    `SELECT COUNT(*)::int AS total FROM contrats WHERE statut = 'Actif' AND deleted_at IS NULL AND date_echeance <= $1`,
+    `SELECT COUNT(*)::int AS total FROM contrats
+     WHERE statut = 'Actif' AND deleted_at IS NULL
+       AND COALESCE(date_renouvellement, date_echeance) <= $1`,
     [in3Months],
   ) : null;
   const contratsCA = contratsActive ? await query(`

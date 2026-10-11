@@ -552,6 +552,9 @@ export async function saveMappingTemplate(entityType, name, mapping) {
 }
 
 export async function deleteSavedMapping(id) {
-  await query('DELETE FROM import_mappings_saved WHERE id = $1', [id]);
-  return { id };
+  const result = await query(
+    'DELETE FROM import_mappings_saved WHERE id = $1 RETURNING id, name, entity_type',
+    [id],
+  );
+  return result.rows[0] || { id };
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { lignesAfficheesPourDevis } from '@/lib/devisImportView';
 import type { DevisDetail, DevisLigne, DevisChamp, ApiResponse, StatutDevis, EmailTemplate } from '@/lib/types';
 
@@ -301,6 +302,8 @@ function SendDevisEmailModal({ devis, onClose, onSent }: { devis: DevisDetail; o
 export default function DevisDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { hasPermission } = useAuth();
+  const canDeleteDevis = hasPermission('devis_delete');
   const devisId = params.id as string;
 
   const [devis, setDevis] = useState<DevisDetail | null>(null);
@@ -493,7 +496,7 @@ export default function DevisDetailPage() {
                 <ActionBtn label="Marquer envoyé" icon={<IconSend />} onClick={() => handleAction('envoyer')} disabled={actionLoading} />
                 <ActionBtn label="Dupliquer" icon={<IconCopy />} onClick={() => handleAction('dupliquer')} disabled={actionLoading} />
                 <ActionBtn label="PDF" icon={<IconPdf />} onClick={() => handleAction('pdf')} loading={pdfLoading} />
-                <ActionBtn label="Supprimer" icon={<IconTrash />} onClick={() => setModal({ type: 'delete' })} variant="danger" />
+                {canDeleteDevis && <ActionBtn label="Supprimer" icon={<IconTrash />} onClick={() => setModal({ type: 'delete' })} variant="danger" />}
               </>
             )}
             {devis.statut === 'ENVOYE' && (

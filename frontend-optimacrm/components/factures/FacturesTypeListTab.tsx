@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { Facture, PaginatedResponse, ApiResponse, StatutFacture, EmailTemplate } from '@/lib/types';
 
 const STATUT_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -52,6 +53,8 @@ interface Props {
 
 export default function FacturesTypeListTab({ typeContrat }: Props) {
   const router = useRouter();
+  const { hasPermission } = useAuth();
+  const canDeleteFactures = hasPermission('factures_delete');
   const [factures, setFactures] = useState<Facture[]>([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
   const [search, setSearch] = useState('');
@@ -349,6 +352,7 @@ export default function FacturesTypeListTab({ typeContrat }: Props) {
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" /></svg>}
                 Envoyer par email
               </button>
+              {canDeleteFactures && (
               <button onClick={handleBulkDelete} disabled={bulkLoading !== null || !someAreSupprimable}
                 title={!someAreSupprimable ? 'Aucune facture Brouillon ou Annulée' : ''}
                 className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
@@ -356,6 +360,7 @@ export default function FacturesTypeListTab({ typeContrat }: Props) {
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>}
                 Supprimer
               </button>
+              )}
               <button onClick={() => { setSelectedIds([]); setAllIdsSelected(false); }}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition cursor-pointer">
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
@@ -462,7 +467,7 @@ export default function FacturesTypeListTab({ typeContrat }: Props) {
                                 <><div className="border-t border-gray-100 my-1" />
                                 <button onClick={e => { e.stopPropagation(); handleAction('annuler', facture); }} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer">Annuler</button></>
                               )}
-                              {['Brouillon', 'Annulée'].includes(facture.statut) && (
+                              {canDeleteFactures && ['Brouillon', 'Annulée'].includes(facture.statut) && (
                                 <button onClick={e => { e.stopPropagation(); handleAction('supprimer', facture); }} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer">Supprimer</button>
                               )}
                             </div>

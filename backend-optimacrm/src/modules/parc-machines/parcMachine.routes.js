@@ -51,7 +51,7 @@ router.put(
   ctrl.updateMachine,
 );
 
-router.delete('/:id', checkPermission('parc_write'), ctrl.deleteMachine);
+router.delete('/:id', checkPermission('parc_delete'), ctrl.deleteMachine);
 router.post('/:id/duplicate', checkPermission('parc_write'), ctrl.duplicateMachine);
 
 // ── Relevés compteurs ─────────────────────────────────────────────────────
@@ -70,6 +70,6 @@ router.post(
 );
 
 router.put('/:id/releves/:releveId', checkPermission('parc_write'), ctrl.updateReleve);
-router.delete('/:id/releves/:releveId', checkPermission('parc_write'), ctrl.deleteReleve);
+router.delete('/:id/releves/:releveId', checkPermission('parc_delete'), ctrl.deleteReleve);
 
 export default router;

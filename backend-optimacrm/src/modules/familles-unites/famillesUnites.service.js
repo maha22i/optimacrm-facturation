@@ -72,9 +72,9 @@ export async function deleteFamille(id) {
     throw ApiError.conflict(`Impossible de supprimer cette famille : ${prodCount.rows[0].count} produit(s) y sont liés`);
   }
 
-  const result = await query('DELETE FROM familles_produits WHERE id = $1 RETURNING id', [id]);
+  const result = await query('DELETE FROM familles_produits WHERE id = $1 RETURNING id, nom', [id]);
   if (result.rows.length === 0) throw ApiError.notFound('Famille non trouvée');
-  return { id };
+  return result.rows[0];
 }
 
 // ── Unités ───────────────────────────────────────────────────────────────────
@@ -111,5 +111,5 @@ export async function deleteUnite(id) {
   }
 
   await query('DELETE FROM unites WHERE id = $1', [id]);
-  return { id };
+  return { id, nom: existing.rows[0].nom };
 }

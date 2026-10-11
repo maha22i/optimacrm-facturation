@@ -226,6 +226,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     SELECT cm.numero_serie, cm.contrat_id,
            cm.cout_copie_nb, cm.cout_copie_couleur,
            cm.volume_forfait_nb, cm.volume_forfait_couleur,
+           cm.identifiant_lot, cm.est_principale,
            cm.dernier_compteur_nb AS cm_dernier_compteur_nb,
            cm.dernier_compteur_couleur AS cm_dernier_compteur_couleur,
            c.numero_contrat, c.statut AS contrat_statut, c.periodicite,
@@ -244,6 +245,16 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     if (cm.numero_contrat) {
       const contratKey = `${key}::${cm.numero_contrat.trim().toUpperCase()}`;
       contratByNumeroMap.set(contratKey, cm);
+    }
+  }
+
+  // Une attachée n'est agrégée que si son lot a une principale dans le MÊME
+  // contrat. Un fragment de lot rattaché à un autre contrat reste facturé au
+  // compteur, il doit donc continuer à s'afficher comme tel.
+  const lotsAvecPrincipale = new Set();
+  for (const cm of contratMachinesResult.rows) {
+    if (cm.est_principale && cm.identifiant_lot) {
+      lotsAvecPrincipale.add(`${cm.contrat_id}::${String(cm.identifiant_lot).toUpperCase()}`);
     }
   }
 
@@ -269,6 +280,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     sans_contrat: 0,
     anomalies: 0,
     premier_releve: 0,
+    lot_attachees: 0,
     hors_contrat: 0,
     montant_total_depassement_ht: 0,
   };
@@ -385,6 +397,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
     let forfaitNb = 0, forfaitCouleur = 0, coutCopieNb = 0, coutCopieCouleur = 0;
     let contratNumero = null, contratId = null;
     let hasContrat = false;
+    let lotAttachee = null;
 
     if (matchedContrat) {
       hasContrat = true;
@@ -394,6 +407,12 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
       forfaitCouleur = matchedContrat.volume_forfait_couleur || 0;
       coutCopieNb = parseFloat(matchedContrat.cout_copie_nb) || 0;
       coutCopieCouleur = parseFloat(matchedContrat.cout_copie_couleur) || 0;
+      const cleLot = matchedContrat.identifiant_lot
+        ? `${matchedContrat.contrat_id}::${String(matchedContrat.identifiant_lot).toUpperCase()}`
+        : null;
+      if (cleLot && !matchedContrat.est_principale && lotsAvecPrincipale.has(cleLot)) {
+        lotAttachee = matchedContrat.identifiant_lot;
+      }
     } else if (machine.numero_contrat) {
       contratNumero = machine.numero_contrat;
       contratId = machine.contrat_id;
@@ -500,21 +519,28 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
     // PREMIER RELEVE
     if (premierReleve) {
+      // Période d'initialisation : le compteur lu est un point de départ, pas
+      // une consommation. Aucun volume ni dépassement n'est retenu, en cohérence
+      // avec la facturation qui n'émet aucune ligne de conso sur ce statut.
+      // Les compteurs bruts restent intacts et servent de base au relevé suivant.
       ligne.statut = 'PREMIER_RELEVE';
-      ligne.alertes.push('Premier relevé — initialisation des compteurs');
-      // Still calculate overage for first reading if forfait exists
-      if (forfaitNb > 0 && volumeNb > forfaitNb) {
-        ligne.depassement_nb = volumeNb - forfaitNb;
-        ligne.montant_depassement_nb = Math.round(ligne.depassement_nb * coutCopieNb * 100) / 100;
-      }
-      if (forfaitCouleur > 0 && volumeCouleur > forfaitCouleur) {
-        ligne.depassement_couleur = volumeCouleur - forfaitCouleur;
-        ligne.montant_depassement_couleur = Math.round(ligne.depassement_couleur * coutCopieCouleur * 100) / 100;
-      }
-      ligne.montant_total_ht = Math.round((ligne.montant_depassement_nb + ligne.montant_depassement_couleur) * 100) / 100;
+      ligne.alertes.push('Premier relevé — initialisation des compteurs, aucune consommation facturée');
+      ligne.volume_nb = 0;
+      ligne.volume_couleur = 0;
       summary.premier_releve++;
-      if (ligne.montant_total_ht > 0) summary.avec_depassement++;
-      summary.montant_total_depassement_ht += ligne.montant_total_ht;
+      lignes.push(ligne);
+      continue;
+    }
+
+    // Machine attachée d'un lot : sa consommation est agrégée sur la principale
+    // à la facturation. L'afficher "au compteur" annoncerait un montant qui ne
+    // sera jamais émis. Les volumes restent renseignés : ce sont eux que la
+    // facturation additionne au niveau du lot.
+    if (lotAttachee) {
+      ligne.statut = 'LOT_ATTACHEE';
+      ligne.montant_total_ht = 0;
+      ligne.alertes.push(`Consommation agrégée sur la principale du lot ${lotAttachee}`);
+      summary.lot_attachees++;
       lignes.push(ligne);
       continue;
     }
@@ -567,9 +593,9 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 
   // Sort by montant_total_ht descending
   lignes.sort((a, b) => {
-    const statusOrder = { ANOMALIE: 0, DEPASSEMENT: 1, PREMIER_RELEVE: 2, AU_COMPTEUR: 3, SANS_CONTRAT: 4, HORS_CONTRAT: 5, OK: 6 };
-    const sa = statusOrder[a.statut] ?? 5;
-    const sb = statusOrder[b.statut] ?? 5;
+    const statusOrder = { ANOMALIE: 0, DEPASSEMENT: 1, PREMIER_RELEVE: 2, AU_COMPTEUR: 3, LOT_ATTACHEE: 4, SANS_CONTRAT: 5, HORS_CONTRAT: 6, OK: 7 };
+    const sa = statusOrder[a.statut] ?? 8;
+    const sb = statusOrder[b.statut] ?? 8;
     if (sa !== sb) return sa - sb;
     return (b.montant_total_ht || 0) - (a.montant_total_ht || 0);
   });
@@ -582,7 +608,7 @@ export async function analyzeReleves(fileId, mapping, periode = {}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function executeImport(lignes, periode = {}, fileMeta = {}, user = null) {
-  const validStatuts = ['OK', 'DEPASSEMENT', 'PREMIER_RELEVE', 'AU_COMPTEUR', 'SANS_CONTRAT', 'HORS_CONTRAT'];
+  const validStatuts = ['OK', 'DEPASSEMENT', 'PREMIER_RELEVE', 'AU_COMPTEUR', 'LOT_ATTACHEE', 'SANS_CONTRAT', 'HORS_CONTRAT'];
   const toImport = lignes.filter(l => l.selected !== false && validStatuts.includes(l.statut) && l.machine_id);
 
   if (toImport.length === 0) throw ApiError.badRequest('Aucune ligne valide à importer');

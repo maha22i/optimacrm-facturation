@@ -34,7 +34,7 @@ router.put(
   ctrl.update,
 );
 
-router.delete('/:id', checkPermission('marques'), ctrl.softDelete);
+router.delete('/:id', checkPermission('catalogue_delete'), ctrl.softDelete);
 
 router.post('/:id/logo', checkPermission('marques'), upload.single('logo'), ctrl.uploadLogo);
 

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { api, ApiError } from '@/lib/api';
 import type {
-  ContratDetail, ContratLigne, ContratMachine, Client,
+  ContratDetail, ContratLigne, ContratMachine, ContratAugmentation, Client,
   TypeContrat, Periodicite, StatutContrat, CategorieLigne,
   ApiResponse, PaginatedResponse, FactureDetail, ReleveCompteur,
   CatalogueProduit,
@@ -31,16 +31,29 @@ interface ContratFormData {
   date_prochaine_facture: string;
   date_renouvellement: string;
   duree_contrat_mois: number;
+  duree_reconduction_mois: number;
+  preavis_renouvellement_mois: number;
   numero_dossier_financement: string;
   organisme_credit: string;
   montant_finance: number;
   loyer_ht: number;
   location_interne: boolean;
+  calage: boolean;
+  date_calage: string;
   statut: StatutContrat;
   ftc: number;
   ect: number;
   notes: string;
   devis_id: number | '';
+  augmentation_active: boolean;
+  augmentation_pourcentage: number;
+}
+
+// Calculées par le backend (anniversaire = date d'installation), en lecture seule.
+interface AugmentationInfo {
+  prochaine_date: string | null;
+  derniere_date: string | null;
+  nb_appliquees: number;
 }
 
 interface LigneLocal extends Omit<ContratLigne, 'id' | 'contrat_id'> {
@@ -58,8 +71,8 @@ interface MachineLocal extends Omit<ContratMachine, 'id' | 'contrat_id'> {
 // ---------------------------------------------------------------------------
 
 const CATEGORIES_PAR_TYPE: Record<TypeContrat, CategorieLigne[]> = {
-  Copieur: ['Forfait Copie N&B', 'Forfait Copie Couleur', 'Service Connectic', 'PLC', 'Hors Forfait', 'Personnalisé'],
-  Telephonie: ['Forfait Fixe', 'Forfait Mobile', 'Lien Internet', 'Location Matériel', 'Services', 'Autre', 'Hors Forfait', 'Personnalisé'],
+  Copieur: ['Forfait Copie N&B', 'Forfait Copie Couleur', 'Service Connectic', 'Maintenance Service Pass', 'Location Matériel', 'PLC', 'Services', 'Autre', 'Hors Forfait', 'Personnalisé'],
+  Telephonie: ['Forfait Fixe', 'Forfait Mobile', 'Fibre', 'Internet', 'Location Matériel', 'Abonnement Divers', 'Sécurité', 'Services IT', 'Service Astreinte IPBX', 'Services', 'Autre', 'Hors Forfait', 'Personnalisé'],
   Informatique: ['Vidéosurveillance', 'Contrôle d\'accès', 'Téléassistance', 'Générateur de brouillard', 'Maintenance serveur', 'Maintenance informatique', 'Cloud', 'Office 365', 'Logiciel / Licence', 'Autre', 'Personnalisé'],
   Securite: ['Vidéosurveillance', 'Contrôle d\'accès', 'Téléassistance', 'Générateur de brouillard', 'Autre', 'Personnalisé'],
 };
@@ -82,16 +95,22 @@ const EMPTY_FORM: ContratFormData = {
   date_prochaine_facture: '',
   date_renouvellement: '',
   duree_contrat_mois: 63,
+  duree_reconduction_mois: 12,
+  preavis_renouvellement_mois: 6,
   numero_dossier_financement: '',
   organisme_credit: '',
   montant_finance: 0,
   loyer_ht: 0,
   location_interne: false,
+  calage: false,
+  date_calage: '',
   statut: 'Brouillon',
   ftc: 0,
   ect: 0,
   notes: '',
   devis_id: '',
+  augmentation_active: true,
+  augmentation_pourcentage: 0,
 };
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
@@ -106,6 +125,33 @@ function formatMoney(n: number) {
   return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
 
+const TYPE_BADGES: Record<TypeContrat, { label: string; color: string; icon: string }> = {
+  Copieur:      { label: 'Copieur',      color: 'bg-blue-50 text-blue-700 ring-blue-600/20',       icon: '🖨️' },
+  Telephonie:   { label: 'Téléphonie',   color: 'bg-green-50 text-green-700 ring-green-600/20',    icon: '📞' },
+  Informatique: { label: 'Informatique', color: 'bg-purple-50 text-purple-700 ring-purple-600/20', icon: '💻' },
+  Securite:     { label: 'Sécurité',     color: 'bg-orange-50 text-orange-700 ring-orange-600/20', icon: '🔒' },
+};
+
+function formatDateFr(val: string | null | undefined) {
+  if (!val) return '—';
+  const [y, m, d] = val.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/**
+ * Ajoute des mois en bornant au dernier jour du mois cible (31/08 + 1 mois =
+ * 30/09). Reproduit addMonthsUTC côté backend, qui reste seul juge à
+ * l'enregistrement : ce calcul ne sert qu'à afficher les dates en direct.
+ */
+function addMonthsISO(date: string, months: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const cible = new Date(Date.UTC(y, m - 1 + months, 1));
+  const dernierJour = new Date(Date.UTC(cible.getUTCFullYear(), cible.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(cible.getUTCFullYear(), cible.getUTCMonth(), Math.min(d, dernierJour)))
+    .toISOString().slice(0, 10);
+}
+
 // ---------------------------------------------------------------------------
 // Composant principal
 // ---------------------------------------------------------------------------
@@ -113,7 +159,11 @@ function formatMoney(n: number) {
 export default function ContratForm({ contratId }: { contratId?: number }) {
   const router = useRouter();
   const isEdit = !!contratId;
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  // Même verrou que la suppression : un admin ne peut pas renommer un contrat
+  // tant que la permission n'est pas cochée sur son compte.
+  const canRenumber = hasPermission('contrats_renumber');
+  const numeroVerrouille = isEdit && !canRenumber;
   // Le champ de recherche dégrade déjà proprement (403 → aucun résultat),
   // mais on le masque quand le catalogue est désactivé pour éviter une
   // recherche qui ne renverra jamais rien sans explication.
@@ -126,6 +176,10 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
   const [financementOpen, setFinancementOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [augmentationInfo, setAugmentationInfo] = useState<AugmentationInfo | null>(null);
+  const [historiqueAugmentations, setHistoriqueAugmentations] = useState<ContratAugmentation[]>([]);
   const [champsPersoValeurs, setChampsPersoValeurs] = useState<Record<string, string>>({});
 
   // Client search
@@ -169,6 +223,12 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   // ---------------------------------------------------------------------------
   // Chargement données existantes
   // ---------------------------------------------------------------------------
@@ -193,16 +253,27 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
           date_prochaine_facture: toDateInput(c.date_prochaine_facture),
           date_renouvellement: toDateInput(c.date_renouvellement),
           duree_contrat_mois: c.duree_contrat_mois ?? 63,
+          duree_reconduction_mois: c.duree_reconduction_mois ?? 12,
+          preavis_renouvellement_mois: c.preavis_renouvellement_mois ?? 6,
           numero_dossier_financement: c.numero_dossier_financement || '',
           organisme_credit: c.organisme_credit || '',
           montant_finance: c.montant_finance ?? 0,
           loyer_ht: c.loyer_ht ?? 0,
           location_interne: c.location_interne ?? false,
+          calage: c.calage ?? false,
+          date_calage: toDateInput(c.date_calage),
           statut: c.statut,
           ftc: parseFloat(String(c.ftc)) || 0,
           ect: parseFloat(String(c.ect)) || 0,
           notes: c.notes || '',
           devis_id: c.devis_id || '',
+          augmentation_active: c.augmentation_active ?? true,
+          augmentation_pourcentage: parseFloat(String(c.augmentation_pourcentage)) || 0,
+        });
+        setAugmentationInfo({
+          prochaine_date: toDateInput(c.augmentation_prochaine_date) || null,
+          derniere_date: toDateInput(c.augmentation_derniere_date) || null,
+          nb_appliquees: c.augmentation_nb_appliquees ?? 0,
         });
         setLignes(c.lignes.map(l => ({
           ...l,
@@ -233,6 +304,12 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
         }
         if (c.numero_dossier_financement || c.organisme_credit || (c.montant_finance && c.montant_finance > 0)) {
           setFinancementOpen(true);
+        }
+        if ((c.augmentation_nb_appliquees ?? 0) > 0) {
+          try {
+            const histo = await api.get<ApiResponse<ContratAugmentation[]>>(`/contrats/${contratId}/augmentations`);
+            setHistoriqueAugmentations(histo.data);
+          } catch { /* historique non bloquant */ }
         }
       } catch {
         router.push('/dashboard/contrats');
@@ -303,13 +380,50 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
   // Auto-calcul dates
   // ---------------------------------------------------------------------------
 
+  // Hors copieur, l'échéance reste saisie à la main : on la pré-remplit
+  // seulement si elle est vide. Les copieurs passent par le calcul ci-dessous.
   useEffect(() => {
+    if (form.type_contrat === 'Copieur') return;
     if (form.date_debut && form.duree_contrat_mois > 0 && !form.date_echeance) {
       const d = new Date(form.date_debut);
       d.setMonth(d.getMonth() + form.duree_contrat_mois);
       setForm(prev => ({ ...prev, date_echeance: d.toISOString().split('T')[0] }));
     }
-  }, [form.date_debut, form.duree_contrat_mois, form.date_echeance]);
+  }, [form.type_contrat, form.date_debut, form.duree_contrat_mois, form.date_echeance]);
+
+  // Copieur : fin de période initiale, prochaine échéance réelle (tacite
+  // reconduction) et date d'alerte. Recalculé à chaque frappe pour que les deux
+  // champs en lecture seule suivent la date d'installation et les durées.
+  const renouvellement = useMemo(() => {
+    if (form.type_contrat !== 'Copieur') return null;
+    const depart = form.date_installation || form.date_debut;
+    if (!depart || form.duree_contrat_mois <= 0) return null;
+
+    const finInitiale = addMonthsISO(depart, form.duree_contrat_mois);
+    if (!finInitiale) return null;
+
+    const aujourdhui = new Date().toISOString().slice(0, 10);
+    let prochaine = finInitiale;
+    let reconductions = 0;
+    if (form.duree_reconduction_mois > 0) {
+      while (prochaine < aujourdhui && reconductions < 240) {
+        reconductions += 1;
+        prochaine = addMonthsISO(finInitiale, form.duree_reconduction_mois * reconductions);
+      }
+    }
+
+    return {
+      finInitiale,
+      prochaine,
+      alerte: form.preavis_renouvellement_mois > 0
+        ? addMonthsISO(prochaine, -form.preavis_renouvellement_mois)
+        : prochaine,
+      reconductions,
+    };
+  }, [
+    form.type_contrat, form.date_installation, form.date_debut,
+    form.duree_contrat_mois, form.duree_reconduction_mois, form.preavis_renouvellement_mois,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Calculs totaux
@@ -422,17 +536,30 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
     if (!form.date_debut) e.date_debut = 'Requis';
     if (lignes.length === 0) e.lignes = 'Ajoutez au moins une ligne';
     if (Object.keys(e).length > 0) {
-      e._global = 'Veuillez corriger les champs en erreur ci-dessous avant de créer le contrat : ' + Object.values(e).join(' • ');
+      e._global = `Veuillez corriger les champs en erreur ci-dessous avant ${isEdit ? "d'enregistrer" : 'de créer'} le contrat : ` + Object.values(e).join(' • ');
     }
     setErrors(e);
     return Object.keys(e).filter(k => k !== '_global').length === 0;
   };
 
-  const handleSubmit = async () => {
+  // On valide avant d'ouvrir la confirmation : inutile de demander de confirmer
+  // un enregistrement qui sera refusé.
+  const askConfirmation = () => {
     if (!validate()) {
+      setToast({ message: 'Formulaire incomplet, vérifiez les champs en erreur', type: 'error' });
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+    setConfirmOpen(true);
+  };
+
+  const handleSubmit = async () => {
+    if (!validate()) {
+      setConfirmOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setConfirmOpen(false);
     setSaving(true);
     try {
       const payload = {
@@ -441,10 +568,15 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
         devis_id: form.devis_id ? Number(form.devis_id) : null,
         date_signature: form.date_signature || null,
         date_installation: form.date_installation || null,
-        date_echeance: form.date_echeance || null,
+        date_calage: form.calage ? form.date_calage || null : null,
+        // Copieur : dates calculées, le backend les réécrit de toute façon —
+        // on envoie le calcul local pour que l'écran suivant soit déjà juste.
+        date_echeance: renouvellement?.finInitiale || form.date_echeance || null,
         date_prochaine_facture: form.date_prochaine_facture || null,
-        date_renouvellement: form.date_renouvellement || null,
-        numero_contrat: form.numero_contrat || undefined,
+        date_renouvellement: renouvellement?.prochaine || form.date_renouvellement || null,
+        // En modification, on envoie toujours le numéro : s'il est inchangé,
+        // le backend l'ignore. S'il a changé sans autorisation, il refuse.
+        numero_contrat: isEdit ? form.numero_contrat.trim() : (form.numero_contrat.trim() || undefined),
         champs_personnalises: champsPersoValeurs,
         lignes: lignes.map((l, i) => ({
           ...l,
@@ -477,16 +609,21 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
         for (const m of machines) {
           await api.post(`/contrats/${contratId}/machines`, { ...m, _key: undefined, id: undefined });
         }
-        router.push(`/dashboard/contrats/${contratId}`);
+        // On est déjà sur /contrats/[id] : pas de navigation, sinon le
+        // composant n'est pas remonté et l'état resterait figé.
+        setToast({ message: `Contrat ${form.numero_contrat} enregistré`, type: 'success' });
+        setSaving(false);
       } else {
         const res = await api.post<ApiResponse<ContratDetail>>('/contrats', payload);
-        router.push(`/dashboard/contrats/${res.data.id}`);
+        setToast({ message: `Contrat ${res.data.numero_contrat} créé`, type: 'success' });
+        // Le toast reste visible un instant avant de quitter la page ; `saving`
+        // garde le bouton désactivé pendant la transition.
+        setTimeout(() => router.push(`/dashboard/contrats/${res.data.id}`), 1200);
       }
     } catch (err) {
-      if (err instanceof ApiError) {
-        setErrors({ _global: err.message });
-      }
-    } finally {
+      const message = err instanceof ApiError ? err.message : "Une erreur est survenue pendant l'enregistrement";
+      setErrors({ _global: message });
+      setToast({ message, type: 'error' });
       setSaving(false);
     }
   };
@@ -541,7 +678,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
             Annuler
           </button>
           <button
-            onClick={handleSubmit}
+            onClick={askConfirmation}
             disabled={saving}
             className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
           >
@@ -565,14 +702,30 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">N° de contrat <span className="text-gray-400 text-xs">(auto si vide)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  N° de contrat{' '}
+                  {numeroVerrouille
+                    ? <span className="text-gray-400 text-xs">(figé)</span>
+                    : <span className="text-gray-400 text-xs">(auto si vide)</span>}
+                </label>
                 <input
                   type="text"
                   value={form.numero_contrat}
                   onChange={e => updateField('numero_contrat', e.target.value)}
                   placeholder="Auto-généré"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                  readOnly={numeroVerrouille}
+                  disabled={numeroVerrouille}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                    numeroVerrouille
+                      ? 'border-gray-200 bg-gray-50 text-gray-600 cursor-not-allowed'
+                      : 'border-gray-200 focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10'
+                  }`}
                 />
+                {numeroVerrouille && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Le numéro ne peut pas être modifié. Une autorisation manuelle est nécessaire, comme pour la suppression.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Type de facturation</label>
@@ -589,23 +742,32 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
 
             {/* Type contrat radio */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Type de contrat *</label>
-              <div className="flex flex-wrap gap-2">
-                {(['Copieur', 'Telephonie', 'Informatique', 'Securite'] as TypeContrat[]).map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => updateField('type_contrat', t)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all cursor-pointer ${
-                      form.type_contrat === t
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {t === 'Telephonie' ? 'Téléphonie' : t === 'Securite' ? 'Sécurité' : t}
-                  </button>
-                ))}
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Type de contrat {isEdit ? <span className="text-gray-400 text-xs">(figé)</span> : '*'}
+              </label>
+              {isEdit ? (
+                <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium ring-1 ring-inset ${TYPE_BADGES[form.type_contrat].color}`}>
+                  <span aria-hidden>{TYPE_BADGES[form.type_contrat].icon}</span>
+                  {TYPE_BADGES[form.type_contrat].label}
+                </span>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {(['Copieur', 'Telephonie', 'Informatique', 'Securite'] as TypeContrat[]).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => updateField('type_contrat', t)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all cursor-pointer ${
+                        form.type_contrat === t
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {TYPE_BADGES[t].label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {errors.type_contrat && <p className="text-xs text-red-500 mt-1">{errors.type_contrat}</p>}
             </div>
 
@@ -691,21 +853,142 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                 <input type="number" value={form.duree_contrat_mois} onChange={e => updateField('duree_contrat_mois', parseInt(e.target.value) || 0)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
               </div>
+              {form.type_contrat === 'Copieur' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reconduction (mois)</label>
+                    <input
+                      type="number" min={0} max={120}
+                      value={form.duree_reconduction_mois}
+                      onChange={e => updateField('duree_reconduction_mois', parseInt(e.target.value) || 0)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      {form.duree_reconduction_mois > 0
+                        ? 'Tacite reconduction par période de ce nombre de mois.'
+                        : 'Aucune reconduction : le contrat s\u2019arrête à sa période initiale.'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Préavis (mois)</label>
+                    <input
+                      type="number" min={0} max={60}
+                      value={form.preavis_renouvellement_mois}
+                      onChange={e => updateField('preavis_renouvellement_mois', parseInt(e.target.value) || 0)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Délai d&apos;alerte avant l&apos;échéance, pour dénoncer ou resigner à temps.
+                    </p>
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date d&apos;échéance</label>
-                <input type="date" value={form.date_echeance} onChange={e => updateField('date_echeance', e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
+                {form.type_contrat === 'Copieur' ? (
+                  <>
+                    <input
+                      type="date" readOnly disabled
+                      value={renouvellement?.finInitiale || form.date_echeance}
+                      className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Fin de la période initiale, calculée depuis l&apos;installation.
+                    </p>
+                  </>
+                ) : (
+                  <input type="date" value={form.date_echeance} onChange={e => updateField('date_echeance', e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Renouvellement</label>
-                <input type="date" value={form.date_renouvellement} onChange={e => updateField('date_renouvellement', e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
+                {form.type_contrat === 'Copieur' ? (
+                  <>
+                    <input
+                      type="date" readOnly disabled
+                      value={renouvellement?.prochaine || form.date_renouvellement}
+                      className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      {renouvellement
+                        ? <>
+                          Prochaine échéance réelle
+                          {renouvellement.reconductions > 0 && ` (après ${renouvellement.reconductions} reconduction${renouvellement.reconductions > 1 ? 's' : ''})`}
+                          {form.preavis_renouvellement_mois > 0 && <> — alerte le <span className="font-medium text-gray-600">{formatDateFr(renouvellement.alerte)}</span></>}
+                        </>
+                        : 'Renseignez la date d\u2019installation et la durée pour obtenir la date.'}
+                    </p>
+                  </>
+                ) : (
+                  <input type="date" value={form.date_renouvellement} onChange={e => updateField('date_renouvellement', e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Prochaine facture</label>
                 <input type="date" value={form.date_prochaine_facture} onChange={e => updateField('date_prochaine_facture', e.target.value)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
               </div>
+            </div>
+
+            <div className="border-t border-gray-100 pt-4 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Augmentation annuelle des tarifs</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Appliquée à chaque date anniversaire de l&apos;installation sur tous les tarifs du contrat
+                    (prix unitaires des lignes, coûts copie, services, FTC), en composé.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.augmentation_active}
+                  onClick={() => updateField('augmentation_active', !form.augmentation_active)}
+                  className={`relative shrink-0 h-6 w-11 rounded-full transition-colors cursor-pointer ${form.augmentation_active ? 'bg-blue-600' : 'bg-gray-200'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${form.augmentation_active ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
+
+              {form.augmentation_active && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Taux annuel (%)</label>
+                    <input
+                      type="number" min={0} max={100} step={0.01}
+                      value={form.augmentation_pourcentage}
+                      onChange={e => updateField('augmentation_pourcentage', parseFloat(e.target.value) || 0)}
+                      placeholder="Ex. 2"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                    />
+                    {form.augmentation_pourcentage <= 0 && (
+                      <p className="text-xs text-gray-400 mt-1">0 % : aucune augmentation ne sera appliquée.</p>
+                    )}
+                  </div>
+                  {augmentationInfo && (
+                    <div className="sm:col-span-1 lg:col-span-2 text-xs text-gray-500 self-end pb-2 space-y-1">
+                      {augmentationInfo.prochaine_date && form.augmentation_pourcentage > 0 && (
+                        <p>
+                          Prochaine augmentation le{' '}
+                          <span className="font-medium text-gray-700">
+                            {new Date(augmentationInfo.prochaine_date).toLocaleDateString('fr-FR')}
+                          </span>
+                        </p>
+                      )}
+                      {augmentationInfo.nb_appliquees > 0 && (
+                        <p>
+                          {augmentationInfo.nb_appliquees} augmentation(s) déjà appliquée(s)
+                          {augmentationInfo.derniere_date
+                            ? `, la dernière le ${new Date(augmentationInfo.derniere_date).toLocaleDateString('fr-FR')}`
+                            : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -750,6 +1033,40 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                     className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                   <span className="text-sm text-gray-700">Location interne</span>
                 </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Calage</label>
+                    <div className="flex gap-2">
+                      {[true, false].map(val => (
+                        <button
+                          key={String(val)}
+                          type="button"
+                          // Décocher efface la date : elle n'aurait plus de sens seule.
+                          onClick={() => {
+                            updateField('calage', val);
+                            if (!val) updateField('date_calage', '');
+                          }}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all cursor-pointer ${
+                            form.calage === val
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {val ? 'Oui' : 'Non'}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Information indicative, sans effet sur la facturation.</p>
+                  </div>
+                  {form.calage && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date du calage</label>
+                      <input type="date" value={form.date_calage} onChange={e => updateField('date_calage', e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-300 focus:ring-2 focus:ring-blue-500/10 outline-none" />
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -848,6 +1165,9 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                             <select value={l.categorie_ligne || ''} onChange={e => updateLigne(l._key, 'categorie_ligne', e.target.value || null)}
                               className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-blue-300 outline-none cursor-pointer">
                               <option value="">—</option>
+                              {l.categorie_ligne && !categories.includes(l.categorie_ligne) && (
+                                <option value={l.categorie_ligne}>{l.categorie_ligne}</option>
+                              )}
                               {categories.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           </td>
@@ -897,7 +1217,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               <p className="text-sm text-gray-400 text-center py-4">Aucune ligne ajoutée</p>
             )}
 
-            {/* FTC / ECT / Totaux */}
+            {/* FTC / PLC / Totaux */}
             <div className="border-t border-gray-100 pt-4 mt-4">
               <div className="flex flex-col items-end gap-2">
                 <div className="grid grid-cols-[auto_120px] gap-x-4 gap-y-2 text-sm">
@@ -912,7 +1232,7 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
                   <span className="text-right font-medium text-gray-900">{formatMoney(form.ftc)}</span>
 
                   <span className="text-gray-500 text-right flex items-center gap-2 justify-end">
-                    ECT :
+                    PLC :
                     <input type="number" step="0.01" value={form.ect} onChange={e => updateField('ect', parseFloat(e.target.value) || 0)}
                       className="w-20 rounded border border-gray-200 px-2 py-1 text-xs text-right focus:border-blue-300 outline-none" />
                   </span>
@@ -994,6 +1314,26 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               </div>
             </div>
           </div>
+
+          {/* Card Historique des augmentations */}
+          {isEdit && historiqueAugmentations.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Augmentations appliquées</h3>
+              <div className="space-y-2 text-sm">
+                {historiqueAugmentations.map(a => (
+                  <div key={a.id} className="flex justify-between gap-2">
+                    <span className="text-gray-500">
+                      {new Date(a.date_anniversaire).toLocaleDateString('fr-FR')}
+                    </span>
+                    <span className="text-gray-900">
+                      +{parseFloat(String(a.pourcentage))} %
+                      <span className="text-gray-400"> · {a.nb_elements} tarif(s)</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Card Dernière facturation */}
           {isEdit && (
@@ -1376,6 +1716,90 @@ export default function ContratForm({ contratId }: { contratId?: number }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Confirmation enregistrement ── */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="px-6 pt-6 pb-4 flex items-start gap-4">
+              <div className="h-10 w-10 shrink-0 rounded-full bg-blue-50 flex items-center justify-center">
+                <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {isEdit ? 'Enregistrer les modifications ?' : 'Créer ce contrat ?'}
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {isEdit
+                    ? 'Les lignes et machines du contrat seront remplacées par le contenu actuel du formulaire.'
+                    : 'Le contrat sera créé avec les informations saisies.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mx-6 mb-4 rounded-lg bg-gray-50 px-4 py-3 space-y-1.5 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Contrat</span>
+                <span className="font-medium text-gray-900">{form.numero_contrat || 'Numéro auto'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Client</span>
+                <span className="font-medium text-gray-900 truncate max-w-[200px]">{selectedClient?.raison_sociale || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Lignes / machines</span>
+                <span className="font-medium text-gray-900">{lignes.length} / {machines.length}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Total HT {form.periodicite.toLowerCase()}</span>
+                <span className="font-semibold text-gray-900">{formatMoney(totaux.totalHT)}</span>
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 px-6 py-4 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                {saving && <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />}
+                {isEdit ? 'Confirmer et enregistrer' : 'Confirmer et créer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[60] flex items-center gap-3 rounded-2xl px-5 py-3.5 text-sm font-semibold shadow-xl transition-all ${toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+          {toast.type === 'success' ? (
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            </svg>
+          )}
+          <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-1 opacity-70 hover:opacity-100 transition cursor-pointer">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
     </div>

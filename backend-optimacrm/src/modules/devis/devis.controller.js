@@ -4,6 +4,7 @@ import { generateDevisPdf } from './pdf.service.js';
 import { sendDevisEmail, getRenderedDevisTemplate } from '../email/email.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 // ---------------------------------------------------------------------------
 // DEVIS — CRUD
@@ -42,7 +43,7 @@ export async function createDevis(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'devis_cree',
-        module: 'devis',
+        module: MODULES.DEVIS,
         description: `Création du devis ${devis.numero_devis || ''} pour ${devis.client_raison_sociale || ''}`,
         entityType: 'devis',
         entityId: devis.id,
@@ -63,7 +64,7 @@ export async function updateDevis(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'devis_modifie',
-        module: 'devis',
+        module: MODULES.DEVIS,
         description: `Modification du devis ${devis.numero_devis || ''}`,
         entityType: 'devis',
         entityId: devis.id,
@@ -86,7 +87,7 @@ export async function deleteDevis(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'devis_supprime',
-        module: 'devis',
+        module: MODULES.DEVIS,
         description: `Suppression du devis ${devisLabel}`,
         entityType: 'devis',
         entityId: devisId,
@@ -108,7 +109,7 @@ export async function envoyerDevis(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'devis_envoye', module: 'devis',
+        action: 'devis_envoye', module: MODULES.DEVIS,
         description: `Devis ${devis.numero_devis || ''} envoyé`,
         entityType: 'devis', entityId: devis.id, entityLabel: devis.numero_devis,
         ipAddress: activityLog.getClientIp(req),
@@ -170,7 +171,7 @@ export async function envoyerDevisEmail(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'devis_envoye_email', module: 'devis',
+        action: 'devis_envoye_email', module: MODULES.DEVIS,
         description: `Devis ${devis.numero_devis || ''} envoyé par email à ${destinataire}`,
         entityType: 'devis', entityId: devis.id, entityLabel: devis.numero_devis,
         details: { destinataire, sujet },
@@ -189,7 +190,7 @@ export async function accepterDevis(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'devis_accepte', module: 'devis',
+        action: 'devis_accepte', module: MODULES.DEVIS,
         description: `Devis ${devis.numero_devis || ''} accepté`,
         entityType: 'devis', entityId: devis.id, entityLabel: devis.numero_devis,
         ipAddress: activityLog.getClientIp(req),
@@ -205,7 +206,7 @@ export async function refuserDevis(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'devis_refuse', module: 'devis',
+        action: 'devis_refuse', module: MODULES.DEVIS,
         description: `Devis ${devis.numero_devis || ''} refusé`,
         entityType: 'devis', entityId: devis.id, entityLabel: devis.numero_devis,
         details: { motif: req.body.motif },
@@ -218,7 +219,17 @@ export async function refuserDevis(req, res, next) {
 
 export async function dupliquerDevis(req, res, next) {
   try {
-    const devis = await devisService.dupliquerDevis(parseInt(req.params.id), req.user.id);
+    const sourceId = parseInt(req.params.id);
+    const devis = await devisService.dupliquerDevis(sourceId, req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'devis_duplique',
+      module: MODULES.DEVIS,
+      description: `Duplication du devis ${await devisService.getNumeroDevis(sourceId)} vers ${devis.numero_devis}`,
+      entityType: 'devis',
+      entityId: devis.id,
+      entityLabel: devis.numero_devis,
+      details: { devis_source_id: sourceId },
+    });
     sendSuccess(res, devis, 'Devis dupliqué', 201);
   } catch (err) { next(err); }
 }
@@ -229,7 +240,7 @@ export async function transformerEnFacture(req, res, next) {
     try {
       await activityLog.log({
         userId: req.user.id, userNom: activityLog.getUserName(req.user),
-        action: 'devis_transforme', module: 'devis',
+        action: 'devis_transforme', module: MODULES.DEVIS,
         description: `Devis ${result.devis?.numero_devis || ''} transformé en facture ${result.facture?.numero_facture || ''}`,
         entityType: 'devis', entityId: parseInt(req.params.id), entityLabel: result.devis?.numero_devis,
         details: { facture_id: result.facture?.id, numero_facture: result.facture?.numero_facture },
@@ -242,7 +253,16 @@ export async function transformerEnFacture(req, res, next) {
 
 export async function transformerEnBC(req, res, next) {
   try {
-    const bc = await devisService.transformerEnBonCommande(parseInt(req.params.id), req.user.id);
+    const devisId = parseInt(req.params.id);
+    const bc = await devisService.transformerEnBonCommande(devisId, req.user.id);
+    await activityLog.logRequest(req, {
+      action: 'devis_transforme_bon_commande',
+      module: MODULES.DEVIS,
+      description: `Devis ${await devisService.getNumeroDevis(devisId)} transformé en bon de commande`,
+      entityType: 'devis',
+      entityId: devisId,
+      details: { bon_commande_id: bc?.id ?? null },
+    });
     sendSuccess(res, bc, 'Bon de commande créé', 201);
   } catch (err) { next(err); }
 }
@@ -251,32 +271,85 @@ export async function transformerEnBC(req, res, next) {
 // LIGNES
 // ---------------------------------------------------------------------------
 
+// Lignes et champs personnalisés sont journalisés sur le devis porteur : c'est
+// sa fiche qui sert de point d'entrée à l'historique.
+async function logSurDevis(req, devisId, { action, resume, details }) {
+  const numero = await devisService.getNumeroDevis(devisId);
+  await activityLog.logRequest(req, {
+    action,
+    module: MODULES.DEVIS,
+    description: `${resume} du devis ${numero}`,
+    entityType: 'devis',
+    entityId: devisId,
+    entityLabel: numero,
+    details,
+  });
+}
+
 export async function ajouterLigne(req, res, next) {
   try {
-    const ligne = await devisService.ajouterLigne(parseInt(req.params.id), req.body, req.user.id);
+    const devisId = parseInt(req.params.id);
+    const ligne = await devisService.ajouterLigne(devisId, req.body, req.user.id);
+    await logSurDevis(req, devisId, {
+      action: 'devis_ligne_ajoutee',
+      resume: `Ajout de la ligne « ${ligne.designation} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        quantite: ligne.quantite,
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+      },
+    });
     sendSuccess(res, ligne, 'Ligne ajoutée', 201);
   } catch (err) { next(err); }
 }
 
 export async function modifierLigne(req, res, next) {
   try {
+    const devisId = parseInt(req.params.id);
     const ligne = await devisService.modifierLigne(
-      parseInt(req.params.id), parseInt(req.params.ligneId), req.body, req.user.id
+      devisId, parseInt(req.params.ligneId), req.body, req.user.id
     );
+    await logSurDevis(req, devisId, {
+      action: 'devis_ligne_modifiee',
+      resume: `Modification de la ligne « ${ligne.designation} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+        champs_modifies: Object.keys(req.body),
+      },
+    });
     sendSuccess(res, ligne, 'Ligne mise à jour');
   } catch (err) { next(err); }
 }
 
 export async function supprimerLigne(req, res, next) {
   try {
-    await devisService.supprimerLigne(parseInt(req.params.id), parseInt(req.params.ligneId), req.user.id);
+    const devisId = parseInt(req.params.id);
+    const ligne = await devisService.supprimerLigne(devisId, parseInt(req.params.ligneId), req.user.id);
+    await logSurDevis(req, devisId, {
+      action: 'devis_ligne_supprimee',
+      resume: `Suppression de la ligne « ${ligne.designation} »`,
+      details: {
+        ligne_id: ligne.id,
+        designation: ligne.designation,
+        prix_unitaire_ht: ligne.prix_unitaire_ht,
+      },
+    });
     sendSuccess(res, null, 'Ligne supprimée');
   } catch (err) { next(err); }
 }
 
 export async function reorderLignes(req, res, next) {
   try {
-    await devisService.reorderLignes(parseInt(req.params.id), req.body.ordre, req.user.id);
+    const devisId = parseInt(req.params.id);
+    await devisService.reorderLignes(devisId, req.body.ordre, req.user.id);
+    await logSurDevis(req, devisId, {
+      action: 'devis_lignes_reordonnees',
+      resume: 'Réordonnancement des lignes',
+      details: { nb_lignes: Array.isArray(req.body.ordre) ? req.body.ordre.length : null },
+    });
     sendSuccess(res, null, 'Lignes réordonnées');
   } catch (err) { next(err); }
 }
@@ -294,23 +367,41 @@ export async function listChamps(req, res, next) {
 
 export async function ajouterChamp(req, res, next) {
   try {
-    const champ = await devisService.ajouterChamp(parseInt(req.params.id), req.body);
+    const devisId = parseInt(req.params.id);
+    const champ = await devisService.ajouterChamp(devisId, req.body);
+    await logSurDevis(req, devisId, {
+      action: 'devis_champ_ajoute',
+      resume: `Ajout du champ « ${champ.label} »`,
+      details: { champ_id: champ.id, label: champ.label, valeur: champ.valeur },
+    });
     sendSuccess(res, champ, 'Champ ajouté', 201);
   } catch (err) { next(err); }
 }
 
 export async function modifierChamp(req, res, next) {
   try {
+    const devisId = parseInt(req.params.id);
     const champ = await devisService.modifierChamp(
-      parseInt(req.params.id), parseInt(req.params.champId), req.body
+      devisId, parseInt(req.params.champId), req.body
     );
+    await logSurDevis(req, devisId, {
+      action: 'devis_champ_modifie',
+      resume: `Modification du champ « ${champ.label} »`,
+      details: { champ_id: champ.id, label: champ.label, valeur: champ.valeur },
+    });
     sendSuccess(res, champ, 'Champ mis à jour');
   } catch (err) { next(err); }
 }
 
 export async function supprimerChamp(req, res, next) {
   try {
-    await devisService.supprimerChamp(parseInt(req.params.id), parseInt(req.params.champId));
+    const devisId = parseInt(req.params.id);
+    const champ = await devisService.supprimerChamp(devisId, parseInt(req.params.champId));
+    await logSurDevis(req, devisId, {
+      action: 'devis_champ_supprime',
+      resume: `Suppression du champ « ${champ.label} »`,
+      details: { champ_id: champ.id, label: champ.label },
+    });
     sendSuccess(res, null, 'Champ supprimé');
   } catch (err) { next(err); }
 }
@@ -341,7 +432,7 @@ export async function importExecute(req, res, next) {
         userId: req.user.id,
         userNom: activityLog.getUserName(req.user),
         action: 'devis_import',
-        module: 'devis',
+        module: MODULES.DEVIS,
         description: `Import de devis : ${result.imported} créés, ${result.updated} mis à jour, ${result.errors.length} erreurs`,
         entityType: 'devis',
         details: { imported: result.imported, updated: result.updated, errors: result.errors.length },
@@ -354,9 +445,15 @@ export async function importExecute(req, res, next) {
 
 export async function ajouterChampDepuisTemplate(req, res, next) {
   try {
+    const devisId = parseInt(req.params.id);
     const champ = await devisService.ajouterChampDepuisTemplate(
-      parseInt(req.params.id), parseInt(req.params.templateId)
+      devisId, parseInt(req.params.templateId)
     );
+    await logSurDevis(req, devisId, {
+      action: 'devis_champ_ajoute',
+      resume: `Ajout du champ « ${champ.label} » depuis un modèle`,
+      details: { champ_id: champ.id, label: champ.label, template_id: parseInt(req.params.templateId) },
+    });
     sendSuccess(res, champ, 'Champ ajouté depuis le template', 201);
   } catch (err) { next(err); }
 }

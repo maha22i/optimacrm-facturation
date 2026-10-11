@@ -1,6 +1,7 @@
 import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { toDateStr, addMonthsUTC, subDayUTC, periodEnd } from '../../utils/dateUtils.js';
+import { appliquerAugmentationsDues } from '../contrats/augmentationAnnuelle.service.js';
 
 // ---------------------------------------------------------------------------
 // Numérotation
@@ -658,6 +659,63 @@ export async function dupliquerFacture(id, userId) {
 
 
 // ---------------------------------------------------------------------------
+// Lots copieur
+// ---------------------------------------------------------------------------
+
+/**
+ * Regroupe les machines d'un contrat par identifiant_lot. Une machine sans lot
+ * forme un groupe à elle seule : son traitement reste strictement celui d'avant.
+ */
+function grouperMachinesParLot(machines) {
+  const groupes = [];
+  const parLot = new Map();
+
+  for (const m of machines) {
+    const cle = m.identifiant_lot ? String(m.identifiant_lot).toUpperCase() : null;
+    if (!cle) {
+      groupes.push({ lot: null, machines: [m] });
+      continue;
+    }
+    if (!parLot.has(cle)) {
+      const groupe = { lot: m.identifiant_lot, machines: [] };
+      parLot.set(cle, groupe);
+      groupes.push(groupe);
+    }
+    parLot.get(cle).machines.push(m);
+  }
+
+  return groupes;
+}
+
+const porteLeForfait = m =>
+  Number(m.volume_forfait_nb) > 0 || Number(m.volume_forfait_couleur) > 0;
+
+/**
+ * Relevé non facturé le plus récent d'une machine, sans filtre de date ni
+ * exclusion de PREMIER_RELEVE. Les identifiants passés en options priment.
+ */
+async function chargerReleve(dbClient, machine, { releve_compteur_nb_id, releve_compteur_coul_id } = {}) {
+  if (releve_compteur_nb_id) {
+    const { rows: [rNb] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_nb_id]);
+    if (rNb) return rNb;
+  }
+  if (releve_compteur_coul_id) {
+    const { rows: [rC] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_coul_id]);
+    if (rC) return rC;
+  }
+  const { rows } = await dbClient.query(
+    `SELECT rc.* FROM releves_compteurs rc
+     JOIN parc_machines pm ON pm.id = rc.machine_id
+     WHERE pm.numero_serie = $1
+       AND rc.est_facture = false
+     ORDER BY rc.date_releve DESC
+     LIMIT 1`,
+    [machine.numero_serie]
+  );
+  return rows[0] || null;
+}
+
+// ---------------------------------------------------------------------------
 // Génération depuis contrat COPIEUR
 // ---------------------------------------------------------------------------
 
@@ -681,6 +739,19 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
     );
     if (!contrat) throw new ApiError(404, 'Contrat introuvable');
     if (contrat.statut !== 'Actif') throw new ApiError(400, 'Le contrat doit être actif pour facturer');
+
+    // Rattrapage des anniversaires d'augmentation échus avant de lire les
+    // tarifs : le job quotidien passe en premier, ceci n'est qu'un filet.
+    const augmentations = await appliquerAugmentationsDues(contratId, {
+      dbClient,
+      declencheur: 'Facturation',
+      userId,
+    });
+    if (augmentations.length > 0) {
+      // Le FTC est augmenté lui aussi : la copie en mémoire est périmée.
+      const { rows: [maj] } = await dbClient.query('SELECT ftc FROM contrats WHERE id = $1', [contratId]);
+      contrat.ftc = maj?.ftc ?? contrat.ftc;
+    }
 
     const snapshot = await getClientSnapshot(dbClient, contrat.client_id);
     const numero = await generateNumeroFacture(dbClient);
@@ -707,194 +778,291 @@ export async function genererDepuisContrat(contratId, userId, options = {}) {
 
     if (contrat.type_contrat === 'Copieur') {
       const { rows: machines } = await dbClient.query(
-        'SELECT * FROM contrat_machines WHERE contrat_id = $1 AND actif = true', [contratId]
+        `SELECT * FROM contrat_machines WHERE contrat_id = $1 AND actif = true
+         ORDER BY est_principale DESC, id`, [contratId]
       );
+
+      const groupes = grouperMachinesParLot(machines);
 
       let machineInfo = {};
       const releveIdsToMark = [];
-      let isFirstMachine = true;
+      let overridesDisponibles = true;
+      let premiersRelevesInit = 0;
 
-      for (const m of machines) {
-        if (!machineInfo.numero_serie) {
-          machineInfo = { numero_serie: m.numero_serie, modele_machine: `${m.marque || ''} ${m.modele || ''}`.trim() };
-        }
+      for (const groupe of groupes) {
+        const porteuses = groupe.machines.filter(porteLeForfait);
 
-        const aForfait = (Number(m.volume_forfait_nb) > 0) || (Number(m.volume_forfait_couleur) > 0);
-
-        // Récupérer le relevé non facturé le plus récent (sans filtre de date ni exclusion PREMIER_RELEVE)
-        let releve = null;
-        if (isFirstMachine && releve_compteur_nb_id) {
-          const { rows: [rNb] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_nb_id]);
-          if (rNb) releve = rNb;
-        }
-        if (!releve && isFirstMachine && releve_compteur_coul_id) {
-          const { rows: [rC] } = await dbClient.query('SELECT * FROM releves_compteurs WHERE id = $1', [releve_compteur_coul_id]);
-          if (rC) releve = rC;
-        }
-        if (!releve) {
-          const { rows: releveRows } = await dbClient.query(
-            `SELECT rc.* FROM releves_compteurs rc
-             JOIN parc_machines pm ON pm.id = rc.machine_id
-             WHERE pm.numero_serie = $1
-               AND rc.est_facture = false
-             ORDER BY rc.date_releve DESC
-             LIMIT 1`,
-            [m.numero_serie]
+        if (porteuses.length > 1) {
+          throw new ApiError(
+            400,
+            `Contrat ${contrat.numero_contrat}, lot ${groupe.lot} : ${porteuses.length} machines ` +
+            `portent un forfait, la machine principale est indéterminée. ` +
+            `Corrigez le contrat avant de facturer.`
           );
-          if (releveRows.length > 0) releve = releveRows[0];
         }
-        isFirstMachine = false;
 
-        if (aForfait) {
-          // ── TYPE A — Contrat AVEC FORFAIT ──
-          // Les lignes de forfait sont TOUJOURS générées, indépendamment du relevé.
+        const principale = porteuses[0] || groupe.machines[0];
 
-          if (Number(m.volume_forfait_nb) > 0) {
-            const totalNb = Math.round(Number(m.volume_forfait_nb) * Number(m.cout_copie_nb) * 100) / 100;
+        if (!machineInfo.numero_serie) {
+          machineInfo = {
+            numero_serie: principale.numero_serie,
+            modele_machine: `${principale.marque || ''} ${principale.modele || ''}`.trim(),
+          };
+        }
+
+        // Le relevé imposé par l'appelant s'applique à la machine principale du
+        // premier groupe, là où il s'appliquait à la première machine du contrat.
+        const relevesParMachine = new Map();
+        for (const m of groupe.machines) {
+          const utiliseOverrides = overridesDisponibles && m === principale;
+          relevesParMachine.set(
+            m.id,
+            await chargerReleve(dbClient, m, utiliseOverrides ? { releve_compteur_nb_id, releve_compteur_coul_id } : {})
+          );
+          if (utiliseOverrides) overridesDisponibles = false;
+        }
+
+        // Un lot n'agrège que s'il a plusieurs machines ET une porteuse unique.
+        // Sans forfait, ses machines restent facturées au compteur une par une.
+        const facturerEnLot = groupe.machines.length > 1 && porteuses.length === 1;
+
+        if (facturerEnLot) {
+          // ── LOT — un seul forfait, porté par la principale ──
+          // La conso du lot est la somme des volumes déjà calculés à l'import :
+          // ce sont des deltas, on ne repart jamais du compteur brut. Les
+          // premiers relevés valent 0 et n'entrent donc pas dans le cumul.
+          let volumeLotNb = 0, volumeLotCoul = 0;
+          const detailNb = [], detailCoul = [];
+          let releveTrace = relevesParMachine.get(principale.id);
+
+          for (const m of groupe.machines) {
+            const r = relevesParMachine.get(m.id);
+            if (!r) continue;
+            releveIdsToMark.push(r.id);
+            if (r.statut === 'PREMIER_RELEVE') {
+              premiersRelevesInit++;
+              continue;
+            }
+            if (!releveTrace || releveTrace.statut === 'PREMIER_RELEVE') releveTrace = r;
+            volumeLotNb += Number(r.volume_nb || 0);
+            volumeLotCoul += Number(r.volume_couleur || 0);
+            detailNb.push(`${m.numero_serie} : ${Number(r.volume_nb || 0)}`);
+            detailCoul.push(`${m.numero_serie} : ${Number(r.volume_couleur || 0)}`);
+          }
+
+          const forfaitNb = Number(principale.volume_forfait_nb) || 0;
+          const forfaitCoul = Number(principale.volume_forfait_couleur) || 0;
+          const coutNb = Number(principale.cout_copie_nb) || 0;
+          const coutCoul = Number(principale.cout_copie_couleur) || 0;
+          const entete = `lot ${groupe.lot}, ${groupe.machines.length} machines`;
+
+          if (forfaitNb > 0) {
             lignes.push({
               position: position++, type_ligne: 'FORFAIT_NB', reference: 'FORF1',
               designation: 'FORFAIT NOIR ET BLANC',
-              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)} — ${entete}`,
               ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-              quantite: Number(m.volume_forfait_nb), prix_unitaire: Number(m.cout_copie_nb), total_ht: totalNb,
+              quantite: forfaitNb, prix_unitaire: coutNb,
+              total_ht: Math.round(forfaitNb * coutNb * 100) / 100,
             });
           }
 
-          if (Number(m.volume_forfait_couleur) > 0) {
-            const totalCoul = Math.round(Number(m.volume_forfait_couleur) * Number(m.cout_copie_couleur) * 100) / 100;
+          if (forfaitCoul > 0) {
             lignes.push({
               position: position++, type_ligne: 'FORFAIT_COULEUR', reference: 'FORF2',
               designation: 'FORFAIT COULEUR',
-              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)} — ${entete}`,
               ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-              quantite: Number(m.volume_forfait_couleur), prix_unitaire: Number(m.cout_copie_couleur), total_ht: totalCoul,
+              quantite: forfaitCoul, prix_unitaire: coutCoul,
+              total_ht: Math.round(forfaitCoul * coutCoul * 100) / 100,
             });
           }
 
-          // Régularisation : valeurs PRÉ-CALCULÉES à l'import, lues directement depuis releves_compteurs
-          if (releve && releve.statut !== 'PREMIER_RELEVE') {
-            if (Number(releve.depassement_nb) > 0) {
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'REGUL_NB',
-                designation: 'REGULARISATION VOLUME NOIR ET BLANC',
-                description: `Dépassement de ${Number(releve.depassement_nb)} copies sur la période`,
-                ancien_compteur: Number(releve.ancien_compteur_nb || 0),
-                nouveau_compteur: Number(releve.compteur_nb),
-                compteur_periode_debut: releve.date_debut_periode,
-                compteur_periode_fin: releve.date_fin_periode,
-                quantite: Number(releve.depassement_nb), prix_unitaire: Number(m.cout_copie_nb),
-                total_ht: Number(releve.montant_depassement_nb),
-                releve_compteur_id: releve.id,
-              });
-            }
-
-            if (Number(releve.depassement_couleur) > 0) {
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'REGUL_COUL',
-                designation: 'REGULARISATION VOLUME COULEUR',
-                description: `Dépassement de ${Number(releve.depassement_couleur)} copies sur la période`,
-                ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
-                nouveau_compteur: Number(releve.compteur_couleur),
-                compteur_periode_debut: releve.date_debut_periode,
-                compteur_periode_fin: releve.date_fin_periode,
-                quantite: Number(releve.depassement_couleur), prix_unitaire: Number(m.cout_copie_couleur),
-                total_ht: Number(releve.montant_depassement_couleur),
-                releve_compteur_id: releve.id,
-              });
-            }
-
-            releveIdsToMark.push(releve.id);
-          } else if (releve && releve.statut === 'PREMIER_RELEVE') {
-            releveIdsToMark.push(releve.id);
-          }
-
-        } else {
-          // ── TYPE B — Contrat AU COMPTEUR (sans forfait) ──
-          if (!releve) continue;
-
-          if (['OK', 'DEPASSEMENT', 'AU_COMPTEUR'].includes(releve.statut)) {
-            const volumeNb = Number(releve.volume_nb || 0);
-            const coutNb = Number(m.cout_copie_nb || 0);
-            if (volumeNb > 0 && coutNb > 0) {
-              const totalNb = Math.round(volumeNb * coutNb * 100) / 100;
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'COPIES_NB',
-                designation: 'COPIES NOIR ET BLANC',
-                description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
-                ancien_compteur: Number(releve.ancien_compteur_nb || 0),
-                nouveau_compteur: Number(releve.compteur_nb),
-                compteur_periode_debut: releve.date_debut_periode,
-                compteur_periode_fin: releve.date_fin_periode,
-                quantite: volumeNb, prix_unitaire: coutNb, total_ht: totalNb,
-                releve_compteur_id: releve.id,
-              });
-            }
-
-            const volumeCoul = Number(releve.volume_couleur || 0);
-            const coutCoul = Number(m.cout_copie_couleur || 0);
-            if (volumeCoul > 0 && coutCoul > 0) {
-              const totalCoul = Math.round(volumeCoul * coutCoul * 100) / 100;
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'COPIES_COUL',
-                designation: 'COPIES COULEUR',
-                description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
-                ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
-                nouveau_compteur: Number(releve.compteur_couleur),
-                compteur_periode_debut: releve.date_debut_periode,
-                compteur_periode_fin: releve.date_fin_periode,
-                quantite: volumeCoul, prix_unitaire: coutCoul, total_ht: totalCoul,
-                releve_compteur_id: releve.id,
-              });
-            }
-
-            releveIdsToMark.push(releve.id);
-          } else if (releve.statut === 'PREMIER_RELEVE') {
-            const cNb = Number(releve.compteur_nb || 0);
-            const cCoul = Number(releve.compteur_couleur || 0);
-            const coutNb = Number(m.cout_copie_nb || 0);
-            const coutCoul = Number(m.cout_copie_couleur || 0);
-
-            if (cNb > 0 && coutNb > 0) {
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_NB', reference: 'COPIES_NB',
-                designation: 'COPIES NOIR ET BLANC (premier relevé)',
-                description: `Compteur initial : ${cNb}`,
-                nouveau_compteur: cNb,
-                quantite: cNb, prix_unitaire: coutNb,
-                total_ht: Math.round(cNb * coutNb * 100) / 100,
-                releve_compteur_id: releve.id,
-              });
-            }
-            if (cCoul > 0 && coutCoul > 0) {
-              lignes.push({
-                position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'COPIES_COUL',
-                designation: 'COPIES COULEUR (premier relevé)',
-                description: `Compteur initial : ${cCoul}`,
-                nouveau_compteur: cCoul,
-                quantite: cCoul, prix_unitaire: coutCoul,
-                total_ht: Math.round(cCoul * coutCoul * 100) / 100,
-                releve_compteur_id: releve.id,
-              });
-            }
-
-            releveIdsToMark.push(releve.id);
-          }
-        }
-
-        const serviceRefs = { service_connectic: 'CNTC', service_collecteur: 'COLL', service_divers: 'DIV', service_autre: 'AUT' };
-        const serviceLabels = { service_connectic: 'Service Connectic', service_collecteur: 'Service Collecteur', service_divers: 'Service Divers', service_autre: 'Service Autre' };
-        for (const [key, ref] of Object.entries(serviceRefs)) {
-          if (parseFloat(m[key]) > 0) {
+          const depNb = forfaitNb > 0 ? Math.max(0, volumeLotNb - forfaitNb) : 0;
+          if (depNb > 0) {
             lignes.push({
-              position: position++, type_ligne: 'SERVICE', reference: ref,
-              designation: serviceLabels[key],
-              description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
-              ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
-              quantite: 1, prix_unitaire: parseFloat(m[key]),
-              total_ht: parseFloat(m[key]),
+              position: position++, type_ligne: 'REGULARISATION_NB', reference: 'REGUL_NB',
+              designation: 'REGULARISATION VOLUME NOIR ET BLANC',
+              description: `Dépassement de ${depNb} copies sur la période — lot ${groupe.lot} : ` +
+                           `${volumeLotNb} copies consommées pour un forfait de ${forfaitNb} ` +
+                           `(${detailNb.join(', ')})`,
+              ancien_compteur: Number(releveTrace?.ancien_compteur_nb || 0),
+              nouveau_compteur: Number(releveTrace?.compteur_nb || 0),
+              compteur_periode_debut: releveTrace?.date_debut_periode,
+              compteur_periode_fin: releveTrace?.date_fin_periode,
+              quantite: depNb, prix_unitaire: coutNb,
+              total_ht: Math.round(depNb * coutNb * 100) / 100,
+              releve_compteur_id: releveTrace?.id || null,
+            });
+          }
+
+          const depCoul = forfaitCoul > 0 ? Math.max(0, volumeLotCoul - forfaitCoul) : 0;
+          if (depCoul > 0) {
+            lignes.push({
+              position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'REGUL_COUL',
+              designation: 'REGULARISATION VOLUME COULEUR',
+              description: `Dépassement de ${depCoul} copies sur la période — lot ${groupe.lot} : ` +
+                           `${volumeLotCoul} copies consommées pour un forfait de ${forfaitCoul} ` +
+                           `(${detailCoul.join(', ')})`,
+              ancien_compteur: Number(releveTrace?.ancien_compteur_couleur || 0),
+              nouveau_compteur: Number(releveTrace?.compteur_couleur || 0),
+              compteur_periode_debut: releveTrace?.date_debut_periode,
+              compteur_periode_fin: releveTrace?.date_fin_periode,
+              quantite: depCoul, prix_unitaire: coutCoul,
+              total_ht: Math.round(depCoul * coutCoul * 100) / 100,
+              releve_compteur_id: releveTrace?.id || null,
             });
           }
         }
+
+        for (const m of groupe.machines) {
+          const releve = relevesParMachine.get(m.id);
+          const aForfait = porteLeForfait(m);
+
+          if (facturerEnLot) {
+            // Forfait et régularisation déjà émis une fois pour tout le lot.
+          } else if (aForfait) {
+            // ── TYPE A — Contrat AVEC FORFAIT ──
+            // Les lignes de forfait sont TOUJOURS générées, indépendamment du relevé.
+
+            if (Number(m.volume_forfait_nb) > 0) {
+              const totalNb = Math.round(Number(m.volume_forfait_nb) * Number(m.cout_copie_nb) * 100) / 100;
+              lignes.push({
+                position: position++, type_ligne: 'FORFAIT_NB', reference: 'FORF1',
+                designation: 'FORFAIT NOIR ET BLANC',
+                description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+                ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
+                quantite: Number(m.volume_forfait_nb), prix_unitaire: Number(m.cout_copie_nb), total_ht: totalNb,
+              });
+            }
+
+            if (Number(m.volume_forfait_couleur) > 0) {
+              const totalCoul = Math.round(Number(m.volume_forfait_couleur) * Number(m.cout_copie_couleur) * 100) / 100;
+              lignes.push({
+                position: position++, type_ligne: 'FORFAIT_COULEUR', reference: 'FORF2',
+                designation: 'FORFAIT COULEUR',
+                description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+                ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
+                quantite: Number(m.volume_forfait_couleur), prix_unitaire: Number(m.cout_copie_couleur), total_ht: totalCoul,
+              });
+            }
+
+            // Régularisation : valeurs PRÉ-CALCULÉES à l'import, lues directement depuis releves_compteurs
+            if (releve && releve.statut !== 'PREMIER_RELEVE') {
+              if (Number(releve.depassement_nb) > 0) {
+                lignes.push({
+                  position: position++, type_ligne: 'REGULARISATION_NB', reference: 'REGUL_NB',
+                  designation: 'REGULARISATION VOLUME NOIR ET BLANC',
+                  description: `Dépassement de ${Number(releve.depassement_nb)} copies sur la période`,
+                  ancien_compteur: Number(releve.ancien_compteur_nb || 0),
+                  nouveau_compteur: Number(releve.compteur_nb),
+                  compteur_periode_debut: releve.date_debut_periode,
+                  compteur_periode_fin: releve.date_fin_periode,
+                  quantite: Number(releve.depassement_nb), prix_unitaire: Number(m.cout_copie_nb),
+                  total_ht: Number(releve.montant_depassement_nb),
+                  releve_compteur_id: releve.id,
+                });
+              }
+
+              if (Number(releve.depassement_couleur) > 0) {
+                lignes.push({
+                  position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'REGUL_COUL',
+                  designation: 'REGULARISATION VOLUME COULEUR',
+                  description: `Dépassement de ${Number(releve.depassement_couleur)} copies sur la période`,
+                  ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
+                  nouveau_compteur: Number(releve.compteur_couleur),
+                  compteur_periode_debut: releve.date_debut_periode,
+                  compteur_periode_fin: releve.date_fin_periode,
+                  quantite: Number(releve.depassement_couleur), prix_unitaire: Number(m.cout_copie_couleur),
+                  total_ht: Number(releve.montant_depassement_couleur),
+                  releve_compteur_id: releve.id,
+                });
+              }
+
+              releveIdsToMark.push(releve.id);
+            } else if (releve && releve.statut === 'PREMIER_RELEVE') {
+              releveIdsToMark.push(releve.id);
+            }
+
+          } else {
+            // ── TYPE B — Contrat AU COMPTEUR (sans forfait) ──
+            if (!releve) continue;
+
+            // LOT_ATTACHEE n'arrive ici que si le lot a perdu sa principale
+            // depuis l'import du relevé : la machine retombe alors sur la
+            // facturation au compteur plutôt que de n'être jamais facturée.
+            if (['OK', 'DEPASSEMENT', 'AU_COMPTEUR', 'LOT_ATTACHEE'].includes(releve.statut)) {
+              const volumeNb = Number(releve.volume_nb || 0);
+              const coutNb = Number(m.cout_copie_nb || 0);
+              if (volumeNb > 0 && coutNb > 0) {
+                const totalNb = Math.round(volumeNb * coutNb * 100) / 100;
+                lignes.push({
+                  position: position++, type_ligne: 'REGULARISATION_NB', reference: 'COPIES_NB',
+                  designation: 'COPIES NOIR ET BLANC',
+                  description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
+                  ancien_compteur: Number(releve.ancien_compteur_nb || 0),
+                  nouveau_compteur: Number(releve.compteur_nb),
+                  compteur_periode_debut: releve.date_debut_periode,
+                  compteur_periode_fin: releve.date_fin_periode,
+                  quantite: volumeNb, prix_unitaire: coutNb, total_ht: totalNb,
+                  releve_compteur_id: releve.id,
+                });
+              }
+
+              const volumeCoul = Number(releve.volume_couleur || 0);
+              const coutCoul = Number(m.cout_copie_couleur || 0);
+              if (volumeCoul > 0 && coutCoul > 0) {
+                const totalCoul = Math.round(volumeCoul * coutCoul * 100) / 100;
+                lignes.push({
+                  position: position++, type_ligne: 'REGULARISATION_COULEUR', reference: 'COPIES_COUL',
+                  designation: 'COPIES COULEUR',
+                  description: `Consommation période ${formatDateFR(releve.date_debut_periode)} → ${formatDateFR(releve.date_fin_periode)}`,
+                  ancien_compteur: Number(releve.ancien_compteur_couleur || 0),
+                  nouveau_compteur: Number(releve.compteur_couleur),
+                  compteur_periode_debut: releve.date_debut_periode,
+                  compteur_periode_fin: releve.date_fin_periode,
+                  quantite: volumeCoul, prix_unitaire: coutCoul, total_ht: totalCoul,
+                  releve_compteur_id: releve.id,
+                });
+              }
+
+              releveIdsToMark.push(releve.id);
+            } else if (releve.statut === 'PREMIER_RELEVE') {
+              // Initialisation : le compteur lu est un point de départ, pas une
+              // consommation de la période. Le facturer reviendrait à vendre tout
+              // l'historique de la machine. La conso démarre au relevé suivant,
+              // en delta. Le relevé est marqué facturé pour ne pas rester
+              // indéfiniment "en attente".
+              premiersRelevesInit++;
+              releveIdsToMark.push(releve.id);
+            }
+          }
+
+          // Les services restent facturés machine par machine, lot ou pas.
+          const serviceRefs = { service_connectic: 'CNTC', service_collecteur: 'COLL', service_divers: 'DIV', service_autre: 'AUT' };
+          const serviceLabels = { service_connectic: 'Service Connectic', service_collecteur: 'Service Collecteur', service_divers: 'Service Divers', service_autre: 'Service Autre' };
+          for (const [key, ref] of Object.entries(serviceRefs)) {
+            if (parseFloat(m[key]) > 0) {
+              lignes.push({
+                position: position++, type_ligne: 'SERVICE', reference: ref,
+                designation: serviceLabels[key],
+                description: `Période du ${formatDateFR(periodeDebut)} au ${formatDateFR(periodeFin)}`,
+                ligne_periode_debut: periodeDebut, ligne_periode_fin: periodeFin,
+                quantite: 1, prix_unitaire: parseFloat(m[key]),
+                total_ht: parseFloat(m[key]),
+              });
+            }
+          }
+        }
+      }
+
+      if (lignes.length === 0 && premiersRelevesInit > 0) {
+        throw new ApiError(
+          400,
+          `Contrat ${contrat.numero_contrat} : premier relevé d'initialisation pour ` +
+          `${premiersRelevesInit} machine(s) au compteur. Rien à facturer sur cette période, ` +
+          `la consommation sera facturée au relevé suivant.`
+        );
       }
 
       if (lignes.length === 0) {
@@ -1011,7 +1179,8 @@ export async function getContratsAFacturer(typeFilter) {
     `SELECT c.id, c.numero_contrat, c.type_contrat, c.periodicite,
             c.client_id, cl.raison_sociale AS client_raison_sociale,
             COALESCE(c.prochaine_date_facturation, c.date_prochaine_facture) AS prochaine_date_facturation,
-            COALESCE(c.derniere_date_facturation, c.derniere_facture_date) AS derniere_date_facturation,
+            (SELECT MAX(f.date_creation)::date FROM factures f
+              WHERE f.contrat_id = c.id AND f.statut != 'Annulée' AND f.est_avoir = false) AS derniere_date_facturation,
             COALESCE(c.loyer_ht, 0) AS montant_mensuel_ht,
             c.terme_facturation,
             CASE
@@ -1081,9 +1250,10 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
     if (!contrat) return {};
 
     const { rows: machines } = await query(
-      `SELECT cm.numero_serie, cm.modele, cm.marque, cm.actif,
+      `SELECT cm.id, cm.numero_serie, cm.modele, cm.marque, cm.actif,
               cm.cout_copie_nb, cm.cout_copie_couleur,
-              cm.volume_forfait_nb, cm.volume_forfait_couleur
+              cm.volume_forfait_nb, cm.volume_forfait_couleur,
+              cm.identifiant_lot, cm.est_principale
        FROM contrat_machines cm WHERE cm.contrat_id = $1`,
       [contratId]
     );
@@ -1107,8 +1277,15 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
       );
       const hasServices = activeMachines.length > 0;
 
+      // Un lot à deux forfaits bloque la facturation du contrat entier : c'est
+      // la cause à afficher, pas un relevé manquant.
+      const lotAmbigu = grouperMachinesParLot(activeMachines)
+        .find(g => g.machines.filter(porteLeForfait).length > 1);
+
       if (activeMachines.length === 0) {
         raison = 'aucune_machine_active';
+      } else if (lotAmbigu) {
+        raison = 'lot_multi_forfait';
       } else if (!hasForfait && !hasCoutCopie) {
         raison = 'pas_de_tarification';
       } else if (!hasForfait) {
@@ -1116,6 +1293,8 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
       } else {
         raison = 'releves_manquants';
       }
+
+      let machinesInitialisation = 0;
 
       for (const m of activeMachines) {
         const { rows: rels } = await query(
@@ -1129,6 +1308,7 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
            LIMIT 5`,
           [m.numero_serie]
         );
+        if (rels[0]?.statut === 'PREMIER_RELEVE') machinesInitialisation++;
         if (rels.length > 0) {
           releves_disponibles.push({
             numero_serie: m.numero_serie,
@@ -1145,6 +1325,12 @@ async function getErreurDetailContrat(contratId, periodeDebut, periodeFin) {
             })),
           });
         }
+      }
+
+      // Un contrat au compteur dont les machines n'ont qu'un relevé
+      // d'initialisation n'a rien à facturer : ce n'est pas un relevé manquant.
+      if (raison === 'releves_manquants' && !hasForfait && machinesInitialisation > 0) {
+        raison = 'premier_releve_initialisation';
       }
     } else {
       const actives = lignesContrat[0]?.actives || 0;

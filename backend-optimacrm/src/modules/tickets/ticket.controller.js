@@ -1,7 +1,19 @@
 import * as ticketService from './ticket.service.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 import { notifyTicketCreated, notifyTicketAssigned, notifyTicketResolved } from './ticketNotification.service.js';
+
+function logCategorie(req, categorie, { action, description }) {
+  return activityLog.logRequest(req, {
+    action,
+    module: MODULES.TICKETS,
+    description,
+    entityType: 'categorie_ticket',
+    entityId: categorie?.id ?? null,
+    entityLabel: categorie?.nom ?? null,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // TICKETS
@@ -44,7 +56,7 @@ export async function createTicket(req, res, next) {
         userId,
         userNom,
         action: 'creation',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Ticket ${ticket.numero} créé — ${req.body.sujet}`,
         entityType: 'ticket',
         entityId: ticket.id,
@@ -72,7 +84,7 @@ export async function updateTicket(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'modification',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Ticket ${ticket.numero} modifié`,
         entityType: 'ticket',
         entityId: ticket.id,
@@ -95,7 +107,7 @@ export async function deleteTicket(req, res, next) {
         userId: req.user?.id,
         userNom: activityLog.getUserName(req.user),
         action: 'suppression',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Ticket ${ticket.numero} supprimé`,
         entityType: 'ticket',
         entityId: ticket.id,
@@ -128,7 +140,7 @@ export async function changeStatut(req, res, next) {
         userId,
         userNom,
         action: 'changement_statut',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Ticket ${ticket.numero} → ${statut}${motif ? ` (${motif})` : ''}`,
         entityType: 'ticket',
         entityId: ticket.id,
@@ -163,7 +175,7 @@ export async function assignerTechnicien(req, res, next) {
         userId,
         userNom,
         action: 'assignation',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Ticket ${ticket.numero} assigné au technicien #${technicien_id || 'aucun'}`,
         entityType: 'ticket',
         entityId: ticket.id,
@@ -208,7 +220,7 @@ export async function createCommentaire(req, res, next) {
         userId,
         userNom,
         action: 'commentaire',
-        module: 'tickets',
+        module: MODULES.TICKETS,
         description: `Commentaire ajouté au ticket #${req.params.id}${req.body.est_interne ? ' (interne)' : ''}`,
         entityType: 'ticket',
         entityId: parseInt(req.params.id),
@@ -248,6 +260,10 @@ export async function listCategories(req, res, next) {
 export async function createCategorie(req, res, next) {
   try {
     const categorie = await ticketService.createCategorie(req.body);
+    await logCategorie(req, categorie, {
+      action: 'categorie_ticket_creee',
+      description: `Création de la catégorie de tickets « ${categorie.nom} »`,
+    });
     sendSuccess(res, categorie, 'Catégorie créée', 201);
   } catch (err) { next(err); }
 }
@@ -255,6 +271,10 @@ export async function createCategorie(req, res, next) {
 export async function updateCategorie(req, res, next) {
   try {
     const categorie = await ticketService.updateCategorie(parseInt(req.params.id), req.body);
+    await logCategorie(req, categorie, {
+      action: 'categorie_ticket_modifiee',
+      description: `Modification de la catégorie de tickets « ${categorie.nom} »`,
+    });
     sendSuccess(res, categorie, 'Catégorie mise à jour');
   } catch (err) { next(err); }
 }
@@ -262,6 +282,10 @@ export async function updateCategorie(req, res, next) {
 export async function deleteCategorie(req, res, next) {
   try {
     const categorie = await ticketService.deleteCategorie(parseInt(req.params.id));
+    await logCategorie(req, categorie, {
+      action: 'categorie_ticket_desactivee',
+      description: `Désactivation de la catégorie de tickets « ${categorie.nom} »`,
+    });
     sendSuccess(res, categorie, 'Catégorie désactivée');
   } catch (err) { next(err); }
 }
@@ -280,6 +304,15 @@ export async function listSlaRules(req, res, next) {
 export async function updateSlaRule(req, res, next) {
   try {
     const rule = await ticketService.updateSlaRule(parseInt(req.params.id), req.body);
+    await activityLog.logRequest(req, {
+      action: 'regle_sla_modifiee',
+      module: MODULES.TICKETS,
+      description: `Modification de la règle SLA pour la priorité ${rule.priorite}`,
+      entityType: 'regle_sla',
+      entityId: rule.id,
+      entityLabel: rule.priorite,
+      details: { champs_modifies: Object.keys(req.body) },
+    });
     sendSuccess(res, rule, 'Règle SLA mise à jour');
   } catch (err) { next(err); }
 }

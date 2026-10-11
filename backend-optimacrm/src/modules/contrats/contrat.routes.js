@@ -6,8 +6,6 @@ import { tenantMiddleware } from '../../middleware/tenantContext.js';
 import { checkPermission } from '../../middleware/checkPermission.js';
 import { requireModule } from '../../middleware/requireModule.js';
 import { validate } from '../../middleware/validate.js';
-import { ALL_CATEGORIES } from '../../config/contratCategories.js';
-
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const uploadMulti = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).fields([
@@ -37,12 +35,17 @@ router.get('/export', checkPermission('contrats_read'), ctrl.exportContrats);
 
 // ── Contrats CRUD ─────────────────────────────────────────────────────────
 
-router.delete('/all', checkPermission('contrats_write'), ctrl.deleteAllContrats);
-router.post('/bulk-delete', checkPermission('contrats_write'), ctrl.bulkDeleteContrats);
+router.delete('/all', checkPermission('contrats_delete'), ctrl.deleteAllContrats);
+router.post('/bulk-delete', checkPermission('contrats_delete'), ctrl.bulkDeleteContrats);
 router.post('/bulk-status', checkPermission('contrats_write'), ctrl.bulkUpdateStatut);
+
+// ── Renouvellements (avant /:id, sinon capturé comme un identifiant) ──────
+router.get('/renouvellements', checkPermission('contrats_read'), ctrl.listRenouvellements);
+router.get('/renouvellements/alertes', checkPermission('contrats_read'), ctrl.getAlertesRenouvellement);
 
 router.get('/', checkPermission('contrats_read'), ctrl.listContrats);
 router.get('/:id', checkPermission('contrats_read'), ctrl.getContrat);
+router.get('/:id/augmentations', checkPermission('contrats_read'), ctrl.getHistoriqueAugmentations);
 
 router.post(
   '/',
@@ -72,8 +75,10 @@ router.put(
   ctrl.updateContrat,
 );
 
-router.delete('/:id', checkPermission('contrats_write'), ctrl.deleteContrat);
+router.delete('/:id', checkPermission('contrats_delete'), ctrl.deleteContrat);
 router.post('/:id/duplicate', checkPermission('contrats_write'), ctrl.duplicateContrat);
+router.post('/:id/renouvellement-traite', checkPermission('contrats_write'), ctrl.marquerRenouvellementTraite);
+router.delete('/:id/renouvellement-traite', checkPermission('contrats_write'), ctrl.annulerRenouvellementTraite);
 router.post('/:id/generer-facture', checkPermission('factures_write'), ctrl.genererFacture);
 
 // ── Lignes ────────────────────────────────────────────────────────────────
@@ -83,7 +88,7 @@ router.post(
   checkPermission('contrats_write'),
   validate({
     designation: { required: true, minLength: 1, label: 'Désignation' },
-    categorie_ligne: { enum: ALL_CATEGORIES },
+    categorie_ligne: { maxLength: 50, label: 'Catégorie' },
   }),
   ctrl.addLigne,
 );
@@ -92,7 +97,7 @@ router.put(
   '/:id/lignes/:ligneId',
   checkPermission('contrats_write'),
   validate({
-    categorie_ligne: { enum: ALL_CATEGORIES },
+    categorie_ligne: { maxLength: 50, label: 'Catégorie' },
   }),
   ctrl.updateLigne,
 );

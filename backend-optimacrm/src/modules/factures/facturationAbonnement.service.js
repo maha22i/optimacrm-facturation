@@ -2,6 +2,7 @@ import { query, pool, getClient } from '../../config/database.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { ABONNEMENT_TYPES } from '../../config/contratCategories.js';
 import { toDateStr, addMonthsUTC as addMonths, subDayUTC as subDay } from '../../utils/dateUtils.js';
+import { appliquerAugmentationsDues } from '../contrats/augmentationAnnuelle.service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,59 +199,22 @@ export async function genererFacturesAbonnement(dateFacturation, contratIds, use
         periodeFin = subDay(addMonths(prochaineFacturation, mois));
       }
 
-      // --- Augmentation annuelle ---
-      const dateRenouvellement = contrat.date_renouvellement;
-      let augmentationAppliquee = null;
+      // --- Augmentation annuelle (rattrapage des anniversaires échus) ---
+      // Le job quotidien s'en charge normalement ; ce passage est le filet de
+      // sécurité si l'app est restée arrêtée ou si on facture une date future.
+      const augmentations = await appliquerAugmentationsDues(contratId, {
+        dbClient,
+        dateReference: dateFact,
+        declencheur: 'Facturation',
+        userId,
+      });
+      rapport.augmentations.push(...augmentations);
 
-      if (dateRenouvellement && new Date(dateRenouvellement) <= new Date(dateFact)) {
-        const { rows: notesRows } = await dbClient.query(
-          `SELECT notes FROM contrats WHERE id = $1`, [contratId]
-        );
-        const notes = notesRows[0]?.notes || '';
-        const augMatch = notes.match(/Augmentation:\s*([\d.,]+)%/);
-        const pourcentageAugm = augMatch ? parseFloat(augMatch[1].replace(',', '.')) : 0;
-
-        if (pourcentageAugm > 0) {
-          const { rows: lignesAugm } = await dbClient.query(
-            `SELECT id, designation, prix_unitaire_ht, categorie_ligne FROM contrat_lignes
-             WHERE contrat_id = $1 AND actif = true AND categorie_ligne != 'Hors Forfait'`,
-            [contratId]
-          );
-
-          const detailsAugm = [];
-          for (const ligne of lignesAugm) {
-            const ancienMontant = parseFloat(ligne.prix_unitaire_ht) || 0;
-            const nouveauMontant = Math.round(ancienMontant * (1 + pourcentageAugm / 100) * 100) / 100;
-
-            await dbClient.query(
-              `UPDATE contrat_lignes SET prix_unitaire_ht = $1, updated_at = NOW() WHERE id = $2`,
-              [nouveauMontant, ligne.id]
-            );
-
-            detailsAugm.push({
-              designation: ligne.designation,
-              categorie: ligne.categorie_ligne,
-              ancien_montant: ancienMontant,
-              nouveau_montant: nouveauMontant,
-            });
-          }
-
-          const nouvelleDate = addMonths(dateRenouvellement, 12);
-          await dbClient.query(
-            `UPDATE contrats SET date_renouvellement = $1, updated_at = NOW() WHERE id = $2`,
-            [nouvelleDate, contratId]
-          );
-
-          augmentationAppliquee = {
-            contrat_id: contratId,
-            numero_contrat: contrat.numero_contrat,
-            pourcentage: pourcentageAugm,
-            lignes: detailsAugm,
-            ancienne_date_renouvellement: dateRenouvellement,
-            nouvelle_date_renouvellement: nouvelleDate,
-          };
-          rapport.augmentations.push(augmentationAppliquee);
-        }
+      if (augmentations.length > 0) {
+        // Le FTC fait partie des montants augmentés : la copie en mémoire du
+        // contrat est périmée dès qu'une augmentation vient d'être appliquée.
+        const { rows: [maj] } = await dbClient.query('SELECT ftc FROM contrats WHERE id = $1', [contratId]);
+        contrat.ftc = maj?.ftc ?? contrat.ftc;
       }
 
       // --- Récupérer les lignes du contrat (après augmentation éventuelle) ---

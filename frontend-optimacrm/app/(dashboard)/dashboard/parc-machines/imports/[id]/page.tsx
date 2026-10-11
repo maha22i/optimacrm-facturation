@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import type { ImportReleve, ImportRapportErreur, ApiResponse } from '@/lib/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -62,6 +63,8 @@ type Tab = 'releves' | 'factures' | 'erreurs';
 export default function ImportDetailPage() {
   const router = useRouter();
   const params = useParams();
+  const { hasPermission } = useAuth();
+  const canDeleteParc = hasPermission('parc_delete');
   const id = params.id as string;
 
   const [imp, setImp] = useState<ImportReleve | null>(null);
@@ -182,7 +185,7 @@ export default function ImportDetailPage() {
             </span>
           </h1>
         </div>
-        {isActif && (
+        {isActif && canDeleteParc && (
           <button onClick={handleOpenCancel} disabled={cancelCheckLoading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition cursor-pointer disabled:opacity-50">
             {cancelCheckLoading && <div className="h-4 w-4 border-2 border-red-300 border-t-red-600 rounded-full animate-spin" />}
             Annuler cet import

@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Portail client — frontend-client
+#
+# Seul /api/client/ est proxifié ici : le portail n'appelle jamais les routes
+# internes du CRM, donc ce vhost ne leur donne aucune surface d'attaque.
+# Le backend refuse de son côté tout JWT role=client sur /api/* interne.
+# ─────────────────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name clientgroupinnov.optimacrm.fr;
+
+    client_max_body_size 25M;
+    client_body_timeout 120s;
+    client_header_timeout 120s;
+
+    access_log /var/log/nginx/facturation-client.access.log;
+    error_log  /var/log/nginx/facturation-client.error.log;
+
+    location /api/client/ {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+    }
+
+    # Logos et documents référencés en chemin relatif par resolveAssetUrl().
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:8401;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8403;
+        include /etc/nginx/snippets/facturation-proxy.conf;
+    }
+}

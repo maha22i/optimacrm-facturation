@@ -93,7 +93,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
 
           <div className="relative overflow-hidden rounded-3xl border border-gray-100 bg-white/90 p-8 shadow-2xl shadow-indigo-950/[0.08] ring-1 ring-black/[0.02] backdrop-blur-sm sm:p-9">
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
-            {children}
+            {children} 
           </div>
 
           <p className="mt-6 text-center text-xs text-gray-400 lg:hidden">Portail client OptimaCRM</p>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 
 interface ClientAccount {
   id: string;
@@ -28,6 +29,8 @@ interface PaginatedRes<T> {
 }
 
 export default function EspaceClientPage() {
+  const { hasPermission } = useAuth();
+  const canDeleteUsers = hasPermission('users_delete');
   const [accounts, setAccounts] = useState<ClientAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -121,12 +124,14 @@ export default function EspaceClientPage() {
                       >
                         {a.is_active ? 'Desactiver' : 'Activer'}
                       </button>
+                      {canDeleteUsers && (
                       <button
                         onClick={() => deleteAccount(a.id)}
                         className="text-xs px-2.5 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50"
                       >
                         Supprimer
                       </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -148,8 +153,18 @@ function CreateAccountModal({ onClose, onCreated }: { onClose: () => void; onCre
   const [lastName, setLastName] = useState('');
   const [password, setPassword] = useState('');
   const [clientId, setClientId] = useState('');
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientListOpen, setClientListOpen] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const selectedClient = clients.find(c => String(c.id) === clientId);
+  const searchTerm = selectedClient ? '' : clientSearch.trim().toLowerCase();
+  const filteredClients = searchTerm
+    ? clients.filter(c =>
+        c.raison_sociale?.toLowerCase().includes(searchTerm) ||
+        c.numero_client?.toLowerCase().includes(searchTerm))
+    : clients;
 
   useEffect(() => {
     api.get<PaginatedRes<ClientOption>>('/clients?limit=500')
@@ -232,17 +247,56 @@ function CreateAccountModal({ onClose, onCreated }: { onClose: () => void; onCre
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Client rattache</label>
-            <select
-              required
-              value={clientId}
-              onChange={e => setClientId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
-            >
-              <option value="">-- Selectionnez un client --</option>
-              {clients.map(c => (
-                <option key={c.id} value={c.id}>{c.raison_sociale} ({c.numero_client})</option>
-              ))}
-            </select>
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              <input
+                type="text"
+                value={clientSearch}
+                onChange={e => { setClientSearch(e.target.value); setClientId(''); setClientListOpen(true); }}
+                onFocus={() => setClientListOpen(true)}
+                onBlur={() => setTimeout(() => setClientListOpen(false), 150)}
+                placeholder="Rechercher un client (nom ou numero)..."
+                className="w-full pl-9 pr-8 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+              />
+              {clientSearch && (
+                <button
+                  type="button"
+                  onClick={() => { setClientSearch(''); setClientId(''); setClientListOpen(true); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+                  aria-label="Effacer"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+              {clientListOpen && (
+                <ul className="absolute z-10 mt-1 w-full max-h-60 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg text-sm">
+                  {filteredClients.length === 0 ? (
+                    <li className="px-3 py-2 text-gray-400">Aucun client trouve</li>
+                  ) : (
+                    filteredClients.map(c => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            setClientId(String(c.id));
+                            setClientSearch(`${c.raison_sociale} (${c.numero_client})`);
+                            setClientListOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 hover:bg-blue-50 ${String(c.id) === clientId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'}`}
+                        >
+                          {c.raison_sociale} <span className="text-gray-400">({c.numero_client})</span>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">

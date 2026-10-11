@@ -3,13 +3,32 @@ export type PermissionKey =
   | 'clients_read' | 'clients_write' | 'clients_import'
   | 'devis_read' | 'devis_write'
   | 'factures_read' | 'factures_write'
-  | 'contrats_read' | 'contrats_write' | 'contrats_import'
+  | 'contrats_read' | 'contrats_write' | 'contrats_import' | 'contrats_renumber'
   | 'parc_read' | 'parc_write' | 'parc_import'
   | 'catalogue_read' | 'catalogue_write' | 'catalogue_import'
   | 'fournisseurs' | 'marques' | 'familles_unites'
   | 'champs_personnalises' | 'champs_templates'
   | 'tickets_read' | 'tickets_write' | 'tickets_admin' | 'techniciens_manage'
-  | 'parametres_societe';
+  | 'parametres_societe'
+  | DeletePermissionKey;
+
+/**
+ * Permissions sensibles. Volontairement isolées des `*_write` : aucun rôle
+ * ne les accorde implicitement (pas même `admin`), elles doivent être cochées
+ * une par une sur l'utilisateur. Miroir de `PERMISSIONS.destructive`
+ * côté backend (permissions.service.js).
+ */
+export type DeletePermissionKey =
+  | 'users_delete' | 'clients_delete' | 'devis_delete' | 'factures_delete'
+  | 'contrats_delete' | 'parc_delete' | 'catalogue_delete' | 'tickets_delete'
+  | 'config_delete';
+
+/** Actions manuelles hors suppression, soumises au même verrou que les `*_delete`. */
+export type SensitivePermissionKey = DeletePermissionKey | 'contrats_renumber';
+
+export function isDeletePermission(key: string): key is SensitivePermissionKey {
+  return key.endsWith('_delete') || key === 'contrats_renumber';
+}
 
 export type UserRole = 'admin' | 'user' | 'admin_technique' | 'technicien' | 'super_admin' | 'client';
 
@@ -626,12 +645,19 @@ export type CategorieLigne =
   | 'Forfait Fixe'
   | 'Forfait Mobile'
   | 'Lien Internet'
+  | 'Fibre'
+  | 'Internet'
+  | 'Abonnement Divers'
+  | 'Sécurité'
+  | 'Services IT'
+  | 'Service Astreinte IPBX'
   | 'Location Matériel'
   | 'Services'
   | 'Autre'
   | 'Forfait Copie N&B'
   | 'Forfait Copie Couleur'
   | 'Service Connectic'
+  | 'Maintenance Service Pass'
   | 'PLC'
   | 'Hors Forfait'
   | 'Personnalisé'
@@ -708,6 +734,8 @@ export interface Contrat {
   montant_finance: number;
   loyer_ht: number;
   location_interne: boolean;
+  calage: boolean;
+  date_calage: string | null;
   statut: StatutContrat;
   derniere_facture_date: string | null;
   derniere_facture_numero: string | null;
@@ -717,6 +745,17 @@ export interface Contrat {
   notes: string | null;
   devis_id: number | null;
   terme_facturation: 'TAE' | 'TEC';
+  augmentation_active: boolean;
+  augmentation_pourcentage: number;
+  augmentation_date_reference: string | null;
+  augmentation_prochaine_date: string | null;
+  augmentation_derniere_date: string | null;
+  augmentation_nb_appliquees: number;
+  duree_reconduction_mois: number;
+  preavis_renouvellement_mois: number;
+  renouvellement_traite_echeance: string | null;
+  renouvellement_traite_date: string | null;
+  renouvellement_traite_par: string | null;
   created_at: string;
   updated_at: string;
   // Champs joints
@@ -732,6 +771,67 @@ export interface Contrat {
 export interface ContratDetail extends Contrat {
   lignes: ContratLigne[];
   machines: ContratMachine[];
+}
+
+export interface ContratAugmentationDetail {
+  cible: 'ligne_contrat' | 'machine_contrat' | 'machine_parc' | 'contrat';
+  cible_id: number;
+  libelle: string;
+  champ: string;
+  avant: number;
+  apres: number;
+}
+
+export interface ContratAugmentation {
+  id: number;
+  date_anniversaire: string;
+  pourcentage: number;
+  declencheur: string;
+  applique_par: string | null;
+  nb_elements: number;
+  details: ContratAugmentationDetail[];
+  created_at: string;
+}
+
+/**
+ * Contrat copieur arrivant à échéance. `date_renouvellement` est la prochaine
+ * fin de période réelle (reconductions comprises), `date_alerte` la date à
+ * partir de laquelle il faut agir, et `traite` indique qu'une relance a déjà
+ * été faite pour cette échéance précise.
+ */
+export interface ContratRenouvellement {
+  id: number;
+  numero_contrat: string;
+  type_contrat: TypeContrat;
+  statut: StatutContrat;
+  periodicite: Periodicite;
+  date_installation: string | null;
+  date_debut: string;
+  date_echeance: string | null;
+  date_renouvellement: string;
+  duree_contrat_mois: number;
+  duree_reconduction_mois: number;
+  preavis_renouvellement_mois: number;
+  date_alerte: string | null;
+  jours_restants: number;
+  traite: boolean;
+  renouvellement_traite_echeance: string | null;
+  renouvellement_traite_date: string | null;
+  renouvellement_traite_par: string | null;
+  client_raison_sociale: string;
+  client_code: string | null;
+  montant_ht: number | string;
+  machines_resume: string | null;
+}
+
+export interface RenouvellementsResponse {
+  contrats: ContratRenouvellement[];
+  en_alerte: number;
+}
+
+export interface AlertesRenouvellement {
+  total: number;
+  contrats: ContratRenouvellement[];
 }
 
 export interface ContratStats {
@@ -1066,7 +1166,7 @@ export interface ImportRelevesParseResult {
   file_size: number;
 }
 
-export type ReleveLigneStatut = 'OK' | 'DEPASSEMENT' | 'ANOMALIE' | 'PREMIER_RELEVE' | 'AU_COMPTEUR' | 'SANS_CONTRAT' | 'HORS_CONTRAT';
+export type ReleveLigneStatut = 'OK' | 'DEPASSEMENT' | 'ANOMALIE' | 'PREMIER_RELEVE' | 'AU_COMPTEUR' | 'LOT_ATTACHEE' | 'SANS_CONTRAT' | 'HORS_CONTRAT';
 
 export interface ReleveLigneAnalyse {
   row_number: number;
@@ -1108,6 +1208,7 @@ export interface ImportRelevesAnalyseResult {
     au_compteur: number;
     anomalies: number;
     premier_releve: number;
+    lot_attachees: number;
     hors_contrat: number;
     montant_total_depassement_ht: number;
   };
@@ -1424,7 +1525,7 @@ export interface GenerationLotErreur {
   nb_machines?: number;
   nb_machines_actives?: number;
   nb_lignes_actives?: number;
-  raison?: 'aucune_machine_active' | 'pas_de_tarification' | 'releves_manquants' | 'aucune_ligne_active' | 'inconnu';
+  raison?: 'aucune_machine_active' | 'pas_de_tarification' | 'releves_manquants' | 'lot_multi_forfait' | 'premier_releve_initialisation' | 'aucune_ligne_active' | 'inconnu';
   releves_disponibles?: GenerationLotMachineReleves[];
   periode_demandee?: { debut: string; fin: string };
 }

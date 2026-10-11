@@ -164,6 +164,12 @@ function ensureModifiable(devis) {
   }
 }
 
+/** Numéro d'un devis, pour libeller une entrée de journal sans le recharger. */
+export async function getNumeroDevis(devisId) {
+  const { rows } = await query('SELECT numero_devis FROM devis WHERE id = $1', [devisId]);
+  return rows[0]?.numero_devis || `#${devisId}`;
+}
+
 async function getDevisOrFail(devisId) {
   const res = await query(
     `SELECT ${DEVIS_FIELDS} FROM devis d WHERE d.id = $1 AND d.deleted_at IS NULL`,
@@ -772,12 +778,14 @@ export async function supprimerLigne(devisId, ligneId, userId) {
   ensureModifiable(devis);
 
   const result = await query(
-    'DELETE FROM devis_lignes WHERE id = $1 AND devis_id = $2 RETURNING id',
+    `DELETE FROM devis_lignes WHERE id = $1 AND devis_id = $2
+     RETURNING id, designation, quantite, prix_unitaire_ht`,
     [ligneId, devisId]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Ligne non trouvée');
 
   await recalculerDevis({ query }, devisId);
+  return result.rows[0];
 }
 
 export async function reorderLignes(devisId, ordreIds, userId) {
@@ -870,10 +878,12 @@ export async function modifierChamp(devisId, champId, data) {
 export async function supprimerChamp(devisId, champId) {
   await getDevisOrFail(devisId);
   const result = await query(
-    'DELETE FROM devis_champs_personnalises WHERE id = $1 AND devis_id = $2 RETURNING id',
+    `DELETE FROM devis_champs_personnalises WHERE id = $1 AND devis_id = $2
+     RETURNING id, label, valeur`,
     [champId, devisId]
   );
   if (result.rows.length === 0) throw ApiError.notFound('Champ personnalisé non trouvé');
+  return result.rows[0];
 }
 
 export async function ajouterChampDepuisTemplate(devisId, templateId) {

@@ -1,5 +1,6 @@
 import * as activityLogService from './activityLog.service.js';
 import { sendSuccess } from '../../utils/response.js';
+import { ApiError } from '../../utils/ApiError.js';
 
 export async function listLogs(req, res, next) {
   try {
@@ -12,11 +13,12 @@ export async function listLogs(req, res, next) {
       limit,
       module,
       action,
-      user_id: user_id ? parseInt(user_id) : undefined,
+      user_id: user_id || undefined,
       statut,
       date_debut,
       date_fin,
       search,
+      voirAuteur: activityLogService.peutVoirAuteur(req.user),
     });
 
     res.json({
@@ -30,16 +32,34 @@ export async function listLogs(req, res, next) {
 
 export async function getStats(req, res, next) {
   try {
-    const { module, date_debut, date_fin, search } = req.query;
-    const stats = await activityLogService.getStats({ module, date_debut, date_fin, search });
+    const { module, user_id, date_debut, date_fin, search } = req.query;
+    const stats = await activityLogService.getStats({
+      module,
+      user_id: user_id || undefined,
+      date_debut,
+      date_fin,
+      search,
+      voirAuteur: activityLogService.peutVoirAuteur(req.user),
+    });
     sendSuccess(res, stats);
+  } catch (err) { next(err); }
+}
+
+export async function listAuteurs(req, res, next) {
+  try {
+    if (!activityLogService.peutVoirAuteur(req.user)) {
+      throw ApiError.forbidden('Réservé aux administrateurs');
+    }
+    sendSuccess(res, await activityLogService.listAuteurs());
   } catch (err) { next(err); }
 }
 
 export async function getEntityHistory(req, res, next) {
   try {
     const { entityType, entityId } = req.params;
-    const logs = await activityLogService.getEntityHistory(entityType, parseInt(entityId));
+    const logs = await activityLogService.getEntityHistory(entityType, parseInt(entityId), {
+      voirAuteur: activityLogService.peutVoirAuteur(req.user),
+    });
     sendSuccess(res, logs);
   } catch (err) { next(err); }
 }

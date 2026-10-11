@@ -2,6 +2,8 @@ import 'dotenv/config';
 import app from './src/app.js';
 import { pool } from './src/config/database.js';
 import { startExpirationJob } from './src/jobs/devisExpirationJob.js';
+import { startAugmentationContratsJob } from './src/jobs/augmentationContratsJob.js';
+import { startRenouvellementContratsJob } from './src/jobs/renouvellementContratsJob.js';
 import { startEmailPollingJob } from './src/modules/tickets/jobs/emailPollingJob.js';
 
 const PORT = process.env.PORT || 3001;
@@ -18,6 +20,8 @@ async function start() {
     //   DATABASE_URL="postgresql://postgres@<host>:5432/<db>" npm run migrate
 
     startExpirationJob();
+    startAugmentationContratsJob();
+    startRenouvellementContratsJob();
     startEmailPollingJob();
 
     app.listen(PORT, () => {

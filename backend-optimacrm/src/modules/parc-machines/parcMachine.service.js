@@ -448,12 +448,16 @@ export async function updateReleve(machineId, releveId, data) {
 }
 
 export async function deleteReleve(machineId, releveId) {
-  const releve = await query('SELECT id FROM releves_compteurs WHERE id = $1 AND machine_id = $2', [releveId, machineId]);
+  const releve = await query(
+    `SELECT id, date_releve, compteur_nb, compteur_couleur
+     FROM releves_compteurs WHERE id = $1 AND machine_id = $2`,
+    [releveId, machineId],
+  );
   if (releve.rows.length === 0) throw ApiError.notFound('Relevé non trouvé');
 
   await query('DELETE FROM releves_compteurs WHERE id = $1', [releveId]);
   await refreshMachineCounters(machineId);
-  return { id: releveId };
+  return releve.rows[0];
 }
 
 async function refreshMachineCounters(machineId) {

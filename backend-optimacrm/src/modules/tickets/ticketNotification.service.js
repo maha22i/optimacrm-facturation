@@ -6,6 +6,7 @@ import {
   escapeHtml,
 } from '../email/email.service.js';
 import * as activityLog from '../activity-logs/activityLog.service.js';
+import { MODULES } from '../../config/activityModules.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,7 +103,7 @@ async function sendInternalEmail(config, { destinataires, sujet, corpsTexte, tic
   try {
     await activityLog.log({
       action: 'notification_email',
-      module: 'tickets',
+      module: MODULES.TICKETS,
       description: logDescription,
       entityType: 'ticket',
       entityId: ticket.id,

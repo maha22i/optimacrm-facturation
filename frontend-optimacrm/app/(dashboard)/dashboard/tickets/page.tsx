@@ -96,11 +96,11 @@ function SlaIndicator({ sla }: { sla?: { prise_en_charge: SlaStatus; resolution:
 export default function TicketsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
 
   const isTechnicien = user?.role === 'technicien';
   const isAdminTechnique = user?.role === 'admin_technique';
-  const canDeleteTicket = !isTechnicien;
+  const canDeleteTicket = !isTechnicien && hasPermission('tickets_delete');
   const canManageCategories = !isTechnicien;
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
